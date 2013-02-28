@@ -20,8 +20,8 @@ from tempfile import mkstemp, mkdtemp
 from swift.common.swob import Request, Response, HTTPNotFound, HTTPPreconditionFailed,\
     HTTPRequestTimeout, HTTPRequestEntityTooLarge, HTTPBadRequest,\
     HTTPUnprocessableEntity, HTTPServiceUnavailable, HTTPClientDisconnect, HTTPInternalServerError
-from swift.common.middleware.proxyquery import TAR_MIMES, ACCESS_CDR, ACCESS_READABLE, ACCESS_WRITABLE
-from swift.common.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
+from zerocloud.proxyquery import TAR_MIMES, ACCESS_CDR, ACCESS_READABLE, ACCESS_WRITABLE
+from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 
 from swift.common.utils import normalize_timestamp,\
     fallocate, split_path, get_logger, mkdirs, disable_fallocate, TRUE_VALUES

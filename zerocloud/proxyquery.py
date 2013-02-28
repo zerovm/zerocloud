@@ -13,7 +13,7 @@ import datetime
 from swift.common.http import HTTP_CONTINUE, is_success, HTTP_INSUFFICIENT_STORAGE
 from swiftclient.client import quote
 from swift.proxy.controllers.base import update_headers, delay_denial, Controller
-from swift.common.tarstream import StringBuffer, UntarStream, RECORDSIZE, TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile
+from zerocloud.tarstream import StringBuffer, UntarStream, RECORDSIZE, TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile
 
 try:
     import simplejson as json
