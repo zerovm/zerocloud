@@ -1,4 +1,3 @@
-from __future__ import with_statement
 from StringIO import StringIO
 import re
 import struct
@@ -8,7 +7,8 @@ import datetime
 from swiftclient.client import quote
 import random
 import swift
-from swift.common.middleware.proxyquery import ZvmNode, ZvmChannel, NodeEncoder, CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
+
+from zerocloud.proxyquery import ZvmNode, ZvmChannel, NodeEncoder, CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
 
 try:
     import simplejson as json

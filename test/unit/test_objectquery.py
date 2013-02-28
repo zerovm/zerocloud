@@ -23,13 +23,14 @@ import math
 import tarfile
 
 from swift.common import utils
-from swift.common.middleware import objectquery
-from swift.common.middleware import proxyquery
 from swift.common.middleware.proxyquery import ZvmNode, NodeEncoder, ACCESS_READABLE, ACCESS_WRITABLE
 from swift.common.swob import Request
 from swift.common.utils import mkdirs, normalize_timestamp, get_logger
 from swift.obj.server import ObjectController
 from test.unit import FakeLogger
+
+from zerocloud import objectquery
+from zerocloud import proxyquery
 
 class FakeLoggingHandler(logging.Handler):
 
