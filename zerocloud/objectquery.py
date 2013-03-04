@@ -1,6 +1,3 @@
-from string import split
-from swift.common.bufferedhttp import http_connect, http_connect_raw
-
 try:
     import simplejson as json
 except ImportError:
@@ -14,6 +11,7 @@ import tarfile
 from eventlet import GreenPool, sleep
 from eventlet.green import select, subprocess
 from eventlet.timeout import Timeout
+from eventlet.green.httplib import HTTPResponse
 from urllib import unquote
 from hashlib import md5
 from tempfile import mkstemp, mkdtemp
@@ -28,6 +26,7 @@ from swift.common.utils import normalize_timestamp,\
 from swift.obj.server import DiskFile, write_metadata, read_metadata
 from swift.common.constraints import check_mount, check_utf8
 from swift.common.exceptions import DiskFileError, DiskFileNotExist
+from zerocloud.fastcgi import PseudoSocket
 
 channel_type_map = {
     'stdin': 0, 'stdout': 0, 'stderr': 0,
@@ -479,48 +478,54 @@ class ObjectQueryMiddleware(object):
 
                 tar_stream = TarStream()
                 resp_size = 0
-#                account = req.headers['x-account-name']
                 immediate_responses = []
+                send_config = False
                 for ch in response_channels:
-                    file_size = self.os_interface.path.getsize(ch['lpath'])
-#                    path = ch.get('path', None)
-#                    if self.direct_put and path:
-#                        dest_header = '/%s/%s%s' % (self.proxy_version, account, unquote(path))
-#                        dest_req = Request.blank(dest_header,
-#                            environ=req.environ, headers=req.headers)
-#                        dest_req.path_info = dest_header
-#                        dest_req.method = 'PUT'
-#                        dest_req.headers['Content-Length'] = file_size
-#                        if 'expect' in dest_req.headers:
-#                            del dest_req.headers['expect']
-#                        if 'transfer-encoding' in dest_req.headers:
-#                            del dest_req.headers['transfer-encoding']
-#                        reader = iter(lambda: open(ch['lpath'], 'rb').read(self.app.network_chunk_size), '')
-#                        print dest_req.__dict__
-#                        conn = http_connect_raw(self.proxy_addr, self.proxy_port, 'PUT', dest_req.path_info, dest_req.headers)
-#                        if conn:
-#                            for chunk in reader:
-#                                conn.send(chunk)
-#                            resp = conn.getresponse()
-#                            print [resp.status, resp.reason, resp.getheaders()]
-#                            if resp.status >= 300:
-#                                response.body = resp.read()
-#                                response.status = '%d %s' % (resp.status, resp.reason)
-#                                return response
-#                            resp.read()
-#                            continue
+                    if ch['content_type'].startswith('message/http'):
+                        self._read_cgi_response(ch)
+                        send_config = True
+                    else:
+                        ch['size'] = self.os_interface.path.getsize(ch['lpath'])
                     info = tar_stream.create_tarinfo(REGTYPE, ch['device'],
-                        file_size)
+                        ch['size'])
                     resp_size += len(info) + \
-                                 tar_stream.get_archive_size(file_size)
+                                 tar_stream.get_archive_size(ch['size'])
                     ch['info'] = info
-                    ch['size'] = file_size
                     immediate_responses.append(ch)
+                sysmap_info = ''
+                sysmap_dump = ''
+                if send_config:
+                    sysmap = config.copy()
+                    sysmap['channels'] = []
+                    for ch in config['channels']:
+                        ch = ch.copy()
+                        ch.pop('size', None)
+                        ch.pop('info', None)
+                        ch.pop('lpath', None)
+                        ch.pop('offset', None)
+                        sysmap['channels'].append(ch)
+                    sysmap_dump = json.dumps(sysmap)
+                    sysmap_info = tar_stream.create_tarinfo(REGTYPE, 'sysmap',
+                        len(sysmap_dump))
+                    resp_size += len(sysmap_info) +\
+                             tar_stream.get_archive_size(len(sysmap_dump))
 
                 def resp_iter(channels, chunk_size):
                     tar_stream = TarStream(chunk_size=chunk_size)
+                    if send_config:
+                        for chunk in tar_stream._serve_chunk(sysmap_info):
+                            yield chunk
+                        for chunk in tar_stream._serve_chunk(sysmap_dump):
+                            yield chunk
+                        blocks, remainder = divmod(len(sysmap_dump), BLOCKSIZE)
+                        if remainder > 0:
+                            nulls = NUL * (BLOCKSIZE - remainder)
+                            for chunk in tar_stream._serve_chunk(nulls):
+                                yield chunk
                     for ch in channels:
                         fp = open(ch['lpath'], 'rb')
+                        if ch.get('offset', None):
+                            fp.seek(ch['offset'])
                         reader = iter(lambda: fp.read(chunk_size), '')
                         for chunk in tar_stream._serve_chunk(ch['info']):
                             yield chunk
@@ -541,6 +546,31 @@ class ObjectQueryMiddleware(object):
                     self.app.network_chunk_size)
                 response.content_length = resp_size
                 return req.get_response(response)
+
+    def _read_cgi_response(self, ch):
+        fp = open(ch['lpath'], 'rb')
+        s = PseudoSocket(fp)
+        try:
+            resp = HTTPResponse(s, strict=1)
+            resp.begin()
+        except Exception:
+            ch['size'] = self.os_interface.path.getsize(ch['lpath'])
+            fp.close()
+            self.logger.warning('Invalid message/http')
+            return
+        headers = dict(resp.getheaders())
+        ch['offset'] = fp.tell()
+        metadata = {}
+        if 'content-type' in headers:
+            ch['content_type'] = headers['content-type']
+            prefix = 'x-object-meta-'
+            for k,v in headers.iteritems():
+                if k.lower().startswith(prefix):
+                    k = k[len(prefix):]
+                    metadata[k.lower()] = v
+        ch['meta'] = metadata
+        ch['size'] = self.os_interface.path.getsize(ch['lpath']) - ch['offset']
+        fp.close()
 
     def __call__(self, env, start_response):
         """WSGI Application entry point for the Swift Object Server."""

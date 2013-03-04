@@ -81,6 +81,24 @@ def has_control_chars(line):
             return True
     return False
 
+def update_metadata(request, meta_data):
+    if not meta_data:
+        return None
+    meta_count = 0
+    meta_size = 0
+    for key,value in meta_data.iteritems():
+        meta_count += 1
+        meta_size += len(key) + len(value)
+        if len(key) > MAX_META_NAME_LENGTH:
+            return 'Metadata name too long; max %d' % MAX_META_NAME_LENGTH
+        elif len(value) > MAX_META_VALUE_LENGTH:
+            return 'Metadata value too long; max %d' % MAX_META_VALUE_LENGTH
+        elif meta_count > MAX_META_COUNT:
+            return 'Too many metadata items; max %d' % MAX_META_COUNT
+        elif meta_size > MAX_META_OVERALL_SIZE:
+            return 'Total metadata too large; max %d' % MAX_META_OVERALL_SIZE
+        request.headers['x-object-meta-%s' % key] = value
+
 class CachedBody(object):
 
     def __init__(self, read_iter, cache=None, cache_size=CONFIG_BYTE_SIZE,
@@ -617,7 +635,7 @@ class ClusterController(Controller):
                         device = f.get('device')
                         access = device_map.get(device)
                         path = f.get('path')
-                        content_type = f.get('content-type', self.app.zerovm_content_type)
+                        content_type = f.get('content_type', self.app.zerovm_content_type)
                         meta = f.get('meta', None)
                         if path and '*' in path:
                             if read_group:
@@ -692,7 +710,7 @@ class ClusterController(Controller):
                                     nid += 1
                                     self.nodes[node_name] = new_node
                                 new_node.add_channel(device, access,
-                                    content_type=f.get('content-type', 'text/html'))
+                                    content_type=f.get('content_type', 'text/html'))
 
                     for f in other_list:
                         # only debug channel is here, for now
@@ -1173,7 +1191,7 @@ class ClusterController(Controller):
                 dest_req.environ['wsgi.input'] =\
                     ExtractedFile(untar_stream)
                 dest_req.headers['content-type'] = chan.content_type
-                error = self._update_metadata(dest_req, chan.meta)
+                error = update_metadata(dest_req, chan.meta)
                 if error:
                     conn.error = error
                     return conn
@@ -1283,28 +1301,10 @@ class ClusterController(Controller):
         for new_ch in config['channels']:
             old_ch = node.get_channel(device=new_ch['device'])
             if old_ch:
-                old_ch.content_type = new_ch.content_type
+                old_ch.content_type = new_ch['content_type']
                 if new_ch.get('meta', None):
                     for k,v in new_ch.get('meta').iteritems():
                         old_ch.meta[k] = v
-
-    def _update_metadata(self, request, meta_data):
-        if not meta_data:
-            return None
-        meta_count = 0
-        meta_size = 0
-        for key,value in meta_data.iteritems():
-            meta_count += 1
-            meta_size += len(key) + len(value)
-            if len(key) > MAX_META_NAME_LENGTH:
-                return 'Metadata name too long; max %d' % MAX_META_NAME_LENGTH
-            elif len(value) > MAX_META_VALUE_LENGTH:
-                return 'Metadata value too long; max %d' % MAX_META_VALUE_LENGTH
-            elif meta_count > MAX_META_COUNT:
-                return 'Too many metadata items; max %d' % MAX_META_COUNT
-            elif meta_size > MAX_META_OVERALL_SIZE:
-                return 'Total metadata too large; max %d' % MAX_META_OVERALL_SIZE
-            request.headers['x-object-meta-%s' % key] = value
 
 
 def filter_factory(global_conf, **local_conf):

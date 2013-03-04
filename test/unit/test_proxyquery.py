@@ -1,14 +1,14 @@
+from __future__ import with_statement
 from StringIO import StringIO
 import re
 import struct
 from eventlet.green import socket
 import tarfile
 import datetime
-from swiftclient.client import quote
 import random
 import swift
 
-from zerocloud.proxyquery import ZvmNode, ZvmChannel, NodeEncoder, CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
+from zerocloud.proxyquery import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
 
 try:
     import simplejson as json
@@ -39,7 +39,8 @@ from swift.common.wsgi import monkey_patch_mimetools
 from swift.common import ring
 from test.unit.proxy.test_server import fake_http_connect, save_globals, \
     FakeRing, FakeMemcache, FakeMemcacheReturnsNone
-from swift.common.middleware import proxyquery, objectquery
+
+from zerocloud import proxyquery, objectquery
 
 def setup():
     global _testdir, _test_servers, _test_sockets,\
@@ -1229,7 +1230,7 @@ errdump(0, valid, retcode, mnfst.NexeEtag, accounting, status)
                 'exec':{'path':'/c/exe'},
                 'file_list':[
                     {'device':'stdin','path':'/c/o'},
-                    {'device':'stdout', 'content-type': 'application/x-pickle'}
+                    {'device':'stdout', 'content_type': 'application/x-pickle'}
                 ]
             }
         ]
@@ -1240,36 +1241,6 @@ errdump(0, valid, retcode, mnfst.NexeEtag, accounting, status)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.content_type, 'application/x-pickle')
         self.assertEqual(res.body, self.get_sorted_numbers())
-
-    def test_QUERY_immediate_response(self):
-        self.setup_QUERY()
-        prolis = _test_sockets[0]
-        prosrv = _test_servers[0]
-        nexe = \
-r'''
-content = '<html><body>Test this</body></html>\r\n'
-return ('Status: 200 OK\r\n'
-       'Content-Type: text/html\r\n'
-       'Content-Length: %d'
-       '\r\n' % len(content)
-       + content)
-'''[1:-1]
-        self.create_object(prolis, '/v1/a/c/exe2', nexe)
-        conf = [
-            {
-                'name':'http',
-                'exec':{'path':'/c/exe2'},
-                'file_list':[
-                    {'device':'stdout', 'content-type': 'message/http'}
-                ]
-            }
-        ]
-        conf = json.dumps(conf)
-        req = self.zerovm_request()
-        req.body = conf
-        res = req.get_response(prosrv)
-        print res.headers
-        print res.body
 
     def test_QUERY_store_meta(self):
         self.setup_QUERY()
@@ -1285,7 +1256,7 @@ return 'Test Test'
                 'name':'http',
                 'exec':{'path':'/c/exe2'},
                 'file_list':[
-                    {'device':'stdout', 'content-type': 'text/plain',
+                    {'device':'stdout', 'content_type': 'text/plain',
                      'meta': {'key1': 'test1', 'key2': 'test2'},
                      'path': '/c/o3'
                     }
@@ -1304,6 +1275,47 @@ return 'Test Test'
         self.assertEqual(res.headers['x-object-meta-key1'], 'test1')
         self.assertEqual(res.headers['x-object-meta-key2'], 'test2')
         self.assertEqual(res.body, 'Test Test')
+
+    def test_QUERY_immediate_response(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe =\
+r'''
+resp = '\n'.join([
+    'HTTP/1.1 200 OK',
+    'Content-Type: text/html',
+    'X-Object-Meta-Key1: value1',
+    'X-Object-Meta-Key2: value2',
+    '', ''
+    ])
+out = '<html><body>Test this</body></html>'
+return resp + out
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        conf = [
+            {
+                'name':'http',
+                'exec':{'path':'/c/exe2'},
+                'file_list':[
+                    {'device':'stdout', 'content_type': 'message/http',
+                     'path': '/c/o3'
+                    }
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        req = self.object_request('/v1/a/c/o3')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.headers['content-type'], 'text/html')
+        self.assertEqual(res.headers['x-object-meta-key1'], 'value1')
+        self.assertEqual(res.headers['x-object-meta-key2'], 'value2')
+        self.assertEqual(res.body, '<html><body>Test this</body></html>')
 
     def test_QUERY_sort_immediate_stdout_stderr(self):
         self.setup_QUERY()
@@ -2142,7 +2154,7 @@ return 'Test Test'
             print [error.status,error.body]
         else:
             print json.dumps(fake_controller.nodes,
-                cls=NodeEncoder, indent='  ')
+                cls=proxyquery.NodeEncoder, indent='  ')
 
 
     '''

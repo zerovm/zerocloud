@@ -23,14 +23,13 @@ import math
 import tarfile
 
 from swift.common import utils
-from swift.common.middleware.proxyquery import ZvmNode, NodeEncoder, ACCESS_READABLE, ACCESS_WRITABLE
 from swift.common.swob import Request
 from swift.common.utils import mkdirs, normalize_timestamp, get_logger
 from swift.obj.server import ObjectController
 from test.unit import FakeLogger
 
 from zerocloud import objectquery
-from zerocloud import proxyquery
+from zerocloud.proxyquery import ZvmNode, NodeEncoder, ACCESS_READABLE, ACCESS_WRITABLE
 
 class FakeLoggingHandler(logging.Handler):
 
@@ -116,6 +115,17 @@ def errdump(zvm_errcode, nexe_validity, nexe_errcode, nexe_etag, nexe_accounting
     print '%d\n%d\n%s\n%s\n%s' % (nexe_validity, nexe_errcode, nexe_etag,
             ' '.join([str(val) for val in nexe_accounting]), status_line)
     exit(zvm_errcode)
+
+def eval_as_function(code, local_vars={}, global_vars=None):
+    if not global_vars:
+        global_vars = globals()
+    retval = None
+    context = {}
+    code = re.sub(r"(?m)^", "    ", code)
+    code = "def anon(" + ','.join(local_vars.keys()) + "):\n" + code
+    exec code in global_vars, context
+    retval = context['anon'](*(local_vars.values()))
+    return retval
 
 parser = ArgumentParser()
 parser.add_argument('-M', dest='manifest')
@@ -218,7 +228,7 @@ if valid < 2:
 
     od = ''
     try:
-        od = pickle.dumps(eval(exe))
+        od = str(eval_as_function(exe))
     except Exception:
         logging.exception('Exception:')
     ouf.write(od)
@@ -244,7 +254,7 @@ exit(0)
         set_zerovm_mock()
         randomnumbers = self.create_random_numbers(10)
         self.create_object(randomnumbers)
-        self._nexescript = 'sorted(id)'
+        self._nexescript = 'return pickle.dumps(sorted(id))'
         self._sortednumbers = self.get_sorted_numbers()
         self._randomnumbers_etag = md5()
         self._randomnumbers_etag.update(randomnumbers)
@@ -399,6 +409,141 @@ exit(0)
             self.assertEquals(resp.headers['content-type'], 'application/x-gtar')
             self.assertEqual(self.app.logger.log_dict['info'][0][0][0],
                 'Zerovm CDR: 0 0 0 0 1 46 1 46 0 0 0 0')
+
+    def test_QUERY_sort_textout(self):
+        self.setup_zerovm_query()
+        req = self.zerovm_request()
+        nexefile = StringIO('return str(sorted(id))')
+        conf = ZvmNode(1, 'sort', '/c/exe')
+        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf.add_channel('stdout', ACCESS_WRITABLE)
+        conf = json.dumps(conf, cls=NodeEncoder)
+        sysmap = StringIO(conf)
+        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+            req.body_file = open(tar, 'rb')
+            resp = self.app.zerovm_query(req)
+            #resp = req.get_response(self.app)
+            fd, name = mkstemp()
+            for chunk in resp.app_iter:
+                os.write(fd, chunk)
+            os.close(fd)
+            self.assertEqual(os.path.getsize(name), resp.content_length)
+            tar = tarfile.open(name)
+            names = tar.getnames()
+            members = tar.getmembers()
+            self.assertIn('stdout', names)
+            self.assertEqual(names[-1], 'stdout')
+            #self.assertEqual(members[-1].size, len(self._sortednumbers))
+            file = tar.extractfile(members[-1])
+            self.assertEqual(file.read(), '[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]')
+            self.assertEqual(resp.headers['x-nexe-retcode'], '0')
+            self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
+            self.assertEqual(resp.headers['x-nexe-validation'], '1')
+            self.assertEqual(resp.headers['x-nexe-system'], 'sort')
+            timestamp = normalize_timestamp(time())
+            self.assertEqual(math.floor(float(resp.headers['X-Timestamp'])),
+                math.floor(float(timestamp)))
+            self.assertEquals(resp.headers['content-type'], 'application/x-gtar')
+            self.assertEqual(self.app.logger.log_dict['info'][0][0][0],
+                'Zerovm CDR: 0 0 0 0 1 46 1 30 0 0 0 0')
+
+    def test_QUERY_http_message(self):
+        self.setup_zerovm_query()
+        req = self.zerovm_request()
+        conf = ZvmNode(1, 'sort', '/c/exe')
+        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf.add_channel('stdout', ACCESS_WRITABLE, content_type='message/http')
+        conf = json.dumps(conf, cls=NodeEncoder)
+        sysmap = StringIO(conf)
+        nexefile = StringIO(r'''
+resp = '\n'.join([
+    'HTTP/1.1 200 OK',
+    'Content-Type: application/json',
+    'X-Object-Meta-Key1: value1',
+    'X-Object-Meta-Key2: value2',
+    '', ''
+    ])
+out = str(sorted(id))
+return resp + out
+'''[1:-1])
+        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+            req.body_file = open(tar, 'rb')
+            resp = self.app.zerovm_query(req)
+            #resp = req.get_response(self.app)
+            fd, name = mkstemp()
+            for chunk in resp.app_iter:
+                os.write(fd, chunk)
+            os.close(fd)
+            self.assertEqual(os.path.getsize(name), resp.content_length)
+            tar = tarfile.open(name)
+            names = tar.getnames()
+            members = tar.getmembers()
+            self.assertIn('stdout', names)
+            self.assertEqual(names[-1], 'stdout')
+            file = tar.extractfile(members[-1])
+            self.assertEqual(file.read(), '[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]')
+            self.assertEqual(resp.headers['x-nexe-retcode'], '0')
+            self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
+            self.assertEqual(resp.headers['x-nexe-validation'], '1')
+            self.assertEqual(resp.headers['x-nexe-system'], 'sort')
+            timestamp = normalize_timestamp(time())
+            self.assertEqual(math.floor(float(resp.headers['X-Timestamp'])),
+                math.floor(float(timestamp)))
+            self.assertEquals(resp.headers['content-type'], 'application/x-gtar')
+            self.assertEqual(names[0], 'sysmap')
+            file = tar.extractfile(members[0])
+            config = json.load(file)
+            self.assertEqual(
+                config['channels'][1]['content_type'],
+                'application/json')
+            self.assertEqual(
+                config['channels'][1]['meta'],
+                { 'key1': 'value1', 'key2': 'value2' })
+
+    def test_QUERY_invalid_http_message(self):
+        self.setup_zerovm_query()
+        req = self.zerovm_request()
+        conf = ZvmNode(1, 'sort', '/c/exe')
+        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf.add_channel('stdout', ACCESS_WRITABLE, content_type='message/http')
+        conf = json.dumps(conf, cls=NodeEncoder)
+        sysmap = StringIO(conf)
+        nexefile = StringIO('''
+resp = '\\n'.join(['Status: 200 OK', 'Content-Type: application/json', '', ''])
+out = str(sorted(id))
+return resp + out
+'''[1:-1])
+        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+            req.body_file = open(tar, 'rb')
+            resp = self.app.zerovm_query(req)
+            #resp = req.get_response(self.app)
+            fd, name = mkstemp()
+            for chunk in resp.app_iter:
+                os.write(fd, chunk)
+            os.close(fd)
+            self.assertEqual(os.path.getsize(name), resp.content_length)
+            tar = tarfile.open(name)
+            names = tar.getnames()
+            members = tar.getmembers()
+            self.assertIn('stdout', names)
+            self.assertEqual(names[-1], 'stdout')
+            file = tar.extractfile(members[-1])
+            self.assertEqual(file.read(),
+                'Status: 200 OK\n'
+                'Content-Type: application/json\n\n'
+                '[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]')
+            self.assertEqual(resp.headers['x-nexe-retcode'], '0')
+            self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
+            self.assertEqual(resp.headers['x-nexe-validation'], '1')
+            self.assertEqual(resp.headers['x-nexe-system'], 'sort')
+            timestamp = normalize_timestamp(time())
+            self.assertEqual(math.floor(float(resp.headers['X-Timestamp'])),
+                math.floor(float(timestamp)))
+            self.assertEquals(resp.headers['content-type'], 'application/x-gtar')
+            self.assertEqual(names[0], 'sysmap')
+            file = tar.extractfile(members[0])
+            config = json.load(file)
+            self.assertEqual(config['channels'][1]['content_type'], 'message/http')
 
     def test_QUERY_invalid_nexe(self):
         self.setup_zerovm_query()
@@ -1039,7 +1184,6 @@ time.sleep(10)
                      'Content-Type': 'application/octet-stream'})
         req.body = self._nexescript
         resp = req.get_response(self.app)
-        print resp.body
         self.assertEquals(resp.status_int, 201)
         self.assertEquals(resp.headers['x-nexe-validation'], '1')
 
