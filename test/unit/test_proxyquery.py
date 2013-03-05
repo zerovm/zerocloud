@@ -1567,25 +1567,7 @@ return resp + out
         req.body = jconf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
-        result = [
-                {
-                'status': '200 OK',
-                'body': self.get_sorted_numbers(0, 10),
-                'name': 'sort-1',
-                'nexe_etag': '07405c77e6bdc4533612831e02bed9fb',
-                'nexe_status': 'ok.',
-                'nexe_retcode': 0
-            },
-                {
-                'status': '200 OK',
-                'body': self.get_sorted_numbers(10, 20),
-                'name': 'sort-2',
-                'nexe_etag': '07405c77e6bdc4533612831e02bed9fb',
-                'nexe_status': 'ok.',
-                'nexe_retcode': 0
-            }
-        ]
-        self.assertEqual(json.dumps(result), res.body)
+        self.assertEqual(res.body, self.get_sorted_numbers(0, 10) + self.get_sorted_numbers(10, 20))
 
     def test_QUERY_read_container_wildcard(self):
         self.setup_QUERY()

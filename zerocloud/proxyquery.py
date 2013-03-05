@@ -263,7 +263,7 @@ class ProxyQueryMiddleware(object):
     def __call__(self, env, start_response):
 
         req = Request(env)
-        if req.method == 'POST' and 'x-zerovm-execute' in req.headers:
+        if 'x-zerovm-execute' in req.headers:
             controller = None
             if req.content_length and req.content_length < 0:
                 return HTTPBadRequest(request=req,
@@ -274,8 +274,8 @@ class ProxyQueryMiddleware(object):
                     account_name=account,
                     container_name=container,
                     object_name=obj)
-                if account and not container and not obj:
-                    controller = self.get_controller(account)
+                if account:
+                    controller = self.get_controller(account, container, obj)
             except ValueError:
                 return HTTPNotFound(request=req)(env, start_response)
 
@@ -307,8 +307,8 @@ class ProxyQueryMiddleware(object):
             return self.app(env, start_response)
         return res(env, start_response)
 
-    def get_controller(self, account):
-        return ClusterController(self.app, account)
+    def get_controller(self, account, container, obj):
+        return ClusterController(self.app, account, container, obj)
 
 
 class ZvmNode(object):
@@ -394,10 +394,12 @@ class ClusterController(Controller):
 
     server_type = _('Object')
 
-    def __init__(self, app, account_name,
+    def __init__(self, app, account_name, container_name, obj_name,
                  **kwargs):
         Controller.__init__(self, app)
         self.account_name = unquote(account_name)
+        self.container_name = unquote(container_name) if container_name else None
+        self.obj_name = unquote(obj_name) if obj_name else None
         self.nodes = {}
 
     def copy_request(self, request):
@@ -429,19 +431,17 @@ class ClusterController(Controller):
             return []
         if resp.status_int < 200 or resp.status_int >= 300:
             raise Exception('Error querying object server')
-        result = data = json.loads(resp.body)
-        if not marker:
-            while data:
-                marker = data[-1]['name']
-                data = self.list_account(req, account, None, marker)
-                if data:
-                    result.extend(data)
-            ret = []
-            for item in result:
+        data = json.loads(resp.body)
+        if marker:
+            return data
+        ret = []
+        while data:
+            for item in data:
                 if not mask or mask.match(item['name']):
                     ret.append(item['name'])
-            return ret
-        return result
+            marker = data[-1]['name']
+            data = self.list_account(req, account, None, marker)
+        return ret
 
     def list_container(self, req, account, container, mask=None, marker=None):
         new_req = req.copy_get()
@@ -455,20 +455,18 @@ class ClusterController(Controller):
             return []
         if resp.status_int < 200 or resp.status_int >= 300:
             raise Exception('Error querying object server')
-        result = data = json.loads(resp.body)
-        if not marker:
-            while data:
-                marker = data[-1]['name']
-                data = self.list_container(req, account, container,
-                    None, marker)
-                if data:
-                    result.extend(data)
-            ret = []
-            for item in result:
+        data = json.loads(resp.body)
+        if marker:
+            return data
+        ret = []
+        while data:
+            for item in data:
                 if not mask or mask.match(item['name']):
                     ret.append(item['name'])
-            return ret
-        return result
+            marker = data[-1]['name']
+            data = self.list_container(req, account, container,
+                None, marker)
+        return ret
 
     def parse_cluster_config(self, req, cluster_config):
         try:
@@ -699,9 +697,14 @@ class ClusterController(Controller):
                                     body='Immediate response is not available '
                                          'for device %s' % device)
                             if node_count > 1:
-                                return HTTPBadRequest(request=req,
-                                    body='Immediate response is not available '
-                                         'for multiple nodes')
+                                for i in range(1, node_count + 1):
+                                    new_name = self.create_name(node_name, i)
+                                    new_node = self.nodes.get(new_name)
+                                    new_node.add_channel(device, access,
+                                        content_type=f.get('content_type', 'text/html'))
+#                                return HTTPBadRequest(request=req,
+#                                    body='Immediate response is not available '
+#                                         'for multiple nodes')
                             else:
                                 new_node = self.nodes.get(node_name)
                                 if not new_node:
@@ -821,6 +824,7 @@ class ClusterController(Controller):
         read_iter = iter(lambda:
             req.environ['wsgi.input'].read(self.app.network_chunk_size),
             '')
+        # Buffer first blocks of tar file and search for the system map
         if req.headers['content-type'] in TAR_MIMES:
             if not 'content-length' in req.headers:
                 return HTTPBadRequest(request=req,
@@ -839,7 +843,12 @@ class ClusterController(Controller):
             if not cluster_config:
                 return HTTPBadRequest(request=req,
                     body='System boot map was not found in request')
-
+            error = self.parse_cluster_config(req, cluster_config)
+            if error:
+                self.app.logger.warn(
+                    _('ERROR Error parsing config: %s'), cluster_config)
+                return error
+        # System map was sent as a POST body
         elif req.headers['content-type'] in 'application/json':
             for chunk in read_iter:
                 req.bytes_transferred += len(chunk)
@@ -856,15 +865,23 @@ class ClusterController(Controller):
             if 'etag' in req.headers and\
                req.headers['etag'].lower() != etag:
                 return HTTPUnprocessableEntity(request=req)
+            error = self.parse_cluster_config(req, cluster_config)
+            if error:
+                self.app.logger.warn(
+                    _('ERROR Error parsing config: %s'), cluster_config)
+                return error
+        # We need to create system map from GET request
+        elif req.method == 'GET':
+            nexe = ''
+            node = ZvmNode(1, 'get', nexe)
+            pass
+        # We got a text file in POST request
+        # assume that it is a script and create system map
+        elif req.headers['content-type'].startswith('text/'):
+            pass
         else:
             return HTTPBadRequest(request=req,
                 body='Unsupported Content-Type')
-
-        error = self.parse_cluster_config(req, cluster_config)
-        if error:
-            self.app.logger.warn(
-                _('ERROR Error parsing config: %s'), cluster_config)
-            return error
 
         node_list = []
         for k in sorted(self.nodes.iterkeys()):
