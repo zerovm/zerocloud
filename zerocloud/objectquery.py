@@ -127,7 +127,7 @@ class ObjectQueryMiddleware(object):
         # hardcoded, we don't want to crush the server
         self.zerovm_stderr_size = 65536
         self.zerovm_stdout_size = 65536
-        self.retcode_map = ('OK', 'Error', 'Timed out', 'Killed', 'Output too long')
+        self.retcode_map = ['OK', 'Error', 'Timed out', 'Killed', 'Output too long']
 
         self.fault_injection = conf.get('fault_injection', ' ') # for unit-tests.
         self.os_interface = os

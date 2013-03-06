@@ -10,6 +10,7 @@ from hashlib import md5
 from eventlet import GreenPile, GreenPool, sleep, Queue
 import greenlet
 import datetime
+from urlparse import parse_qs
 from swift.common.http import HTTP_CONTINUE, is_success, HTTP_INSUFFICIENT_STORAGE
 from swiftclient.client import quote
 from swift.proxy.controllers.base import update_headers, delay_denial, Controller
@@ -263,7 +264,7 @@ class ProxyQueryMiddleware(object):
     def __call__(self, env, start_response):
 
         req = Request(env)
-        if 'x-zerovm-execute' in req.headers:
+        if 'x-zerovm-execute' in req.headers or req.path.startswith('/exec/'):
             controller = None
             if req.content_length and req.content_length < 0:
                 return HTTPBadRequest(request=req,
@@ -470,7 +471,6 @@ class ClusterController(Controller):
 
     def parse_cluster_config(self, req, cluster_config):
         try:
-            cluster_config = json.loads(cluster_config)
             nid = 1
             for node in cluster_config:
                 node_name = node.get('name')
@@ -702,9 +702,6 @@ class ClusterController(Controller):
                                     new_node = self.nodes.get(new_name)
                                     new_node.add_channel(device, access,
                                         content_type=f.get('content_type', 'text/html'))
-#                                return HTTPBadRequest(request=req,
-#                                    body='Immediate response is not available '
-#                                         'for multiple nodes')
                             else:
                                 new_node = self.nodes.get(node_name)
                                 if not new_node:
@@ -811,77 +808,106 @@ class ClusterController(Controller):
 
     @delay_denial
     def zerovm_query(self, req):
-        if 'content-type' not in req.headers:
-            return HTTPBadRequest(request=req,
-                body='Must specify Content-Type')
-        upload_expiration = time.time() + self.app.max_upload_time
-        etag = md5()
-        cluster_config = ''
-        req.bytes_transferred = 0
-        path_list = [StringBuffer(CLUSTER_CONFIG_FILENAME),
-                     StringBuffer(NODE_CONFIG_FILENAME)]
         user_image = None
-        read_iter = iter(lambda:
-            req.environ['wsgi.input'].read(self.app.network_chunk_size),
-            '')
-        # Buffer first blocks of tar file and search for the system map
-        if req.headers['content-type'] in TAR_MIMES:
-            if not 'content-length' in req.headers:
-                return HTTPBadRequest(request=req,
-                    body='Must specify Content-Length')
-
-            cached_body = CachedBody(read_iter)
-            user_image = iter(cached_body)
-            untar_stream = UntarStream(cached_body.cache, path_list)
-            for chunk in untar_stream:
-                req.bytes_transferred += len(chunk)
-                etag.update(chunk)
-            for buffer in path_list:
-                if buffer.is_closed:
-                    cluster_config = buffer.body
-                    break
-            if not cluster_config:
-                return HTTPBadRequest(request=req,
-                    body='System boot map was not found in request')
-            error = self.parse_cluster_config(req, cluster_config)
-            if error:
-                self.app.logger.warn(
-                    _('ERROR Error parsing config: %s'), cluster_config)
-                return error
-        # System map was sent as a POST body
-        elif req.headers['content-type'] in 'application/json':
-            for chunk in read_iter:
-                req.bytes_transferred += len(chunk)
-                if time.time() > upload_expiration:
-                    return HTTPRequestTimeout(request=req)
-                if req.bytes_transferred > self.app.zerovm_maxconfig:
-                    return HTTPRequestEntityTooLarge(request=req)
-                etag.update(chunk)
-                cluster_config += chunk
-            if 'content-length' in req.headers and \
-               int(req.headers['content-length']) != req.bytes_transferred:
-                return HTTPClientDisconnect(request=req, body='application/json post unfinished')
-            etag = etag.hexdigest()
-            if 'etag' in req.headers and\
-               req.headers['etag'].lower() != etag:
-                return HTTPUnprocessableEntity(request=req)
-            error = self.parse_cluster_config(req, cluster_config)
-            if error:
-                self.app.logger.warn(
-                    _('ERROR Error parsing config: %s'), cluster_config)
-                return error
+        if req.method in 'GET':
         # We need to create system map from GET request
-        elif req.method == 'GET':
-            nexe = ''
+            if not self.container_name or not self.obj_name:
+                return HTTPNotFound(request=req, headers=req.headers)
+            nexe = '/%s/%s' % (self.container_name, self.obj_name)
             node = ZvmNode(1, 'get', nexe)
-            pass
-        # We got a text file in POST request
-        # assume that it is a script and create system map
-        elif req.headers['content-type'].startswith('text/'):
-            pass
+            conf = parse_qs(req.query_string)
+            req.path_info = '/' + self.account_name
+            req.method = 'POST'
+            req.headers['x-zerovm-execute'] = '1.0'
+            if conf.get('args', None):
+                node.args = conf['args'][0]
+            if conf.get('env', None):
+                for key, val in conf['env'].split(':'):
+                    node.env[key] = val
+            if conf.get('file', None):
+                node.add_channel('stdin', device_map.get('stdin'),
+                    path=conf['file'][0])
+            node.add_channel('stdout', device_map.get('stdout'),
+                content_type=conf.get('content_type', None)[0])
+            self.nodes['get'] = node
+        elif req.method in 'POST':
+            if 'content-type' not in req.headers:
+                return HTTPBadRequest(request=req,
+                    body='Must specify Content-Type')
+            upload_expiration = time.time() + self.app.max_upload_time
+            etag = md5()
+            cluster_config = ''
+            req.bytes_transferred = 0
+            path_list = [StringBuffer(CLUSTER_CONFIG_FILENAME),
+                         StringBuffer(NODE_CONFIG_FILENAME)]
+            read_iter = iter(lambda:
+                req.environ['wsgi.input']
+                .read(self.app.network_chunk_size), '')
+            if req.headers['content-type'] in TAR_MIMES:
+            # Buffer first blocks of tar file and search for the system map
+                if not 'content-length' in req.headers:
+                    return HTTPBadRequest(request=req,
+                        body='Must specify Content-Length')
+
+                cached_body = CachedBody(read_iter)
+                user_image = iter(cached_body)
+                untar_stream = UntarStream(cached_body.cache, path_list)
+                for chunk in untar_stream:
+                    req.bytes_transferred += len(chunk)
+                    etag.update(chunk)
+                for buffer in path_list:
+                    if buffer.is_closed:
+                        cluster_config = buffer.body
+                        break
+                if not cluster_config:
+                    return HTTPBadRequest(request=req,
+                        body='System boot map was not found in request')
+                try:
+                    cluster_config = json.loads(cluster_config)
+                except Exception:
+                    return HTTPUnprocessableEntity(body='Cound not parse system map')
+                error = self.parse_cluster_config(req, cluster_config)
+                if error:
+                    self.app.logger.warn(
+                        _('ERROR Error parsing config: %s'), cluster_config)
+                    return error
+            elif req.headers['content-type'] in 'application/json':
+            # System map was sent as a POST body
+                for chunk in read_iter:
+                    req.bytes_transferred += len(chunk)
+                    if time.time() > upload_expiration:
+                        return HTTPRequestTimeout(request=req)
+                    if req.bytes_transferred > self.app.zerovm_maxconfig:
+                        return HTTPRequestEntityTooLarge(request=req)
+                    etag.update(chunk)
+                    cluster_config += chunk
+                if 'content-length' in req.headers and \
+                   int(req.headers['content-length']) != req.bytes_transferred:
+                    return HTTPClientDisconnect(request=req, body='application/json post unfinished')
+                etag = etag.hexdigest()
+                if 'etag' in req.headers and\
+                   req.headers['etag'].lower() != etag:
+                    return HTTPUnprocessableEntity(request=req)
+                try:
+                    cluster_config = json.loads(cluster_config)
+                except Exception:
+                    return HTTPUnprocessableEntity(body='Cound not parse system map')
+                error = self.parse_cluster_config(req, cluster_config)
+                if error:
+                    self.app.logger.warn(
+                        _('ERROR Error parsing config: %s'), cluster_config)
+                    return error
+            elif req.headers['content-type'].startswith('text/'):
+            # We got a text file in POST request
+            # assume that it is a script and create system map
+                return HTTPBadRequest(request=req,
+                    body='Unsupported Content-Type')
+            else:
+                return HTTPBadRequest(request=req,
+                    body='Unsupported Content-Type')
         else:
             return HTTPBadRequest(request=req,
-                body='Unsupported Content-Type')
+                body='Invalid request')
 
         node_list = []
         for k in sorted(self.nodes.iterkeys()):
@@ -889,11 +915,6 @@ class ClusterController(Controller):
 
         #for n in node_list:
         #    print n.__dict__
-        ns_server = NameService()
-        if self.app.zerovm_ns_thrdpool.free() <= 0:
-            return HTTPServiceUnavailable(body='Cluster slot not available',
-                request=req)
-        ns_port = ns_server.start(self.app.zerovm_ns_thrdpool, len(self.nodes))
 
         image_resp = None
         if user_image:
@@ -914,9 +935,17 @@ class ClusterController(Controller):
         if not addr:
             return HTTPServiceUnavailable(
                 body='Cannot find own address, check zerovm_ns_hostname')
-        user_account, _junk = split_path(req.path_info, 1, 2, True)
+        ns_server = None
+        ns_port = None
+        if len(node_list) > 1:
+            ns_server = NameService()
+            if self.app.zerovm_ns_thrdpool.free() <= 0:
+                return HTTPServiceUnavailable(body='Cluster slot not available',
+                    request=req)
+            ns_port = ns_server.start(self.app.zerovm_ns_thrdpool, len(self.nodes))
         for node in node_list:
-            node.name_service = 'udp:%s:%d' % (addr, ns_port)
+            if ns_server:
+                node.name_service = 'udp:%s:%d' % (addr, ns_port)
             sysmap = json.dumps(node, cls=NodeEncoder)
             #print sysmap
             sysmap_iter = iter([sysmap])
@@ -950,7 +979,7 @@ class ClusterController(Controller):
             exec_request.etag = None
             exec_request.headers['content-type'] = TAR_MIMES[0]
             exec_request.headers['transfer-encoding'] = 'chunked'
-            exec_request.headers['x-account-name'] = user_account
+            exec_request.headers['x-account-name'] = self.account_name
             if 'swift.authorize' in exec_request.environ:
                 aresp = exec_request.environ['swift.authorize'](exec_request)
                 if aresp:
@@ -1124,7 +1153,8 @@ class ClusterController(Controller):
                     final_response.app_iter = final_body
                     final_response.content_length = resp.content_length
                     final_response.content_type = resp.content_type
-        ns_server.stop()
+        if ns_server:
+            ns_server.stop()
         if self.app.zerovm_accounting_enabled:
             self._store_accounting_data(req)
         return final_response
@@ -1253,6 +1283,8 @@ class ClusterController(Controller):
                     return conn
                 elif resp.status == HTTP_INSUFFICIENT_STORAGE:
                     self.error_limit(node)
+                else:
+                    self.app.logger.warn('Obj server failed with: %d %s' % (resp.status, resp.reason))
             except:
                 self.exception_occurred(node, _('Object'),
                     _('Expect: 100-continue on %s') % request.path_info)

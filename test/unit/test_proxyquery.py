@@ -6,6 +6,7 @@ from eventlet.green import socket
 import tarfile
 import datetime
 import random
+from urllib import urlencode
 import swift
 
 from zerocloud.proxyquery import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
@@ -466,28 +467,29 @@ for i in xrange(0,len(dev_list)):
             con_list.append(device)
 request = struct.pack('!I', alias) +\
           struct.pack('!I', bind_count) + bind_data + struct.pack('!I', connect_count) + connect_data
-ns_proto, ns_host, ns_port = mnfst.NameServer.split(':')
-ns = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-ns.connect((ns_host, int(ns_port)))
-ns.sendto(request, (ns_host, int(ns_port)))
-ns_host = ns.getpeername()[0]
-ns_port = ns.getpeername()[1]
-while 1:
-    reply, addr = ns.recvfrom(65535)
-    if addr[0] == ns_host and addr[1] == ns_port:
-        offset = 0
-        count = struct.unpack_from('!I', reply, offset)[0]
-        offset += 4
-        for i in range(count):
-            host, port = struct.unpack_from('!4sH', reply, offset+4)[0:2]
-            offset += 10
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.connect((socket.inet_ntop(socket.AF_INET, host), port))
-            con_list[i] = [con_list[i], 'tcp://%s:%d'
-                % (socket.inet_ntop(socket.AF_INET, host), port)]
-        break
-if bind_map:
-    sleep(0.5)
+if getattr(mnfst, 'NameServer', None):
+    ns_proto, ns_host, ns_port = mnfst.NameServer.split(':')
+    ns = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    ns.connect((ns_host, int(ns_port)))
+    ns.sendto(request, (ns_host, int(ns_port)))
+    ns_host = ns.getpeername()[0]
+    ns_port = ns.getpeername()[1]
+    while 1:
+        reply, addr = ns.recvfrom(65535)
+        if addr[0] == ns_host and addr[1] == ns_port:
+            offset = 0
+            count = struct.unpack_from('!I', reply, offset)[0]
+            offset += 4
+            for i in range(count):
+                host, port = struct.unpack_from('!4sH', reply, offset+4)[0:2]
+                offset += 10
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect((socket.inet_ntop(socket.AF_INET, host), port))
+                con_list[i] = [con_list[i], 'tcp://%s:%d'
+                    % (socket.inet_ntop(socket.AF_INET, host), port)]
+            break
+    if bind_map:
+        sleep(0.5)
 if valid < 2:
     try:
         inf = file(mnfst.input, 'r')
@@ -1316,6 +1318,22 @@ return resp + out
         self.assertEqual(res.headers['x-object-meta-key1'], 'value1')
         self.assertEqual(res.headers['x-object-meta-key2'], 'value2')
         self.assertEqual(res.body, '<html><body>Test this</body></html>')
+
+    def test_QUERY_GET_response(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe =\
+r'''
+resp = '<html><body>Test this</body></html>'
+return resp
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        req = Request.blank('/exec/a/c/exe2?' + urlencode({'content_type':'text/html'}))
+        res = req.get_response(prosrv)
+        #self.assertEqual(res.status_int, 200)
+        print res.headers
+        print res.body
 
     def test_QUERY_sort_immediate_stdout_stderr(self):
         self.setup_QUERY()
