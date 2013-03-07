@@ -8,7 +8,7 @@ import shutil
 import time
 import traceback
 import tarfile
-from eventlet import GreenPool, sleep
+from eventlet import GreenPool, sleep, spawn
 from eventlet.green import select, subprocess
 from eventlet.timeout import Timeout
 from eventlet.green.httplib import HTTPResponse
@@ -145,54 +145,56 @@ class ObjectQueryMiddleware(object):
         proc = subprocess.Popen(cmdline, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
 
-        stdout_data = ''
-        stderr_data = ''
-        readable = [proc.stdout, proc.stderr]
-        start = time.time()
-
-        def get_output(stdout_data, stderr_data):
+        def get_final_status(stdout_data, stderr_data, return_code=None):
             (data1, data2) = proc.communicate()
             stdout_data += data1
             stderr_data += data2
+            if return_code is None:
+                return_code = 0
+                if proc.returncode:
+                    return_code = 1
+            return return_code, stdout_data, stderr_data
+
+        def read_from_std(readable, stdout_data, stderr_data):
+            rlist, _junk, __junk =\
+            select.select(readable, [], [], self.zerovm_timeout)
+            if rlist:
+                for stream in rlist:
+                    data = self.os_interface.read(stream.fileno(), 4096)
+                    if not data:
+                        readable.remove(stream)
+                        continue
+                    if stream == proc.stdout:
+                        stdout_data += data
+                    elif stream == proc.stderr:
+                        stderr_data += data
             return stdout_data, stderr_data
 
-        while time.time() - start < self.zerovm_timeout:
-            rlist, wlist, xlist =\
-            select.select(readable, [], [], start - time.time() + self.zerovm_timeout)
-            if not rlist:
-                continue
-            for stream in rlist:
-                data = self.os_interface.read(stream.fileno(), 4096)
-                if not data:
-                    readable.remove(stream)
-                    continue
-                if stream == proc.stdout:
-                    stdout_data += data
-                elif stream == proc.stderr:
-                    stderr_data += data
-                if len(stdout_data) > self.zerovm_stdout_size\
-                or len(stderr_data) > self.zerovm_stderr_size:
-                    proc.kill()
-                    return 4, stdout_data, stderr_data
-            if proc.poll() is not None:
-                stdout_data, stderr_data = get_output(stdout_data, stderr_data)
-                ret = 0
-                if proc.returncode:
-                    ret = 1
-                return ret, stdout_data, stderr_data
-            sleep(0.1)
-        if proc.poll() is None:
+        stdout_data = ''
+        stderr_data = ''
+        readable = [proc.stdout, proc.stderr]
+        try:
+            with Timeout(self.zerovm_timeout):
+                while len(readable) > 0:
+                    stdout_data, stderr_data = read_from_std(readable, stdout_data, stderr_data)
+                    if len(stdout_data) > self.zerovm_stdout_size\
+                    or len(stderr_data) > self.zerovm_stderr_size:
+                        proc.kill()
+                        return 4, stdout_data, stderr_data
+                return get_final_status(stdout_data, stderr_data)
+        except (Exception, Timeout):
             proc.terminate()
-            start = time.time()
-            while time.time() - start\
-            < self.zerovm_kill_timeout:
-                if proc.poll() is not None:
-                    stdout_data, stderr_data = get_output(stdout_data, stderr_data)
-                    return 2, stdout_data, stderr_data
-                sleep(0.1)
-            proc.kill()
-            stdout_data, stderr_data = get_output(stdout_data, stderr_data)
-            return 3, stdout_data, stderr_data
+            try:
+                with Timeout(self.zerovm_kill_timeout):
+                    while len(readable) > 0:
+                        stdout_data, stderr_data = read_from_std(readable, stdout_data, stderr_data)
+                        if len(stdout_data) > self.zerovm_stdout_size\
+                        or len(stderr_data) > self.zerovm_stderr_size:
+                            proc.kill()
+                    return get_final_status(stdout_data, stderr_data, 2)
+            except (Exception, Timeout):
+                proc.kill()
+                return get_final_status(stdout_data, stderr_data, 3)
 
     def zerovm_query(self, req):
         """Handle HTTP QUERY requests for the Swift Object Server."""
