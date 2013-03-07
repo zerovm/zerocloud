@@ -905,6 +905,7 @@ class ClusterController(Controller):
             else:
                 return HTTPBadRequest(request=req,
                     body='Unsupported Content-Type')
+            req.path_info = '/' + self.account_name
         else:
             return HTTPBadRequest(request=req,
                 body='Invalid request')
