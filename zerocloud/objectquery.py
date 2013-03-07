@@ -1,37 +1,47 @@
-try:
-    import simplejson as json
-except ImportError:
-    import json
-from contextlib import contextmanager
 import os
 import shutil
 import time
 import traceback
 import tarfile
+from contextlib import contextmanager
+from urllib import unquote
+from hashlib import md5
+from tempfile import mkstemp, mkdtemp
+
 from eventlet import GreenPool, sleep, spawn
 from eventlet.green import select, subprocess
 from eventlet.timeout import Timeout
 from eventlet.green.httplib import HTTPResponse
-from urllib import unquote
-from hashlib import md5
-from tempfile import mkstemp, mkdtemp
-from swift.common.swob import Request, Response, HTTPNotFound, HTTPPreconditionFailed,\
-    HTTPRequestTimeout, HTTPRequestEntityTooLarge, HTTPBadRequest,\
-    HTTPUnprocessableEntity, HTTPServiceUnavailable, HTTPClientDisconnect, HTTPInternalServerError
-from zerocloud.proxyquery import TAR_MIMES, ACCESS_CDR, ACCESS_READABLE, ACCESS_WRITABLE
-from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 
-from swift.common.utils import normalize_timestamp,\
-    fallocate, split_path, get_logger, mkdirs, disable_fallocate, TRUE_VALUES
+from swift.common.swob import Request, Response, HTTPNotFound, \
+    HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
+    HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
+    HTTPClientDisconnect, HTTPInternalServerError
+from swift.common.utils import normalize_timestamp, fallocate, \
+    split_path, get_logger, mkdirs, disable_fallocate, TRUE_VALUES
 from swift.obj.server import DiskFile, write_metadata, read_metadata
 from swift.common.constraints import check_mount, check_utf8
 from swift.common.exceptions import DiskFileError, DiskFileNotExist
+
+from zerocloud.proxyquery import TAR_MIMES, ACCESS_CDR, ACCESS_READABLE, \
+    ACCESS_WRITABLE
+from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 from zerocloud.fastcgi import PseudoSocket
 
+try:
+    import simplejson as json
+except ImportError:
+    import json
+
 channel_type_map = {
-    'stdin': 0, 'stdout': 0, 'stderr': 0,
-    'input': 3, 'output': 3,
-    'debug': 0, 'image': 1, 'sysimage': 3
+    'stdin': 0,
+    'stdout': 0,
+    'stderr': 0,
+    'input': 3,
+    'output': 3,
+    'debug': 0,
+    'image': 1,
+    'sysimage': 3
 }
 
 class TmpDir(object):

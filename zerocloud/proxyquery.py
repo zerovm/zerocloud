@@ -1,39 +1,47 @@
-from __future__ import with_statement
-from Cookie import SimpleCookie
 import ctypes
 import re
 import struct
 import traceback
-from eventlet.green import socket
 import time
-from hashlib import md5
-from eventlet import GreenPile, GreenPool, sleep, Queue
-import greenlet
 import datetime
+import uuid
+from hashlib import md5
 from urlparse import parse_qs
-from swift.common.http import HTTP_CONTINUE, is_success, HTTP_INSUFFICIENT_STORAGE
+from urllib import unquote
+from random import shuffle, randrange
+
+import greenlet
+from eventlet import GreenPile, GreenPool, sleep, Queue
+from eventlet.green import socket
+from eventlet.timeout import Timeout
+
+from swift.common.http import HTTP_CONTINUE, is_success, \
+    HTTP_INSUFFICIENT_STORAGE
+from swift.proxy.controllers.base import update_headers, delay_denial, \
+    Controller
+from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
+    get_remote_client, ContextPool
+from swift.proxy.server import ObjectController, ContainerController, \
+    AccountController
+from swift.common.bufferedhttp import http_connect
+from swift.common.exceptions import ConnectionTimeout, ChunkReadTimeout, \
+    ChunkWriteTimeout
+from swift.common.constraints import check_utf8, MAX_FILE_SIZE, \
+    MAX_META_NAME_LENGTH, MAX_META_VALUE_LENGTH, MAX_META_COUNT, \
+    MAX_META_OVERALL_SIZE
+from swift.common.swob import Request, Response, HTTPNotFound, \
+    HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
+    HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
+    HTTPClientDisconnect
 from swiftclient.client import quote
-from swift.proxy.controllers.base import update_headers, delay_denial, Controller
-from zerocloud.tarstream import StringBuffer, UntarStream, RECORDSIZE, TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile
+
+from zerocloud.tarstream import StringBuffer, UntarStream, RECORDSIZE, \
+    TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile
 
 try:
     import simplejson as json
 except ImportError:
     import json
-import uuid
-from urllib import unquote
-from random import shuffle, randrange
-from eventlet.timeout import Timeout
-
-from swift.common.utils import split_path, get_logger, TRUE_VALUES, get_remote_client, ContextPool
-from swift.proxy.server import ObjectController, ContainerController, AccountController
-from swift.common.bufferedhttp import http_connect
-from swift.common.exceptions import ConnectionTimeout, ChunkReadTimeout, \
-    ChunkWriteTimeout
-from swift.common.constraints import check_utf8, MAX_FILE_SIZE, MAX_META_NAME_LENGTH, MAX_META_VALUE_LENGTH, MAX_META_COUNT, MAX_META_OVERALL_SIZE
-from swift.common.swob import Request, Response, HTTPNotFound, HTTPPreconditionFailed,\
-    HTTPRequestTimeout, HTTPRequestEntityTooLarge, HTTPBadRequest,\
-    HTTPUnprocessableEntity, HTTPServiceUnavailable, HTTPClientDisconnect
 
 ACCESS_READABLE = 0x1
 ACCESS_WRITABLE = 0x1 << 1
@@ -41,11 +49,14 @@ ACCESS_RANDOM = 0x1 << 2
 ACCESS_NETWORK = 0x1 << 3
 ACCESS_CDR = 0x1 << 4
 
-
 device_map = {
-    'stdin': ACCESS_READABLE, 'stdout': ACCESS_WRITABLE, 'stderr': ACCESS_WRITABLE,
-    'input': ACCESS_RANDOM | ACCESS_READABLE, 'output': ACCESS_RANDOM | ACCESS_WRITABLE,
-    'debug': ACCESS_NETWORK, 'image': ACCESS_CDR
+    'stdin': ACCESS_READABLE,
+    'stdout': ACCESS_WRITABLE,
+    'stderr': ACCESS_WRITABLE,
+    'input': ACCESS_RANDOM | ACCESS_READABLE,
+    'output': ACCESS_RANDOM | ACCESS_WRITABLE,
+    'debug': ACCESS_NETWORK,
+    'image': ACCESS_CDR
     }
 
 TAR_MIMES = ['application/x-tar', 'application/x-gtar', 'application/x-ustar']
@@ -264,6 +275,7 @@ class ProxyQueryMiddleware(object):
     def __call__(self, env, start_response):
 
         req = Request(env)
+        print req.path
         if 'x-zerovm-execute' in req.headers or req.path.startswith('/exec/'):
             controller = None
             if req.content_length and req.content_length < 0:
