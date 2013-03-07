@@ -275,7 +275,6 @@ class ProxyQueryMiddleware(object):
     def __call__(self, env, start_response):
 
         req = Request(env)
-        print req.path
         if 'x-zerovm-execute' in req.headers or req.path.startswith('/exec/'):
             controller = None
             if req.content_length and req.content_length < 0:
