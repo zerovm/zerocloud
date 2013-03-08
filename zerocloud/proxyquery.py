@@ -843,7 +843,7 @@ class ClusterController(Controller):
             read_iter = iter(lambda:
                 req.environ['wsgi.input']
                 .read(self.app.network_chunk_size), '')
-            if req.headers['content-type'] in TAR_MIMES:
+            if req.headers['content-type'].split(';')[0].strip() in TAR_MIMES:
             # Buffer first blocks of tar file and search for the system map
                 if not 'content-length' in req.headers:
                     return HTTPBadRequest(request=req,
@@ -871,7 +871,7 @@ class ClusterController(Controller):
                     self.app.logger.warn(
                         _('ERROR Error parsing config: %s'), cluster_config)
                     return error
-            elif req.headers['content-type'] in 'application/json':
+            elif req.headers['content-type'].split(';')[0].strip() in 'application/json':
             # System map was sent as a POST body
                 for chunk in read_iter:
                     req.bytes_transferred += len(chunk)
