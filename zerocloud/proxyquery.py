@@ -18,7 +18,7 @@ from eventlet.timeout import Timeout
 from swift.common.http import HTTP_CONTINUE, is_success, \
     HTTP_INSUFFICIENT_STORAGE
 from swift.proxy.controllers.base import update_headers, delay_denial, \
-    Controller
+    Controller, cors_validation
 from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
     get_remote_client, ContextPool
 from swift.proxy.server import ObjectController, ContainerController, \
@@ -818,6 +818,7 @@ class ClusterController(Controller):
         return None
 
     @delay_denial
+    @cors_validation
     def zerovm_query(self, req):
         user_image = None
         if req.method in 'GET':
@@ -1169,6 +1170,12 @@ class ClusterController(Controller):
             ns_server.stop()
         if self.app.zerovm_accounting_enabled:
             self._store_accounting_data(req)
+        container_info = self.container_info(self.account_name, self.container_name)
+        if container_info.get('cors', None):
+            if container_info['cors'].get('allow_origin', None):
+                final_response.headers['access-control-allow-origin'] = container_info['cors']['allow_origin']
+            if container_info['cors'].get('expose_headers', None):
+                final_response.headers['access-control-expose-headers'] = container_info['cors']['expose_headers']
         return final_response
 
     def create_name(self, node_name, i):
