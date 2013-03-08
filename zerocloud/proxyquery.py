@@ -315,7 +315,11 @@ class ProxyQueryMiddleware(object):
 #                else:
 #                    if not getattr(handler, 'delay_denial', None):
 #                        return resp(env, start_response)
+            start_time = time.time()
             res = handler(req)
+            perf = time.time() - start_time
+            if 'x-nexe-cdr-line' in res.headers:
+                res.headers['x-nexe-cdr-line'] = '%.3f, %s' % (perf, res.headers['x-nexe-cdr-line'])
         else:
             return self.app(env, start_response)
         return res(env, start_response)
