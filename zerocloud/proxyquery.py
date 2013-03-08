@@ -269,6 +269,7 @@ class ProxyQueryMiddleware(object):
         self.app.cdr_account = conf.get('user_stats_account', 'userstats')
         self.app.version = 'v1'
         self.app.zerovm_uses_newest = conf.get('zerovm_uses_newest', 'f').lower() in TRUE_VALUES
+        self.app.zerovm_use_cors = conf.get('zerovm_use_cors', 'f').lower() in TRUE_VALUES
         self.app.zerovm_accounting_enabled = conf.get('zerovm_accounting_enabled', 'f').lower() in TRUE_VALUES
         self.app.zerovm_content_type = conf.get('zerovm_default_content_type', 'application/octet-stream')
 
@@ -1170,12 +1171,13 @@ class ClusterController(Controller):
             ns_server.stop()
         if self.app.zerovm_accounting_enabled:
             self._store_accounting_data(req)
-        container_info = self.container_info(self.account_name, self.container_name)
-        if container_info.get('cors', None):
-            if container_info['cors'].get('allow_origin', None):
-                final_response.headers['access-control-allow-origin'] = container_info['cors']['allow_origin']
-            if container_info['cors'].get('expose_headers', None):
-                final_response.headers['access-control-expose-headers'] = container_info['cors']['expose_headers']
+        if self.app.zerovm_use_cors and self.container_name:
+            container_info = self.container_info(self.account_name, self.container_name)
+            if container_info.get('cors', None):
+                if container_info['cors'].get('allow_origin', None):
+                    final_response.headers['access-control-allow-origin'] = container_info['cors']['allow_origin']
+                if container_info['cors'].get('expose_headers', None):
+                    final_response.headers['access-control-expose-headers'] = container_info['cors']['expose_headers']
         return final_response
 
     def create_name(self, node_name, i):
