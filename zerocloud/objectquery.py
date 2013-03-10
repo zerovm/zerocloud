@@ -44,6 +44,7 @@ channel_type_map = {
     'sysimage': 3
 }
 
+
 class TmpDir(object):
     def __init__(self, path, device, disk_chunk_size=65536, os_interface=os):
         self.os_interface = os_interface
@@ -343,6 +344,7 @@ class ObjectQueryMiddleware(object):
                 return HTTPBadRequest(request=req,
                     body='No executable found in request')
 
+            fstab = None
             response_channels = []
             local_object = None
             if not zerovm_execute_only:
@@ -359,6 +361,10 @@ class ObjectQueryMiddleware(object):
                         if ch['path'] in local_object:
                             ch['lpath'] = file.data_file
                             channels[ch['device']] = file.data_file
+                    if ch['device'] in ['image', 'sysimage']:
+                        if not fstab:
+                            fstab = '[fstab]\n'
+                        fstab += 'channel=/dev/%s, mountpoint=/, access=ro\n' % ch['device']
                 elif ch['access'] & ACCESS_WRITABLE:
                     (output_fd, output_fn) = mkstemp()
                     fallocate(output_fd, self.zerovm_maxoutput)
@@ -424,14 +430,31 @@ class ObjectQueryMiddleware(object):
                             zerovm_inputmnfst +=\
                             'Channel=/dev/null,/dev/%s,0,0,0,%s,%s\n' %\
                             (dev, self.zerovm_maxiops, self.zerovm_maxoutput)
-
-                if config['env']:
+                env = None
+                if config.get('env'):
+                    env = '[env]\n'
                     zerovm_inputmnfst += 'Environment=%s\n' % ','.join(
                         reduce(lambda x, y: x + y, config['env'].items()))
+                    for k,v in config['env'].iteritems():
+                        env += '%s = %s\n' % (k, v)
 
-                if config['args']:
+                args = '[args]\nargs = %s' % config['name']
+                if config.get('args'):
                     zerovm_inputmnfst += 'CommandLine=%s\n'\
                                          % config['args']
+                    args += ' %s' % config['args']
+                args += '\n'
+                nvram_file = None
+                if fstab or args or env:
+                    (output_fd, nvram_file) = mkstemp()
+                    os.write(output_fd, fstab or '')
+                    os.write(output_fd, args or '')
+                    os.write(output_fd, env or '')
+                    os.close(output_fd)
+                    zerovm_inputmnfst +=\
+                    'Channel=%s,/dev/nvram,3,%s,%s,%s,%s\n' %\
+                    (nvram_file, self.zerovm_maxiops, self.zerovm_maxinput,
+                     self.zerovm_maxiops, self.zerovm_maxoutput)
 
                 nexe_name = config['name']
                 zerovm_inputmnfst += 'NodeName=%s,%d\n' \
@@ -448,6 +471,11 @@ class ObjectQueryMiddleware(object):
 
                 thrd = self.zerovm_thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn)
                 (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
+                if nvram_file:
+                    try:
+                        os.unlink(nvram_file)
+                    except OSError:
+                        pass
                 if zerovm_stderr:
                     self.logger.warning('zerovm stderr: '+zerovm_stderr)
                 if zerovm_retcode:

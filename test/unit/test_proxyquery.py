@@ -449,6 +449,10 @@ for i in xrange(0,len(dev_list)):
         mnfst.output = fname
     elif device == '/dev/stderr':
         mnfst.err = fname
+    elif device == '/dev/image':
+        mnfst.image = fname
+    elif device == '/dev/nvram':
+        mnfst.nvram = fname
     elif '/dev/in/' in device or '/dev/out/' in device:
         node_name = device.split('/')[3]
         proto, host, port = fname.split(':')
@@ -1278,7 +1282,7 @@ return 'Test Test'
         self.assertEqual(res.headers['x-object-meta-key2'], 'test2')
         self.assertEqual(res.body, 'Test Test')
 
-    def test_QUERY_immediate_response(self):
+    def test_QUERY_cgi_response(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
@@ -1318,6 +1322,27 @@ return resp + out
         self.assertEqual(res.headers['x-object-meta-key1'], 'value1')
         self.assertEqual(res.headers['x-object-meta-key2'], 'value2')
         self.assertEqual(res.body, '<html><body>Test this</body></html>')
+        conf = [
+            {
+                'name':'http',
+                'exec':{'path':'/c/exe2'},
+                'file_list':[
+                    {
+                        'device':'stdout',
+                        'content_type': 'message/http'
+                    }
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.headers['content-type'], 'text/html')
+        self.assertNotIn('x-object-meta-key1', res.headers)
+        self.assertNotIn('x-object-meta-key2', res.headers)
+        self.assertEqual(res.body, '<html><body>Test this</body></html>')
 
     def test_QUERY_GET_response(self):
         self.setup_QUERY()
@@ -1334,6 +1359,142 @@ return resp
         #self.assertEqual(res.status_int, 200)
         print res.headers
         print res.body
+
+    def test_QUERY_use_image(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe =\
+r'''
+return [open(mnfst.image).read(), sorted(id)]
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        image = 'This is image file'
+        self.create_object(prolis, '/v1/a/c/img', image)
+        conf = [
+            {
+                'name':'sort',
+                'exec':{'path':'/c/exe2'},
+                'file_list':[
+                    {'device':'stdin','path':'/c/o'},
+                    {'device':'stdout'},
+                    {'device':'image','path':'/c/img'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body,
+            str(['This is image file',
+                 pickle.loads(self.get_sorted_numbers())]))
+
+    def test_QUERY_use_nvram(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe =\
+r'''
+return open(mnfst.nvram).read()
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        conf = [
+            {
+                'name':'sort',
+                'exec':{
+                    'path':'/c/exe2'
+                },
+                'file_list':[
+                    {'device':'stdin','path':'/c/o'},
+                    {'device':'stdout'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body,
+            '[args]\n'
+            'args = sort\n')
+        conf = [
+            {
+                'name':'sort',
+                'exec':{
+                    'path':'/c/exe2',
+                    'args': 'aa bb cc'
+                },
+                'file_list':[
+                    {'device':'stdin','path':'/c/o'},
+                    {'device':'stdout'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body,
+            '[args]\n'
+            'args = sort aa bb cc\n')
+        image = 'This is image file'
+        self.create_object(prolis, '/v1/a/c/img', image)
+        conf = [
+            {
+                'name':'sort',
+                'exec':{
+                    'path':'/c/exe2'
+                },
+                'file_list':[
+                    {'device':'stdin','path':'/c/o'},
+                    {'device':'stdout'},
+                    {'device':'image','path':'/c/img'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.body,
+            '[fstab]\n'
+            'channel=/dev/image, mountpoint=/, access=ro\n'
+            '[args]\n'
+            'args = sort\n')
+        conf = [
+            {
+                'name':'sort',
+                'exec':{
+                    'path':'/c/exe2',
+                    'args': 'aa bb cc',
+                    'env': {
+                        'key1': 'val1',
+                        'key2': 'val2'
+                    }
+                },
+                'file_list':[
+                    {'device':'stdin','path':'/c/o'},
+                    {'device':'stdout'},
+                    {'device':'image','path':'/c/img'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.body,
+            '[fstab]\n'
+            'channel=/dev/image, mountpoint=/, access=ro\n'
+            '[args]\n'
+            'args = sort aa bb cc\n'
+            '[env]\n'
+            'key2 = val2\n'
+            'key1 = val1\n')
 
     def test_QUERY_sort_immediate_stdout_stderr(self):
         self.setup_QUERY()
