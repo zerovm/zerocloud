@@ -32,7 +32,7 @@ from swift.common.constraints import check_utf8, MAX_FILE_SIZE, \
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
-    HTTPClientDisconnect
+    HTTPClientDisconnect, wsgify
 from swiftclient.client import quote
 
 from zerocloud.tarstream import StringBuffer, UntarStream, RECORDSIZE, \
@@ -49,7 +49,7 @@ ACCESS_RANDOM = 0x1 << 2
 ACCESS_NETWORK = 0x1 << 3
 ACCESS_CDR = 0x1 << 4
 
-device_map = {
+DEVICE_MAP = {
     'stdin': ACCESS_READABLE,
     'stdout': ACCESS_WRITABLE,
     'stderr': ACCESS_WRITABLE,
@@ -255,48 +255,69 @@ class ProxyQueryMiddleware(object):
             self.logger = logger
         else:
             self.logger = get_logger(conf, log_route='proxy-query')
-        self.app.zerovm_maxnexe = int(conf.get('zerovm_maxnexe', 256 * 1048576))
+        # header for "execute by POST"
+        self.app.zerovm_execute = 'x-zerovm-execute'
+        # total maximum iops for a cahnnel read or write op
         self.app.zerovm_maxiops = int(conf.get('zerovm_maxiops', 1024 * 1048576))
+        # total maximum bytes for a channel write op
         self.app.zerovm_maxoutput = int(conf.get('zerovm_maxoutput', 1024 * 1048576))
+        # total maximum bytes for a channel read op
         self.app.zerovm_maxinput = int(conf.get('zerovm_maxinput', 1024 * 1048576))
+        # maximum size of a system map file
         self.app.zerovm_maxconfig = int(conf.get('zerovm_maxconfig', 65536))
+        # name server hostname or ip, will be autodetected if not set
         self.app.zerovm_ns_hostname = conf.get('zerovm_ns_hostname')
+        # name server thread pool size
         self.app.zerovm_ns_maxpool = int(conf.get('zerovm_ns_maxpool', 1000))
         self.app.zerovm_ns_thrdpool = GreenPool(self.app.zerovm_ns_maxpool)
-
+        # max time to wait for upload to finish, used in POST requests
         self.app.max_upload_time = int(conf.get('max_upload_time', 86400))
+        # network chunk size for all network ops
         self.app.network_chunk_size = int(conf.get('network_chunk_size', 65536))
-        self.app.cdr_account = conf.get('user_stats_account', 'userstats')
-        self.app.version = 'v1'
+        # use newest files when running zerovm executables, default - False
         self.app.zerovm_uses_newest = conf.get('zerovm_uses_newest', 'f').lower() in TRUE_VALUES
+        # use CORS workaround to POST execute commands, default - False
         self.app.zerovm_use_cors = conf.get('zerovm_use_cors', 'f').lower() in TRUE_VALUES
+        # Accounting: enable or disabe execution accounting data, default - disabled
         self.app.zerovm_accounting_enabled = conf.get('zerovm_accounting_enabled', 'f').lower() in TRUE_VALUES
+        # Accounting: system account for storing accounting data
+        self.app.cdr_account = conf.get('user_stats_account', 'userstats')
+        # Accounting: storage API version
+        self.app.version = 'v1'
+        # default content-type for unknown files
         self.app.zerovm_content_type = conf.get('zerovm_default_content_type', 'application/octet-stream')
+        # names of sysimage devices, no sysimage devices exist by default
+        self.app.zerovm_sysimage_devices = [i.strip() for i in conf.get('zerovm_sysimage_devices', '').split() if i.strip()]
+        # GET support: container for content-type association storage
+        self.app.zerovm_registry_path = '.conf'
+        # GET support: API version for "open" command
+        self.app.zerovm_open_version = 'open'
+        # GET support: API version for "open with" command
+        self.app.zerovm_openwith_version = 'open-with'
+        # GET support: allowed commands
+        self.app.zerovm_allowed_commands = [self.app.zerovm_open_version, self.app.zerovm_openwith_version]
 
-    def __call__(self, env, start_response):
-
-        req = Request(env)
-        if 'x-zerovm-execute' in req.headers or req.path.startswith('/exec/'):
-            controller = None
+    @wsgify
+    def __call__(self, req):
+        try:
+            version, account, container, obj = split_path(req.path, 1, 4, True)
+            path_parts = dict(version=version,
+                account_name=account,
+                container_name=container,
+                object_name=obj)
+        except ValueError:
+            return HTTPNotFound(request=req)
+        if account and \
+           (self.app.zerovm_execute in req.headers
+            or version in self.app.zerovm_allowed_commands):
             if req.content_length and req.content_length < 0:
                 return HTTPBadRequest(request=req,
-                    body='Invalid Content-Length')(env, start_response)
-            try:
-                version, account, container, obj = split_path(req.path, 1, 4, True)
-                path_parts = dict(version=version,
-                    account_name=account,
-                    container_name=container,
-                    object_name=obj)
-                if account:
-                    controller = self.get_controller(account, container, obj)
-            except ValueError:
-                return HTTPNotFound(request=req)(env, start_response)
-
+                    body='Invalid Content-Length')
             if not check_utf8(req.path_info):
-                return HTTPPreconditionFailed(request=req, body='Invalid UTF8')(env, start_response)
+                return HTTPPreconditionFailed(request=req, body='Invalid UTF8')
+            controller = self.get_controller(account, container, obj)
             if not controller:
-                return HTTPPreconditionFailed(request=req, body='Bad URL')(env, start_response)
-
+                return HTTPPreconditionFailed(request=req, body='Bad URL')
             if 'swift.trans_id' not in req.environ:
                 # if this wasn't set by an earlier middleware, set it now
                 trans_id = 'tx' + uuid.uuid4().hex
@@ -307,6 +328,8 @@ class ProxyQueryMiddleware(object):
             self.logger.client_ip = get_remote_client(req)
             if path_parts['version']:
                 req.path_info_pop()
+            if not self.app.zerovm_execute in req.headers:
+                req.headers[self.app.zerovm_execute] = '1.0'
             handler = controller.zerovm_query
 #            if 'swift.authorize' in req.environ:
 #                resp = req.environ['swift.authorize'](req)
@@ -320,9 +343,8 @@ class ProxyQueryMiddleware(object):
             perf = time.time() - start_time
             if 'x-nexe-cdr-line' in res.headers:
                 res.headers['x-nexe-cdr-line'] = '%.3f, %s' % (perf, res.headers['x-nexe-cdr-line'])
-        else:
-            return self.app(env, start_response)
-        return res(env, start_response)
+            return res
+        return self.app
 
     def get_controller(self, account, container, obj):
         return ClusterController(self.app, account, container, obj)
@@ -532,8 +554,11 @@ class ClusterController(Controller):
                             return HTTPBadRequest(request=req,
                                 body='Must specify device for file in %s'
                                 % node_name)
-                        access = device_map.get(device, -1)
+                        access = DEVICE_MAP.get(device, -1)
                         if access < 0:
+                            if device in self.app.zerovm_sysimage_devices:
+                                other_list.append(f)
+                                continue
                             return HTTPBadRequest(request=req,
                                 body='Unknown device %s in %s'
                                 % (device, node_name))
@@ -549,7 +574,7 @@ class ClusterController(Controller):
                     read_group = 0
                     for f in read_list:
                         device = f.get('device')
-                        access = device_map.get(device)
+                        access = DEVICE_MAP.get(device)
                         path = f.get('path')
                         if path and '*' in path:
                             read_group = 1
@@ -647,7 +672,7 @@ class ClusterController(Controller):
 
                     for f in write_list:
                         device = f.get('device')
-                        access = device_map.get(device)
+                        access = DEVICE_MAP.get(device)
                         path = f.get('path')
                         content_type = f.get('content_type', self.app.zerovm_content_type)
                         meta = f.get('meta', None)
@@ -729,16 +754,15 @@ class ClusterController(Controller):
                                     content_type=f.get('content_type', 'text/html'))
 
                     for f in other_list:
-                        # only debug channel is here, for now
                         device = f.get('device')
-                        if not 'debug' in device:
-                            return HTTPBadRequest(request=req,
-                                body='Bad device name %s' % device)
-                        access = device_map.get(device)
-                        path = f.get('path')
-                        if not path:
-                            return HTTPBadRequest(request=req,
-                                body='Path required for device %s' % device)
+                        if device in self.app.zerovm_sysimage_devices:
+                            access = ACCESS_RANDOM | ACCESS_READABLE
+                        else:
+                            access = DEVICE_MAP.get(device)
+                            path = f.get('path')
+                            if not path:
+                                return HTTPBadRequest(request=req,
+                                    body='Path required for device %s' % device)
                         if node_count > 1:
                             for i in range(1, node_count + 1):
                                 new_name = self.create_name(node_name, i)
@@ -835,16 +859,16 @@ class ClusterController(Controller):
             conf = parse_qs(req.query_string)
             req.path_info = '/' + self.account_name
             req.method = 'POST'
-            req.headers['x-zerovm-execute'] = '1.0'
+            req.headers[self.app.zerovm_execute] = '1.0'
             if conf.get('args', None):
                 node.args = conf['args'][0]
             if conf.get('env', None):
                 for key, val in conf['env'].split(':'):
                     node.env[key] = val
             if conf.get('file', None):
-                node.add_channel('stdin', device_map.get('stdin'),
+                node.add_channel('stdin', DEVICE_MAP.get('stdin'),
                     path=conf['file'][0])
-            node.add_channel('stdout', device_map.get('stdout'),
+            node.add_channel('stdout', DEVICE_MAP.get('stdout'),
                 content_type=conf.get('content_type', None)[0])
             self.nodes['get'] = node
         elif req.method in 'POST':
@@ -1008,8 +1032,9 @@ class ClusterController(Controller):
                 channels.append(ZvmChannel('boot', None, node.exe))
             if len(node.channels) > 1:
                 for ch in node.channels[1:]:
-                    if ch.path and ch.path[0] == '/' and \
-                       (ch.access & (ACCESS_READABLE | ACCESS_CDR)):
+                    if ch.path and ch.path[0] == '/' \
+                       and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
+                    and ch.device not in self.app.zerovm_sysimage_devices:
                         channels.append(ch)
 
             for ch in channels:

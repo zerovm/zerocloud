@@ -33,7 +33,7 @@ try:
 except ImportError:
     import json
 
-channel_type_map = {
+CHANNEL_TYPE_MAP = {
     'stdin': 0,
     'stdout': 0,
     'stderr': 0,
@@ -134,6 +134,12 @@ class ObjectQueryMiddleware(object):
 
         # max nexe memory size
         self.zerovm_maxnexemem = int(conf.get('zerovm_maxnexemem', 4 * 1024 * 1048576))
+
+        # name-path pairs for sysimage devices on this node
+        self.zerovm_sysimage_devices = {}
+        sysimage_list = [i.strip() for i in conf.get('zerovm_sysimage_devices', '').split() if i.strip()]
+        for k,v in zip(*[iter(sysimage_list)]*2):
+            self.zerovm_sysimage_devices[k] = v
 
         # hardcoded, we don't want to crush the server
         self.zerovm_stderr_size = 65536
@@ -345,6 +351,12 @@ class ObjectQueryMiddleware(object):
                     body='No executable found in request')
 
             fstab = None
+            def add_to_fstab(fstab, device, access):
+                if not fstab:
+                    fstab = '[fstab]\n'
+                fstab += 'channel=/dev/%s, mountpoint=/, access=%s\n' \
+                         % (device, access)
+                return fstab
             response_channels = []
             local_object = None
             if not zerovm_execute_only:
@@ -352,7 +364,10 @@ class ObjectQueryMiddleware(object):
             for ch in config['channels']:
                 if ch['device'] in channels:
                     ch['lpath'] = channels[ch['device']]
-                if ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
+                if ch['device'] in self.zerovm_sysimage_devices.keys():
+                    ch['lpath'] = self.zerovm_sysimage_devices[ch['device']]
+                    fstab = add_to_fstab(fstab, ch['device'], 'ro')
+                elif ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
                     if not ch['path'] or ch['path'][0] != '/':
                         return HTTPBadRequest(request=req,
                             body='Could not resolve channel path %s'
@@ -361,10 +376,8 @@ class ObjectQueryMiddleware(object):
                         if ch['path'] in local_object:
                             ch['lpath'] = file.data_file
                             channels[ch['device']] = file.data_file
-                    if ch['device'] in ['image', 'sysimage']:
-                        if not fstab:
-                            fstab = '[fstab]\n'
-                        fstab += 'channel=/dev/%s, mountpoint=/, access=ro\n' % ch['device']
+                    if ch['device'] in 'image':
+                        fstab = add_to_fstab(fstab, ch['device'], 'rw')
                 elif ch['access'] & ACCESS_WRITABLE:
                     (output_fd, output_fn) = mkstemp()
                     fallocate(output_fd, self.zerovm_maxoutput)
@@ -394,11 +407,14 @@ class ObjectQueryMiddleware(object):
 
 
                 for ch in config['channels']:
-                    type = channel_type_map.get(ch['device'])
+                    type = CHANNEL_TYPE_MAP.get(ch['device'])
                     if type is None:
-                        return HTTPBadRequest(request=req,
-                            body='Could not resolve channel type for: %s'
-                                 % ch['device'])
+                        if ch['device'] in self.zerovm_sysimage_devices.keys():
+                            type = CHANNEL_TYPE_MAP.get('sysimage')
+                        else:
+                            return HTTPBadRequest(request=req,
+                                body='Could not resolve channel type for: %s'
+                                     % ch['device'])
                     access = ch['access']
                     if access & ACCESS_READABLE:
                         zerovm_inputmnfst += \

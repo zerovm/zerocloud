@@ -440,9 +440,8 @@ connect_count = 0
 con_list = []
 bind_map = {}
 alias = int(re.split('\s*,\s*', mnfst.NodeName)[1])
-for i in xrange(0,len(dev_list)):
-    device = dev_list[i]
-    fname = channel_list[i*7]
+mnfst.channels = {}
+for fname,device,type,rd,rd_byte,wr,wr_byte in zip(*[iter(channel_list)]*7):
     if device == '/dev/stdin' or device == '/dev/input':
         mnfst.input = fname
     elif device == '/dev/stdout' or device == '/dev/output':
@@ -469,6 +468,14 @@ for i in xrange(0,len(dev_list)):
             connect_data += struct.pack('!IIH', host, 0, 0)
             connect_count += 1
             con_list.append(device)
+    mnfst.channels[device] = {
+        'path': fname,
+        'type': type,
+        'read': rd,
+        'read_bytes': rd_byte,
+        'write': wr,
+        'write_bytes': wr_byte
+    }
 request = struct.pack('!I', alias) +\
           struct.pack('!I', bind_count) + bind_data + struct.pack('!I', connect_count) + connect_data
 if getattr(mnfst, 'NameServer', None):
@@ -1391,6 +1398,69 @@ return [open(mnfst.image).read(), sorted(id)]
             str(['This is image file',
                  pickle.loads(self.get_sorted_numbers())]))
 
+    def test_QUERY_use_sysimage(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        _obj1srv = _test_servers[5]
+        _obj2srv = _test_servers[6]
+        image = 'This is image file'
+        sysimage_path = os.path.join(_testdir, 'sysimage.tar')
+
+        @contextmanager
+        def replace_conf():
+            zerovm_sysimage_devices = prosrv.app.zerovm_sysimage_devices
+            zerovm_sysimage_devices1 = _obj1srv.zerovm_sysimage_devices
+            zerovm_sysimage_devices2 = _obj2srv.zerovm_sysimage_devices
+            img = open(sysimage_path, 'wb')
+            img.write(image)
+            img.close()
+            prosrv.app.zerovm_sysimage_devices = ['sysimage']
+            _obj1srv.zerovm_sysimage_devices = { 'sysimage': sysimage_path }
+            _obj2srv.zerovm_sysimage_devices = { 'sysimage': sysimage_path }
+            try:
+                yield True
+            finally:
+                prosrv.app.zerovm_sysimage_devices = zerovm_sysimage_devices
+                _obj1srv.zerovm_sysimage_devices = zerovm_sysimage_devices1
+                _obj2srv.zerovm_sysimage_devices = zerovm_sysimage_devices2
+                try:
+                    os.unlink(sysimage_path)
+                except IOError:
+                    pass
+        nexe =\
+r'''
+return open(mnfst.nvram).read() + \
+    str(mnfst.channels['/dev/sysimage']['type']) + ' ' + \
+    str(mnfst.channels['/dev/sysimage']['path'])
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        with replace_conf():
+            conf = [
+                {
+                    'name':'sort',
+                    'exec':{
+                        'path':'/c/exe2'
+                    },
+                    'file_list':[
+                        {'device':'stdin','path':'/c/o'},
+                        {'device':'stdout'},
+                        {'device':'sysimage'}
+                    ]
+                }
+            ]
+            conf = json.dumps(conf)
+            req = self.zerovm_request()
+            req.body = conf
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.body,
+                '[fstab]\n'
+                'channel=/dev/sysimage, mountpoint=/, access=ro\n'
+                '[args]\n'
+                'args = sort\n'
+                '%d %s' % (3, sysimage_path))
+
     def test_QUERY_use_nvram(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
@@ -1462,7 +1532,7 @@ return open(mnfst.nvram).read()
         res = req.get_response(prosrv)
         self.assertEqual(res.body,
             '[fstab]\n'
-            'channel=/dev/image, mountpoint=/, access=ro\n'
+            'channel=/dev/image, mountpoint=/, access=rw\n'
             '[args]\n'
             'args = sort\n')
         conf = [
@@ -1489,7 +1559,7 @@ return open(mnfst.nvram).read()
         res = req.get_response(prosrv)
         self.assertEqual(res.body,
             '[fstab]\n'
-            'channel=/dev/image, mountpoint=/, access=ro\n'
+            'channel=/dev/image, mountpoint=/, access=rw\n'
             '[args]\n'
             'args = sort aa bb cc\n'
             '[env]\n'
