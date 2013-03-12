@@ -20,7 +20,7 @@ from swift.common.http import HTTP_CONTINUE, is_success, \
 from swift.proxy.controllers.base import update_headers, delay_denial, \
     Controller, cors_validation
 from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
-    get_remote_client, ContextPool
+    get_remote_client, ContextPool, cache_from_env
 from swift.proxy.server import ObjectController, ContainerController, \
     AccountController
 from swift.common.bufferedhttp import http_connect
@@ -63,6 +63,22 @@ TAR_MIMES = ['application/x-tar', 'application/x-gtar', 'application/x-ustar']
 CLUSTER_CONFIG_FILENAME = 'boot/cluster.map'
 NODE_CONFIG_FILENAME = 'boot/system.map'
 CONFIG_BYTE_SIZE = 128 * 1024
+
+DEFAULT_EXE_SYSTEM_MAP = r'''
+    [{
+        "name": "excutable",
+        "exec": {
+            "path": "{.object_path}",
+            "args": "{.args}"
+        },
+        "file_list": [
+            {
+                "device": "stdout",
+                "content_type": "{.content_type}"
+            }
+        ]
+    }]
+    '''
 
 def merge_headers(current, new):
     if hasattr(new, 'keys'):
@@ -257,6 +273,8 @@ class ProxyQueryMiddleware(object):
             self.logger = get_logger(conf, log_route='proxy-query')
         # header for "execute by POST"
         self.app.zerovm_execute = 'x-zerovm-execute'
+        # execution engine version
+        self.app.zerovm_execute_ver = '1.0'
         # total maximum iops for a cahnnel read or write op
         self.app.zerovm_maxiops = int(conf.get('zerovm_maxiops', 1024 * 1048576))
         # total maximum bytes for a channel write op
@@ -289,13 +307,15 @@ class ProxyQueryMiddleware(object):
         # names of sysimage devices, no sysimage devices exist by default
         self.app.zerovm_sysimage_devices = [i.strip() for i in conf.get('zerovm_sysimage_devices', '').split() if i.strip()]
         # GET support: container for content-type association storage
-        self.app.zerovm_registry_path = '.conf'
+        self.app.zerovm_registry_path = '.zvm'
         # GET support: API version for "open" command
         self.app.zerovm_open_version = 'open'
         # GET support: API version for "open with" command
         self.app.zerovm_openwith_version = 'open-with'
         # GET support: allowed commands
         self.app.zerovm_allowed_commands = [self.app.zerovm_open_version, self.app.zerovm_openwith_version]
+        # GET support: cache config files for this amount of seconds
+        self.app.zerovm_cache_config_timeout = 60
 
     @wsgify
     def __call__(self, req):
@@ -329,8 +349,11 @@ class ProxyQueryMiddleware(object):
             if path_parts['version']:
                 req.path_info_pop()
             if not self.app.zerovm_execute in req.headers:
-                req.headers[self.app.zerovm_execute] = '1.0'
-            handler = controller.zerovm_query
+                req.headers[self.app.zerovm_execute] = self.app.zerovm_execute_ver
+            try:
+                handler = getattr(controller, req.method)
+            except AttributeError:
+                return HTTPPreconditionFailed(request=req, body='Bad HTTP method')
 #            if 'swift.authorize' in req.environ:
 #                resp = req.environ['swift.authorize'](req)
 #                if not resp:
@@ -848,72 +871,50 @@ class ClusterController(Controller):
 
     @delay_denial
     @cors_validation
-    def zerovm_query(self, req):
+    def POST(self, req, exe_resp=None, cluster_config=''):
         user_image = None
-        if req.method in 'GET':
-        # We need to create system map from GET request
-            if not self.container_name or not self.obj_name:
-                return HTTPNotFound(request=req, headers=req.headers)
-            nexe = '/%s/%s' % (self.container_name, self.obj_name)
-            node = ZvmNode(1, 'get', nexe)
-            conf = parse_qs(req.query_string)
-            req.path_info = '/' + self.account_name
-            req.method = 'POST'
-            req.headers[self.app.zerovm_execute] = '1.0'
-            if conf.get('args', None):
-                node.args = conf['args'][0]
-            if conf.get('env', None):
-                for key, val in conf['env'].split(':'):
-                    node.env[key] = val
-            if conf.get('file', None):
-                node.add_channel('stdin', DEVICE_MAP.get('stdin'),
-                    path=conf['file'][0])
-            node.add_channel('stdout', DEVICE_MAP.get('stdout'),
-                content_type=conf.get('content_type', None)[0])
-            self.nodes['get'] = node
-        elif req.method in 'POST':
-            if 'content-type' not in req.headers:
+        if 'content-type' not in req.headers:
+            return HTTPBadRequest(request=req,
+                body='Must specify Content-Type')
+        upload_expiration = time.time() + self.app.max_upload_time
+        etag = md5()
+        req.bytes_transferred = 0
+        path_list = [StringBuffer(CLUSTER_CONFIG_FILENAME),
+                     StringBuffer(NODE_CONFIG_FILENAME)]
+        read_iter = iter(lambda:
+            req.environ['wsgi.input']
+            .read(self.app.network_chunk_size), '')
+        if req.headers['content-type'].split(';')[0].strip() in TAR_MIMES:
+        # Buffer first blocks of tar file and search for the system map
+            if not 'content-length' in req.headers:
                 return HTTPBadRequest(request=req,
-                    body='Must specify Content-Type')
-            upload_expiration = time.time() + self.app.max_upload_time
-            etag = md5()
-            cluster_config = ''
-            req.bytes_transferred = 0
-            path_list = [StringBuffer(CLUSTER_CONFIG_FILENAME),
-                         StringBuffer(NODE_CONFIG_FILENAME)]
-            read_iter = iter(lambda:
-                req.environ['wsgi.input']
-                .read(self.app.network_chunk_size), '')
-            if req.headers['content-type'].split(';')[0].strip() in TAR_MIMES:
-            # Buffer first blocks of tar file and search for the system map
-                if not 'content-length' in req.headers:
-                    return HTTPBadRequest(request=req,
-                        body='Must specify Content-Length')
+                    body='Must specify Content-Length')
 
-                cached_body = CachedBody(read_iter)
-                user_image = iter(cached_body)
-                untar_stream = UntarStream(cached_body.cache, path_list)
-                for chunk in untar_stream:
-                    req.bytes_transferred += len(chunk)
-                    etag.update(chunk)
-                for buffer in path_list:
-                    if buffer.is_closed:
-                        cluster_config = buffer.body
-                        break
-                if not cluster_config:
-                    return HTTPBadRequest(request=req,
-                        body='System boot map was not found in request')
-                try:
-                    cluster_config = json.loads(cluster_config)
-                except Exception:
-                    return HTTPUnprocessableEntity(body='Cound not parse system map')
-                error = self.parse_cluster_config(req, cluster_config)
-                if error:
-                    self.app.logger.warn(
-                        _('ERROR Error parsing config: %s'), cluster_config)
-                    return error
-            elif req.headers['content-type'].split(';')[0].strip() in 'application/json':
-            # System map was sent as a POST body
+            cached_body = CachedBody(read_iter)
+            user_image = iter(cached_body)
+            untar_stream = UntarStream(cached_body.cache, path_list)
+            for chunk in untar_stream:
+                req.bytes_transferred += len(chunk)
+                etag.update(chunk)
+            for buffer in path_list:
+                if buffer.is_closed:
+                    cluster_config = buffer.body
+                    break
+            if not cluster_config:
+                return HTTPBadRequest(request=req,
+                    body='System boot map was not found in request')
+            try:
+                cluster_config = json.loads(cluster_config)
+            except Exception:
+                return HTTPUnprocessableEntity(body='Cound not parse system map')
+            error = self.parse_cluster_config(req, cluster_config)
+            if error:
+                self.app.logger.warn(
+                    _('ERROR Error parsing config: %s'), cluster_config)
+                return error
+        elif req.headers['content-type'].split(';')[0].strip() in 'application/json':
+        # System map was sent as a POST body
+            if not cluster_config:
                 for chunk in read_iter:
                     req.bytes_transferred += len(chunk)
                     if time.time() > upload_expiration:
@@ -929,27 +930,24 @@ class ClusterController(Controller):
                 if 'etag' in req.headers and\
                    req.headers['etag'].lower() != etag:
                     return HTTPUnprocessableEntity(request=req)
-                try:
-                    cluster_config = json.loads(cluster_config)
-                except Exception:
-                    return HTTPUnprocessableEntity(body='Cound not parse system map')
-                error = self.parse_cluster_config(req, cluster_config)
-                if error:
-                    self.app.logger.warn(
-                        _('ERROR Error parsing config: %s'), cluster_config)
-                    return error
-            elif req.headers['content-type'].startswith('text/'):
-            # We got a text file in POST request
-            # assume that it is a script and create system map
-                return HTTPBadRequest(request=req,
-                    body='Unsupported Content-Type')
-            else:
-                return HTTPBadRequest(request=req,
-                    body='Unsupported Content-Type')
-            req.path_info = '/' + self.account_name
+            try:
+                cluster_config = json.loads(cluster_config)
+            except Exception:
+                return HTTPUnprocessableEntity(body='Cound not parse system map')
+            error = self.parse_cluster_config(req, cluster_config)
+            if error:
+                self.app.logger.warn(
+                    _('ERROR Error parsing config: %s'), cluster_config)
+                return error
+        elif req.headers['content-type'].startswith('text/'):
+        # We got a text file in POST request
+        # assume that it is a script and create system map
+            return HTTPBadRequest(request=req,
+                body='Unsupported Content-Type')
         else:
             return HTTPBadRequest(request=req,
-                body='Invalid request')
+                body='Unsupported Content-Type')
+        req.path_info = '/' + self.account_name
 
         node_list = []
         for k in sorted(self.nodes.iterkeys()):
@@ -1045,23 +1043,26 @@ class ClusterController(Controller):
                         source_resp = resp
                         break
                 if not source_resp:
-                    source_req = req.copy_get()
-                    source_req.path_info = load_from
-                    if self.app.zerovm_uses_newest:
-                        source_req.headers['X-Newest'] = 'true'
-                    acct, src_container_name, src_obj_name =\
-                        split_path(load_from, 1, 3, True)
-                    container_info = self.container_info(acct, src_container_name)
-                    source_req.acl = container_info['read_acl']
-                    #if 'boot' in ch.device:
-                    #    source_req.acl = container_info['exec_acl']
-                    source_resp =\
-                        ObjectController(self.app, acct,
-                            src_container_name, src_obj_name)\
-                        .GET(source_req)
-                    if source_resp.status_int >= 300:
-                        update_headers(source_resp, nexe_headers)
-                        return source_resp
+                    if exe_resp and load_from == exe_resp.request.path_info:
+                        source_resp = exe_resp
+                    else:
+                        source_req = req.copy_get()
+                        source_req.path_info = load_from
+                        if self.app.zerovm_uses_newest:
+                            source_req.headers['X-Newest'] = 'true'
+                        acct, src_container_name, src_obj_name =\
+                            split_path(load_from, 1, 3, True)
+                        container_info = self.container_info(acct, src_container_name)
+                        source_req.acl = container_info['read_acl']
+                        #if 'boot' in ch.device:
+                        #    source_req.acl = container_info['exec_acl']
+                        source_resp =\
+                            ObjectController(self.app, acct,
+                                src_container_name, src_obj_name)\
+                            .GET(source_req)
+                        if source_resp.status_int >= 300:
+                            update_headers(source_resp, nexe_headers)
+                            return source_resp
                     source_resp.nodes = []
                     data_sources.append(source_resp)
                 node.last_data = source_resp
@@ -1404,6 +1405,93 @@ class ClusterController(Controller):
                 if new_ch.get('meta', None):
                     for k,v in new_ch.get('meta').iteritems():
                         old_ch.meta[k] = v
+    @delay_denial
+    @cors_validation
+    def GET(self, req):
+        if not self.container_name or not self.obj_name:
+            return HTTPNotFound(request=req, headers=req.headers)
+        obj_req = req.copy_get()
+        obj_req.method = 'HEAD'
+        if obj_req.environ.get('QUERY_STRING'):
+            obj_req.environ['QUERY_STRING'] = ''
+        run = False
+        if self.obj_name[-len('.nexe'):] in '.nexe':
+            #let's get a small speedup as it's quite possibly an executable
+            obj_req.method = 'GET'
+            run = True
+        controller = ObjectController(
+            self.app,
+            self.account_name,
+            self.container_name,
+            self.obj_name)
+        handler = getattr(controller, req.method, None)
+        obj_resp = handler(obj_req)
+        content = obj_resp.content_type.split(';')[0].strip()
+        print content
+        if content in 'application/x-nexe':
+            run = True
+        elif run:
+            # speedup did not succeed...
+            for chunk in obj_resp.app_iter:
+                pass
+            obj_req.method = 'HEAD'
+            run = False
+        template = DEFAULT_EXE_SYSTEM_MAP
+        error = self._get_content_config(obj_req, content)
+        if error:
+            return error
+        if obj_req.template:
+            template = obj_req.template
+        elif not run:
+            return HTTPNotFound(request=req,
+                body='No application registered for %s' % content)
+        for k, v in req.params.iteritems():
+            if k in 'object_path':
+                continue
+            i = '{.%s}' % k
+            template = template.replace(i, v)
+        req.path_info_pop()
+        config = template.replace('{.object_path}', req.path_info)
+        config = re.sub(r'\{\.[^\}]+\}', '', config)
+        post_req = Request.blank('/%s' % self.account_name,
+            environ=obj_req.environ,
+            headers=obj_req.headers)
+        post_req.method = 'POST'
+        post_req.headers['content-type'] = 'application/json'
+        exe_resp = None
+        if obj_req.method in 'GET':
+            exe_resp = obj_resp
+        return self.POST(post_req, exe_resp=exe_resp, cluster_config=config)
+
+    def _get_content_config(self, req, content_type):
+        req.template = None
+        cont = self.app.zerovm_registry_path
+        obj = '%s/config' % content_type
+        config_path = '/%s/%s/%s' % (self.account_name, cont, obj)
+        memcache_client = cache_from_env(req.environ)
+        memcache_key = 'zvmconf' + config_path
+        if memcache_client:
+            req.template = memcache_client.get(memcache_key)
+            if req.template:
+                return
+        config_req = req.copy_get()
+        config_req.path_info = config_path
+        config_resp = ObjectController(
+            self.app,
+            self.account_name,
+            cont,
+            obj).GET(config_req)
+        if config_resp.status_int == 200:
+            req.template = ''
+            for chunk in config_resp.app_iter:
+                req.template += chunk
+                if self.app.zerovm_maxconfig < len(req.template):
+                    req.template = None
+                    return HTTPRequestEntityTooLarge(request=config_req,
+                        body='Config file at %s is too large' % config_path)
+        if memcache_client and req.template:
+            memcache_client.set(memcache_key, req.template,
+                time=float(self.app.zerovm_cache_config_timeout))
 
 
 def filter_factory(global_conf, **local_conf):

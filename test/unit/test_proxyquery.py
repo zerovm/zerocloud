@@ -289,7 +289,7 @@ class TestProxyQuery(unittest.TestCase):
         status = headers[:len(exp1)]
         self.assert_(exp1 in status or exp2 in status)
 
-    def create_object(self, prolis, url, obj):
+    def create_object(self, prolis, url, obj, content_type='application/octet-stream'):
         sock = connect_tcp(('localhost', prolis.getsockname()[1]))
         fd = sock.makefile()
         fd.write('PUT %s HTTP/1.1\r\n'
@@ -297,8 +297,8 @@ class TestProxyQuery(unittest.TestCase):
                  'Connection: close\r\n'
                  'X-Storage-Token: t\r\n'
                  'Content-Length: %s\r\n'
-                 'Content-Type: application/octet-stream\r\n'
-                 '\r\n%s' % (url, str(len(obj)),  obj))
+                 'Content-Type: %s\r\n'
+                 '\r\n%s' % (url, str(len(obj)),  content_type, obj))
         fd.flush()
         headers = readuntil2crlfs(fd)
         exp = 'HTTP/1.1 201'
@@ -1360,12 +1360,39 @@ r'''
 resp = '<html><body>Test this</body></html>'
 return resp
 '''[1:-1]
-        self.create_object(prolis, '/v1/a/c/exe2', nexe)
-        req = Request.blank('/exec/a/c/exe2?' + urlencode({'content_type':'text/html'}))
+        self.create_object(prolis, '/v1/a/c/exe2', nexe, content_type='application/x-nexe')
+        req = Request.blank('/open/a/c/exe2?' + urlencode({'content_type':'text/html'}))
         res = req.get_response(prosrv)
-        #self.assertEqual(res.status_int, 200)
-        print res.headers
-        print res.body
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, '<html><body>Test this</body></html>')
+        self.assertEqual(res.headers['content-type'], 'text/html')
+        self.create_object(prolis, '/v1/a/c/my.nexe', nexe, content_type='application/x-nexe')
+        req = Request.blank('/open/a/c/my.nexe?' + urlencode({'content_type':'text/html'}))
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, '<html><body>Test this</body></html>')
+        self.assertEqual(res.headers['content-type'], 'text/html')
+        conf = [
+            {
+                'name':'sort',
+                'exec':{'path':'/c/exe'},
+                'file_list':[
+                    {'device':'stdin','path':'{.object_path}'},
+                    {'device':'stdout', 'content_type': 'application/x-pickle'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        self.create_container(prolis, '/v1/a/%s' % prosrv.app.zerovm_registry_path)
+        self.create_object(prolis, '/v1/a/%s/%s'
+                                   % (prosrv.app.zerovm_registry_path,
+                                      'application/octet-stream/config'),
+            conf, content_type='application/json')
+        req = Request.blank('/open/a/c/o')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.headers['content-type'], 'application/x-pickle')
+        self.assertEqual(res.body, self.get_sorted_numbers())
 
     def test_QUERY_use_image(self):
         self.setup_QUERY()
