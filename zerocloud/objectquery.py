@@ -470,7 +470,8 @@ class ObjectQueryMiddleware(object):
                     zerovm_inputmnfst +=\
                     'Channel=%s,/dev/nvram,3,%s,%s,%s,%s\n' %\
                     (nvram_file, self.zerovm_maxiops, self.zerovm_maxinput,
-                     self.zerovm_maxiops, self.zerovm_maxoutput)
+#                     self.zerovm_maxiops, self.zerovm_maxoutput)
+                    0, 0)
 
                 nexe_name = config['name']
                 zerovm_inputmnfst += 'NodeName=%s,%d\n' \

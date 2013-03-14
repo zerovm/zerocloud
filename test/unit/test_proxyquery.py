@@ -1289,6 +1289,30 @@ return 'Test Test'
         self.assertEqual(res.headers['x-object-meta-key2'], 'test2')
         self.assertEqual(res.body, 'Test Test')
 
+
+    def test_QUERY_hello(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe =\
+r'''
+return 'hello, world'
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/hello.nexe', nexe)
+        conf = [{
+                    "name": "hello",
+                    "exec": { "path": "/c/hello.nexe" },
+                    "file_list": [
+                        { "device": "stdout" }
+                    ]
+                }]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, 'hello, world')
+
     def test_QUERY_cgi_response(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
