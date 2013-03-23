@@ -377,7 +377,7 @@ class ObjectQueryMiddleware(object):
                             ch['lpath'] = file.data_file
                             channels[ch['device']] = file.data_file
                     if ch['device'] in 'image':
-                        fstab = add_to_fstab(fstab, ch['device'], 'rw')
+                        fstab = add_to_fstab(fstab, ch['device'], 'ro')
                 elif ch['access'] & ACCESS_WRITABLE:
                     (output_fd, output_fn) = mkstemp()
                     fallocate(output_fd, self.zerovm_maxoutput)
