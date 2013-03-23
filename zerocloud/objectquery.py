@@ -467,6 +467,7 @@ class ObjectQueryMiddleware(object):
                     os.write(output_fd, args or '')
                     os.write(output_fd, env or '')
                     os.close(output_fd)
+                    print open(nvram_file).read()
                     zerovm_inputmnfst +=\
                     'Channel=%s,/dev/nvram,3,%s,%s,%s,%s\n' %\
                     (nvram_file, self.zerovm_maxiops, self.zerovm_maxinput,
@@ -480,7 +481,7 @@ class ObjectQueryMiddleware(object):
                     zerovm_inputmnfst += 'NameServer=%s\n'\
                                          % config['name_service']
                 #print config
-                print zerovm_inputmnfst
+                #print zerovm_inputmnfst
                 while zerovm_inputmnfst:
                     written = self.os_interface.write(zerovm_inputmnfst_fd,
                         zerovm_inputmnfst)
