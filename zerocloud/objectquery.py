@@ -467,7 +467,7 @@ class ObjectQueryMiddleware(object):
                     os.write(output_fd, args or '')
                     os.write(output_fd, env or '')
                     os.close(output_fd)
-                    print open(nvram_file).read()
+                    #print open(nvram_file).read()
                     zerovm_inputmnfst +=\
                     'Channel=%s,/dev/nvram,3,%s,%s,%s,%s\n' %\
                     (nvram_file, self.zerovm_maxiops, self.zerovm_maxinput,
