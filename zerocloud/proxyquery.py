@@ -906,7 +906,7 @@ class ClusterController(Controller):
             try:
                 cluster_config = json.loads(cluster_config)
             except Exception:
-                return HTTPUnprocessableEntity(body='Cound not parse system map')
+                return HTTPUnprocessableEntity(body='Could not parse system map')
             error = self.parse_cluster_config(req, cluster_config)
             if error:
                 self.app.logger.warn(
@@ -933,7 +933,7 @@ class ClusterController(Controller):
             try:
                 cluster_config = json.loads(cluster_config)
             except Exception:
-                return HTTPUnprocessableEntity(body='Cound not parse system map')
+                return HTTPUnprocessableEntity(body='Could not parse system map')
             error = self.parse_cluster_config(req, cluster_config)
             if error:
                 self.app.logger.warn(
