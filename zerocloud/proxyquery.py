@@ -961,6 +961,8 @@ class ClusterController(Controller):
             image_resp = Response(app_iter=user_image,
                 headers={'Content-Length':req.headers['content-length']})
             image_resp.nodes = []
+            for n in node_list:
+                n.add_channel('image', ACCESS_CDR)
 
         data_sources = []
         pile = GreenPile(len(node_list))

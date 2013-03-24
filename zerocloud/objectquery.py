@@ -89,11 +89,6 @@ class ObjectQueryMiddleware(object):
         else:
             self.logger = get_logger(conf, log_route='obj-query')
 
-        self.direct_put = conf.get('zerovm_direct_put_url', None)
-        if self.direct_put:
-            self.proxy_addr, self.proxy_port = self.direct_put.split(':')[1:3]
-            self.proxy_port, self.proxy_version = self.proxy_port.split('/')[:2]
-            self.proxy_addr = self.proxy_addr.split('//')[1]
         self.zerovm_manifest_ver = conf.get('zerovm_manifest_ver','09082012')
         self.zerovm_exename = [i.strip() for i in conf.get('zerovm_exename', 'zerovm').split() if i.strip()]
         #self.zerovm_xparams = set(i.strip() for i in conf.get('zerovm_xparams', '').split() if i.strip())
@@ -127,7 +122,7 @@ class ObjectQueryMiddleware(object):
         # maximum output data file size
         self.zerovm_maxoutput = int(conf.get('zerovm_maxoutput', 1024 * 1048576))
 
-        self.zerovm_maxchunksize = int(conf.get('zerovm_maxchunksize', 1024 * 1024))
+        #self.zerovm_maxchunksize = int(conf.get('zerovm_maxchunksize', 1024 * 1024))
 
         # max syscall number
         self.zerovm_maxsyscalls = int(conf.get('zerovm_maxsyscalls', 1024 * 1048576))
@@ -208,6 +203,7 @@ class ObjectQueryMiddleware(object):
                         if len(stdout_data) > self.zerovm_stdout_size\
                         or len(stderr_data) > self.zerovm_stderr_size:
                             proc.kill()
+                            return 4, stdout_data, stderr_data
                     return get_final_status(stdout_data, stderr_data, 2)
             except (Exception, Timeout):
                 proc.kill()
@@ -248,7 +244,7 @@ class ObjectQueryMiddleware(object):
             return Response(status='507 %s is not mounted' % device, headers=nexe_headers)
         if 'content-length' in req.headers\
         and int(req.headers['content-length']) > self.zerovm_maxinput:
-            return HTTPRequestEntityTooLarge(body='Your request is too large'
+            return HTTPRequestEntityTooLarge(body='RPC request too large'
                 , request=req, content_type='text/plain', headers=nexe_headers)
         if 'content-type' not in req.headers:
             return HTTPBadRequest(request=req, content_type='text/plain'
@@ -281,7 +277,7 @@ class ObjectQueryMiddleware(object):
             except (DiskFileError, DiskFileNotExist):
                 return HTTPNotFound(request=req, headers=nexe_headers)
             if input_file_size > self.zerovm_maxinput:
-                return HTTPRequestEntityTooLarge(body='Data Object is too large'
+                return HTTPRequestEntityTooLarge(body='Data object too large'
                     , request=req, content_type='text/plain', headers=nexe_headers)
 
         channels = {}
@@ -368,14 +364,16 @@ class ObjectQueryMiddleware(object):
                     ch['lpath'] = self.zerovm_sysimage_devices[ch['device']]
                     fstab = add_to_fstab(fstab, ch['device'], 'ro')
                 elif ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
-                    if not ch['path'] or ch['path'][0] != '/':
-                        return HTTPBadRequest(request=req,
-                            body='Could not resolve channel path %s'
-                                 % ch['path'])
-                    if local_object:
-                        if ch['path'] in local_object:
-                            ch['lpath'] = file.data_file
-                            channels[ch['device']] = file.data_file
+                    if not ch.get('lpath'):
+                        if not ch['path'] or \
+                           ch['path'][0] != '/':
+                                return HTTPBadRequest(request=req,
+                                    body='Could not resolve channel path: %s'
+                                         % ch['path'])
+                        if local_object and ch['path']:
+                            if ch['path'] in local_object:
+                                ch['lpath'] = file.data_file
+                                channels[ch['device']] = file.data_file
                     if ch['device'] in 'image':
                         fstab = add_to_fstab(fstab, ch['device'], 'ro')
                 elif ch['access'] & ACCESS_WRITABLE:
@@ -474,7 +472,9 @@ class ObjectQueryMiddleware(object):
 #                     self.zerovm_maxiops, self.zerovm_maxoutput)
                     0, 0)
 
-                nexe_name = config['name']
+                nexe_name = config.get('name', None)
+                if nexe_name:
+                    nexe_headers['x-nexe-system'] = nexe_name
                 zerovm_inputmnfst += 'NodeName=%s,%d\n' \
                                      % (nexe_name, config['id'])
                 if 'name_service' in config:
@@ -505,7 +505,7 @@ class ObjectQueryMiddleware(object):
                     resp = Response(body=err,status='503 Internal Error')
                     nexe_headers['x-nexe-status'] = 'ZeroVM runtime error'
                     resp.headers = nexe_headers
-                    return resp
+                    return req.get_response(resp)
                 report = zerovm_stdout.splitlines()
                 if len(report) < 5:
                     nexe_validation = 0
@@ -529,9 +529,8 @@ class ObjectQueryMiddleware(object):
                 response.headers['x-nexe-validation'] = nexe_validation
                 response.headers['x-nexe-cdr-line'] = nexe_cdr_line
                 response.headers['X-Timestamp'] =\
-                normalize_timestamp(time.time())
-                if nexe_name:
-                    response.headers['x-nexe-system'] = nexe_name
+                    normalize_timestamp(time.time())
+                response.headers['x-nexe-system'] = nexe_headers['x-nexe-system']
                 response.content_type = 'application/x-gtar'
 
                 tar_stream = TarStream()
