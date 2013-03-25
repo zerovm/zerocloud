@@ -778,6 +778,7 @@ class ClusterController(Controller):
 
                     for f in other_list:
                         device = f.get('device')
+                        path=None
                         if device in self.app.zerovm_sysimage_devices:
                             access = ACCESS_RANDOM | ACCESS_READABLE
                         else:
@@ -1064,6 +1065,8 @@ class ClusterController(Controller):
                             .GET(source_req)
                         if source_resp.status_int >= 300:
                             update_headers(source_resp, nexe_headers)
+                            source_resp.body = 'Error %s while fetching %s' \
+                                               % (source_resp.status, source_req.path)
                             return source_resp
                     source_resp.nodes = []
                     data_sources.append(source_resp)

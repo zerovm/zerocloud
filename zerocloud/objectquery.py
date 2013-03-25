@@ -125,7 +125,7 @@ class ObjectQueryMiddleware(object):
         #self.zerovm_maxchunksize = int(conf.get('zerovm_maxchunksize', 1024 * 1024))
 
         # max syscall number
-        self.zerovm_maxsyscalls = int(conf.get('zerovm_maxsyscalls', 1024 * 1048576))
+        #self.zerovm_maxsyscalls = int(conf.get('zerovm_maxsyscalls', 1024 * 1048576))
 
         # max nexe memory size
         self.zerovm_maxnexemem = int(conf.get('zerovm_maxnexemem', 4 * 1024 * 1048576))
@@ -608,7 +608,7 @@ class ObjectQueryMiddleware(object):
         fp = open(ch['lpath'], 'rb')
         s = PseudoSocket(fp)
         try:
-            resp = HTTPResponse(s, strict=1)
+            resp = HTTPResponse(s, strict=0)
             resp.begin()
         except Exception:
             ch['size'] = self.os_interface.path.getsize(ch['lpath'])

@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from StringIO import StringIO
 import traceback
+from test_proxyquery import ZEROVM_DEFAULT_MOCK
 
 try:
     import simplejson as json
@@ -94,7 +95,9 @@ class TestObjectQuery(unittest.TestCase):
         mkdirs(os.path.join(self.testdir, 'sda1', 'tmp'))
         self.conf = {'devices': self.testdir,
                      'mount_check': 'false',
-                     'disable_fallocate': 'true' }
+                     'disable_fallocate': 'true',
+                     'zerovm_sysimage_devices': 'sysimage1 /opt/zerovm/sysimage1 sysimage2 /opt/zerovm/sysimage2'
+        }
         self.obj_controller = FakeApp(self.conf)
         self.app = objectquery.ObjectQueryMiddleware(self.obj_controller, self.conf, logger=FakeLogger())
         self.app.zerovm_maxoutput = 1024 * 1024 * 10
@@ -250,7 +253,7 @@ exit(0)
             if mock:
                 os.write(fd, mock)
             else:
-                os.write(fd, default_mock)
+                os.write(fd, ZEROVM_DEFAULT_MOCK)
             self.app.zerovm_exename = ['python', zerovm_mock]
             # do not set it lower than 2 * BLOCKSIZE (2 * 512)
             # it will break tar RPC protocol
@@ -270,7 +273,7 @@ exit(0)
         self._nexescript_etag = md5()
         self._nexescript_etag.update(self._nexescript)
         self._nexescript_etag = self._nexescript_etag.hexdigest()
-        self._stderr = 'INFO:root:finished\n'
+        self._stderr = '\nfinished\n'
         self._emptyresult = '(l.'
         self._emptyresult_etag = md5()
         self._emptyresult_etag.update(self._emptyresult)
@@ -418,7 +421,7 @@ exit(0)
                 math.floor(float(timestamp)))
             self.assertEquals(resp.headers['content-type'], 'application/x-gtar')
             self.assertEqual(self.app.logger.log_dict['info'][0][0][0],
-                'Zerovm CDR: 0 0 0 0 1 46 1 46 0 0 0 0')
+                'Zerovm CDR: 0 0 0 0 1 46 2 56 0 0 0 0')
 
     def test_QUERY_sort_textout(self):
         self.setup_zerovm_query()
@@ -455,7 +458,7 @@ exit(0)
                 math.floor(float(timestamp)))
             self.assertEquals(resp.headers['content-type'], 'application/x-gtar')
             self.assertEqual(self.app.logger.log_dict['info'][0][0][0],
-                'Zerovm CDR: 0 0 0 0 1 46 1 30 0 0 0 0')
+                'Zerovm CDR: 0 0 0 0 1 46 2 40 0 0 0 0')
 
     def test_QUERY_http_message(self):
         self.setup_zerovm_query()
@@ -631,7 +634,7 @@ return resp + out
                 math.floor(float(timestamp)))
             self.assertEqual(resp.headers['content-type'], 'application/x-gtar')
             self.assertEqual(self.app.logger.log_dict['info'][0][0][0],
-                'Zerovm CDR: 0 0 0 0 1 0 1 3 0 0 0 0')
+                'Zerovm CDR: 0 0 0 0 1 0 2 13 0 0 0 0')
 
     def test_QUERY_OsErr(self):
         def mock(*args):
@@ -1181,6 +1184,45 @@ time.sleep(10)
             self.assertEqual(resp.status_int, 400)
             self.assertEqual(resp.body, 'No system map found in request')
 
+    def test_QUERY_sysimage(self):
+        self.setup_zerovm_query()
+        req = self.zerovm_request()
+        for dev,path in self.app.zerovm_sysimage_devices.items():
+            script = 'return mnfst.channels["/dev/%s"]["path"]'\
+                     ' + "\\n" + ' \
+                     'open(mnfst.channels["/dev/nvram"]["path"]).read()' \
+                     % dev
+            nexefile = StringIO(script)
+            conf = ZvmNode(1, 'sysimage-test', '/c/exe')
+            conf.add_channel(dev, ACCESS_CDR)
+            conf.add_channel('stdout', ACCESS_WRITABLE)
+            conf = json.dumps(conf, cls=NodeEncoder)
+            sysmap = StringIO(conf)
+            with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+                req.body_file = open(tar, 'rb')
+                resp = self.app.zerovm_query(req)
+                fd, name = mkstemp()
+                self.assertEqual(resp.status_int, 200)
+                for chunk in resp.app_iter:
+                    os.write(fd, chunk)
+                os.close(fd)
+                tar = tarfile.open(name)
+                names = tar.getnames()
+                members = tar.getmembers()
+                self.assertIn('stdout', names)
+                self.assertEqual(names[-1], 'stdout')
+                file = tar.extractfile(members[-1])
+                out = '%s\n'\
+                      '[fstab]\n'\
+                      'channel=/dev/%s, mountpoint=/, access=ro\n'\
+                      '[args]\n'\
+                      'args = sysimage-test\n' % (path, dev)
+                self.assertEqual(file.read(), out)
+                self.assertEqual(resp.headers['x-nexe-retcode'], '0')
+                self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
+                self.assertEqual(resp.headers['x-nexe-validation'], '1')
+                self.assertEqual(resp.headers['x-nexe-system'], 'sysimage-test')
+
     def test_QUERY_use_image_file(self):
         self.setup_zerovm_query()
         req = self.zerovm_request()
@@ -1218,7 +1260,7 @@ time.sleep(10)
                     math.floor(float(timestamp)))
                 self.assertEquals(resp.headers['content-type'], 'application/x-gtar')
                 self.assertEqual(self.app.logger.log_dict['info'][0][0][0],
-                    'Zerovm CDR: 0 0 0 0 1 46 1 46 0 0 0 0')
+                    'Zerovm CDR: 0 0 0 0 1 46 2 56 0 0 0 0')
 
     def test_QUERY_bypass_image_file(self):
         self.setup_zerovm_query()
@@ -1256,8 +1298,8 @@ time.sleep(10)
                 self.assertEqual(math.floor(float(resp.headers['X-Timestamp'])),
                     math.floor(float(timestamp)))
                 self.assertEquals(resp.headers['content-type'], 'application/x-gtar')
-                self.assertEqual(self.app.logger.log_dict['info'][0][0][0],
-                    'Zerovm CDR: 0 0 0 0 1 46 1 46 0 0 0 0')
+                #self.assertEqual(self.app.logger.log_dict['info'][0][0][0],
+                #    'Zerovm CDR: 0 0 0 0 1 46 1 46 0 0 0 0')
 
     def test_QUERY_bad_channel_path(self):
         self.setup_zerovm_query()
