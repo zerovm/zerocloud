@@ -1,3 +1,4 @@
+from StringIO import StringIO
 import os
 import shutil
 import time
@@ -78,6 +79,43 @@ class TmpDir(object):
             yield tmpdir
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+class DualReader(object):
+
+    def __init__(self, head, tail):
+        self.head = head
+        self.tail = tail
+
+    def read(self, amt=None):
+        if amt is None:
+            return self.head.read() + self.tail.read()
+        if amt < 0:
+            return None
+        chunk = self.head.read(amt)
+        if chunk:
+            if len(chunk) == amt:
+                return chunk
+            elif len(chunk) < amt:
+                chunk += self.tail.read(amt - len(chunk))
+                return chunk
+        return self.tail.read(amt)
+
+    def readline(self, size=None):
+        line = self.head.readline(size)
+        if line:
+                return line
+        line = self.tail.readline(size)
+        if line:
+                return line
+        return None
+
+    def tell(self):
+        return self.tail.tell()
+
+    def close(self):
+        self.head.close()
+        self.tail.close()
 
 
 class ObjectQueryMiddleware(object):
@@ -539,7 +577,10 @@ class ObjectQueryMiddleware(object):
                 send_config = False
                 for ch in response_channels:
                     if ch['content_type'].startswith('message/http'):
-                        self._read_cgi_response(ch)
+                        self._read_cgi_response(ch, nph=True)
+                        send_config = True
+                    elif ch['content_type'].startswith('message/cgi'):
+                        self._read_cgi_response(ch, nph=False)
                         send_config = True
                     else:
                         ch['size'] = self.os_interface.path.getsize(ch['lpath'])
@@ -604,11 +645,15 @@ class ObjectQueryMiddleware(object):
                 response.content_length = resp_size
                 return req.get_response(response)
 
-    def _read_cgi_response(self, ch):
-        fp = open(ch['lpath'], 'rb')
+    def _read_cgi_response(self, ch, nph=True):
+        if not nph:
+            status = StringIO('HTTP/1.1 200 OK\n')
+            fp = DualReader(status, open(ch['lpath'], 'rb'))
+        else:
+            fp = open(ch['lpath'], 'rb')
         s = PseudoSocket(fp)
         try:
-            resp = HTTPResponse(s, strict=0)
+            resp = HTTPResponse(s, strict=1)
             resp.begin()
         except Exception:
             ch['size'] = self.os_interface.path.getsize(ch['lpath'])

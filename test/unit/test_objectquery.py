@@ -513,6 +513,58 @@ return resp + out
                 config['channels'][1]['meta'],
                 { 'key1': 'value1', 'key2': 'value2' })
 
+    def test_QUERY_cgi_message(self):
+        self.setup_zerovm_query()
+        req = self.zerovm_request()
+        conf = ZvmNode(1, 'sort', '/c/exe')
+        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf.add_channel('stdout', ACCESS_WRITABLE, content_type='message/cgi')
+        conf = json.dumps(conf, cls=NodeEncoder)
+        sysmap = StringIO(conf)
+        nexefile = StringIO(r'''
+resp = '\n'.join([
+    'Content-Type: application/json',
+    'X-Object-Meta-Key1: value1',
+    'X-Object-Meta-Key2: value2',
+    '', ''
+    ])
+out = str(sorted(id))
+return resp + out
+'''[1:-1])
+        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+            req.body_file = open(tar, 'rb')
+            resp = self.app.zerovm_query(req)
+            #resp = req.get_response(self.app)
+            fd, name = mkstemp()
+            for chunk in resp.app_iter:
+                os.write(fd, chunk)
+            os.close(fd)
+            self.assertEqual(os.path.getsize(name), resp.content_length)
+            tar = tarfile.open(name)
+            names = tar.getnames()
+            members = tar.getmembers()
+            self.assertIn('stdout', names)
+            self.assertEqual(names[-1], 'stdout')
+            file = tar.extractfile(members[-1])
+            self.assertEqual(file.read(), '[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]')
+            self.assertEqual(resp.headers['x-nexe-retcode'], '0')
+            self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
+            self.assertEqual(resp.headers['x-nexe-validation'], '1')
+            self.assertEqual(resp.headers['x-nexe-system'], 'sort')
+            timestamp = normalize_timestamp(time())
+            self.assertEqual(math.floor(float(resp.headers['X-Timestamp'])),
+                math.floor(float(timestamp)))
+            self.assertEquals(resp.headers['content-type'], 'application/x-gtar')
+            self.assertEqual(names[0], 'sysmap')
+            file = tar.extractfile(members[0])
+            config = json.load(file)
+            self.assertEqual(
+                config['channels'][1]['content_type'],
+                'application/json')
+            self.assertEqual(
+                config['channels'][1]['meta'],
+                { 'key1': 'value1', 'key2': 'value2' })
+
     def test_QUERY_invalid_http_message(self):
         self.setup_zerovm_query()
         req = self.zerovm_request()
