@@ -48,6 +48,7 @@ ACCESS_WRITABLE = 0x1 << 1
 ACCESS_RANDOM = 0x1 << 2
 ACCESS_NETWORK = 0x1 << 3
 ACCESS_CDR = 0x1 << 4
+ACCESS_CHECKPOINT = 0x1 << 5
 
 DEVICE_MAP = {
     'stdin': ACCESS_READABLE,
@@ -56,7 +57,8 @@ DEVICE_MAP = {
     'input': ACCESS_RANDOM | ACCESS_READABLE,
     'output': ACCESS_RANDOM | ACCESS_WRITABLE,
     'debug': ACCESS_NETWORK,
-    'image': ACCESS_CDR
+    'image': ACCESS_CDR,
+    'db': ACCESS_CHECKPOINT
     }
 
 TAR_MIMES = ['application/x-tar', 'application/x-gtar', 'application/x-ustar']
@@ -1453,11 +1455,15 @@ class ClusterController(Controller):
         for k, v in req.params.iteritems():
             if k in 'object_path':
                 continue
-            i = '{.%s}' % k
-            template = template.replace(i, v)
+            #i = '{.%s}' % k
+            #template = template.replace(i, v)
+            ptrn = r'\{\.%s(|=[^\}]+)\}'
+            ptrn = ptrn % k
+            template = re.sub(ptrn, v, template)
         req.path_info_pop()
         config = template.replace('{.object_path}', req.path_info)
-        config = re.sub(r'\{\.[^\}]+\}', '', config)
+        config = re.sub(r'\{\.[^=\}]+=?([^\}]*)\}', '\\1', config)
+        #config = re.sub(r'\{\.[^\}]+\}', '', config)
         post_req = Request.blank('/%s' % self.account_name,
             environ=obj_req.environ,
             headers=obj_req.headers)
