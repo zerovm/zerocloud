@@ -1189,7 +1189,8 @@ class ClusterController(Controller):
                     if resp.headers.get(key):
                         conn.nexe_headers[key] = resp.headers.get(key)
             if conn.error:
-                conn.nexe_headers['x-nexe-error'] = conn.error
+                conn.nexe_headers['x-nexe-error'] = \
+                    conn.error.replace('\n', '')
 
             #print [final_response.headers, conn.nexe_headers]
             if self.app.zerovm_accounting_enabled:
