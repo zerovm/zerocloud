@@ -1215,7 +1215,7 @@ class ClusterController(Controller):
                     final_response.headers['access-control-allow-origin'] = container_info['cors']['allow_origin']
                 if container_info['cors'].get('expose_headers', None):
                     final_response.headers['access-control-expose-headers'] = container_info['cors']['expose_headers']
-        etag = md5(str(time()))
+        etag = md5(str(time.time()))
         final_response.headers['Etag'] = etag.hexdigest()
         return final_response
 
