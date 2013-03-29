@@ -685,18 +685,21 @@ class ObjectQueryMiddleware(object):
             try:
                 if 'x-zerovm-execute' in req.headers and req.method == 'POST':
                     res = self.zerovm_query(req)
-                elif 'x-validator-exec' in req.headers and req.method == 'PUT':
+                elif req.method in ['PUT', 'POST'] \
+                and ('x-zerovm-validate' in req.headers
+                     or req.headers.get('content-type', '')
+                     in 'application/x-nexe'):
                     def validate_resp(status, response_headers, exc_info=None):
                         if 200 <= int(status.split(' ')[0]) < 300:
-                            valid = self.validate(req)
-                            response_headers.append(('x-nexe-validation',str(valid)))
+                            if self.validate(req):
+                                response_headers.append(('X-Zerovm-Valid','true'))
                         return start_response(status, response_headers, exc_info)
                     return self.app(env, validate_resp)
-                elif 'x-nexe-validation' in req.headers and req.method == 'GET':
+                elif 'x-zerovm-valid' in req.headers and req.method == 'GET':
                     def validate_resp(status, response_headers, exc_info=None):
                         if 200 <= int(status.split(' ')[0]) < 300:
-                            valid = self.get_validation_status(req)
-                            response_headers.append(('x-nexe-validation',str(valid)))
+                            if self.is_validated(req):
+                                response_headers.append(('X-Zerovm-Valid', 'true'))
                         return start_response(status, response_headers, exc_info)
                     return self.app(env, validate_resp)
                 else:
@@ -724,18 +727,14 @@ class ObjectQueryMiddleware(object):
         return res(env, start_response)
 
     def validate(self, req):
-        validator = str(req.headers.get('x-validator-exec', ''))
-        if 'fuzzy' in validator:
-            self.zerovm_exename.append('-z')
-        else:
-            return 0
+        self.zerovm_exename.append('-F')
         try:
             (device, partition, account, container, obj) =\
                 split_path(unquote(req.path), 5, 5, True)
         except ValueError:
-            return 0
+            return False
         if self.app.mount_check and not check_mount(self.app.devices, device):
-            return 0
+            return False
         file = DiskFile(
             self.app.devices,
             device,
@@ -749,20 +748,33 @@ class ObjectQueryMiddleware(object):
         try:
             nexe_size = os.path.getsize(file.data_file)
         except (DiskFileError, DiskFileNotExist):
-            return 0
+            return False
         if nexe_size > self.zerovm_maxnexe:
-            return 0
+            return False
         if file.is_deleted():
-            return 0
+            return False
         with file.mkstemp() as zerovm_inputmnfst_fd:
             zerovm_inputmnfst_fn = file.tmppath
             zerovm_inputmnfst = (
                 'Version=%s\n'
                 'Nexe=%s\n'
+                'Timeout=%s\n'
+                'MemMax=%s\n'
                 % (
                     self.zerovm_manifest_ver,
                     file.data_file,
+                    self.zerovm_timeout,
+                    self.zerovm_maxnexemem
                     ))
+            zerovm_inputmnfst +=\
+            'Channel=/dev/null,/dev/stdin,0,%s,%s,0,0\n' %\
+            (self.zerovm_maxiops, self.zerovm_maxinput)
+            zerovm_inputmnfst +=\
+            'Channel=/dev/null,/dev/stdout,0,0,0,%s,%s\n' %\
+            (self.zerovm_maxiops, self.zerovm_maxoutput)
+            zerovm_inputmnfst +=\
+            'Channel=/dev/null,/dev/stderr,0,0,0,%s,%s\n' %\
+            (self.zerovm_maxiops, self.zerovm_maxoutput)
             while zerovm_inputmnfst:
                 written = self.os_interface.write(zerovm_inputmnfst_fd,
                     zerovm_inputmnfst)
@@ -770,32 +782,23 @@ class ObjectQueryMiddleware(object):
 
             thrd = self.zerovm_thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn)
             (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
-            if zerovm_retcode:
-                err = 'ERROR OBJ.QUERY retcode=%s, '\
-                      ' zerovm_stdout=%s'\
-                % (self.retcode_map[zerovm_retcode],
-                   zerovm_stdout)
-                self.logger.exception(err)
-                return 0
             if zerovm_stderr:
-                self.logger.warning('zerovm stderr: '+zerovm_stderr)
-            report = zerovm_stdout.splitlines()
-            if len(report) < 5:
-                return 0
-            else:
+                self.logger.warning('zerovm stderr: ' + zerovm_stderr)
+            if zerovm_retcode == 0:
                 metadata = file.metadata
-                metadata['Validation-Status'] = report[0]
+                metadata['Validated'] = metadata['ETag']
                 write_metadata(file.data_file, metadata)
-                return int(report[0])
+                return True
+            return False
 
-    def get_validation_status(self, req):
+    def is_validated(self, req):
         try:
             (device, partition, account, container, obj) =\
             split_path(unquote(req.path), 5, 5, True)
         except ValueError:
-            return 0
+            return False
         if self.app.mount_check and not check_mount(self.app.devices, device):
-            return 0
+            return False
         file = DiskFile(
             self.app.devices,
             device,
@@ -807,8 +810,11 @@ class ObjectQueryMiddleware(object):
             disk_chunk_size=self.app.disk_chunk_size,
         )
         metadata = read_metadata(file.data_file)
-        status = int(metadata.get('Validation-Status', '0'))
-        return status
+        status = metadata.get('Validated', None)
+        etag = metadata.get('ETag', None)
+        if status and etag and etag == status:
+            return True
+        return False
 
 
 def filter_factory(global_conf, **local_conf):

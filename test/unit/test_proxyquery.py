@@ -73,7 +73,7 @@ def eval_as_function(code, local_vars={}, global_vars=None):
 parser = ArgumentParser()
 parser.add_argument('-M', dest='manifest')
 parser.add_argument('-s', action='store_true', dest='skip')
-parser.add_argument('-z', action='store_true', dest='validate')
+parser.add_argument('-F', action='store_true', dest='validate')
 args = parser.parse_args()
 
 valid = 1
@@ -123,14 +123,7 @@ def retrieve_mnfst_field(n, eq=None, min=None, max=None, isint=False, optional=F
 
 retrieve_mnfst_field('Version', '09082012')
 retrieve_mnfst_field('Nexe')
-exe = file(mnfst.Nexe, 'r').read()
-if 'INVALID' == exe:
-    valid = 2
-    retcode = 0
-if args.validate:
-    errdump(0, valid, retcode, '', accounting, status)
-    exit(0)
-retrieve_mnfst_field('NexeMax', isint=True)
+retrieve_mnfst_field('NexeMax', isint=True, optional=True)
 retrieve_mnfst_field('SyscallsMax', min=1, isint=True, optional=True)
 retrieve_mnfst_field('NexeEtag', optional=True)
 retrieve_mnfst_field('Timeout', min=1, isint=True)
@@ -140,6 +133,13 @@ retrieve_mnfst_field('CommandLine', optional=True)
 retrieve_mnfst_field('Channel')
 retrieve_mnfst_field('NodeName', optional=True)
 retrieve_mnfst_field('NameServer', optional=True)
+exe = file(mnfst.Nexe, 'r').read()
+if 'INVALID' == exe:
+    valid = 2
+    retcode = 0
+    errdump(8, valid, retcode, '', accounting, status)
+if args.validate:
+    errdump(0, valid, retcode, '', accounting, status)
 if not getattr(mnfst, 'NexeEtag', None):
     mnfst.NexeEtag = 'DISABLED'
 
