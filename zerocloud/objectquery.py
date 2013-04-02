@@ -189,6 +189,7 @@ class ObjectQueryMiddleware(object):
             disable_fallocate()
 
     def execute_zerovm(self, zerovm_inputmnfst_fn):
+        start = time.time()
         cmdline = []
         cmdline += self.zerovm_exename
         cmdline += ['-M%s' % zerovm_inputmnfst_fn]
@@ -225,12 +226,16 @@ class ObjectQueryMiddleware(object):
         readable = [proc.stdout, proc.stderr]
         try:
             with Timeout(self.zerovm_timeout):
+                perf = "e1:%.3f" % (time.time() - start)
+                start = time.time()
                 while len(readable) > 0:
                     stdout_data, stderr_data = read_from_std(readable, stdout_data, stderr_data)
                     if len(stdout_data) > self.zerovm_stdout_size\
                     or len(stderr_data) > self.zerovm_stderr_size:
                         proc.kill()
                         return 4, stdout_data, stderr_data
+                perf = "%s e2:%.3f" % (perf, time.time() - start)
+                self.logger.info("PERF EXEC: %s" % perf)
                 return get_final_status(stdout_data, stderr_data)
         except (Exception, Timeout):
             proc.terminate()
