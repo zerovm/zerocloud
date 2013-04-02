@@ -189,7 +189,6 @@ class ObjectQueryMiddleware(object):
             disable_fallocate()
 
     def execute_zerovm(self, zerovm_inputmnfst_fn):
-        start = time.time()
         cmdline = []
         cmdline += self.zerovm_exename
         cmdline += ['-M%s' % zerovm_inputmnfst_fn]
@@ -226,15 +225,17 @@ class ObjectQueryMiddleware(object):
         readable = [proc.stdout, proc.stderr]
         try:
             with Timeout(self.zerovm_timeout):
-                perf = "e1:%.3f" % (time.time() - start)
                 start = time.time()
+                perf = ''
                 while len(readable) > 0:
                     stdout_data, stderr_data = read_from_std(readable, stdout_data, stderr_data)
                     if len(stdout_data) > self.zerovm_stdout_size\
                     or len(stderr_data) > self.zerovm_stderr_size:
                         proc.kill()
                         return 4, stdout_data, stderr_data
-                perf = "%s e2:%.3f" % (perf, time.time() - start)
+                    perf = "%s %.3f" % (perf, time.time() - start)
+                    start = time.time()
+                perf = "%s %.3f" % (perf, time.time() - start)
                 self.logger.info("PERF EXEC: %s" % perf)
                 return get_final_status(stdout_data, stderr_data)
         except (Exception, Timeout):
@@ -255,7 +256,6 @@ class ObjectQueryMiddleware(object):
     def zerovm_query(self, req):
         """Handle HTTP QUERY requests for the Swift Object Server."""
 
-        start = time.time()
         nexe_headers = {
             'x-nexe-retcode': 0,
             'x-nexe-status': 'Zerovm did not run',
@@ -324,7 +324,6 @@ class ObjectQueryMiddleware(object):
                 return HTTPRequestEntityTooLarge(body='Data object too large'
                     , request=req, content_type='text/plain', headers=nexe_headers)
 
-        perf = "1:%.3f" % (time.time() - start)
         start = time.time()
         channels = {}
         with tmpdir.mkdtemp() as zerovm_tmp:
@@ -334,7 +333,11 @@ class ObjectQueryMiddleware(object):
             etag = md5()
             upload_expiration = time.time() + self.app.max_upload_time
             untar_stream = UntarStream(read_iter)
+            perf = "%.3f" % (time.time() - start)
+            start = time.time()
             for chunk in read_iter:
+                perf = "%s %.3f" % (perf, time.time() - start)
+                start = time.time()
                 upload_size += len(chunk)
                 if time.time() > upload_expiration:
                     return HTTPRequestTimeout(request=req, headers=nexe_headers)
@@ -349,6 +352,8 @@ class ObjectQueryMiddleware(object):
                         untar_stream.offset_data = info.offset_data
                         for data in untar_stream.untar_file_iter():
                             fp.write(data)
+                            perf = "%s %s:%.3f" % (perf, info.name, time.time() - start)
+                            start = time.time()
                         fp.close()
                     info = untar_stream.get_next_tarinfo()
             if 'content-length' in req.headers\
@@ -358,8 +363,7 @@ class ObjectQueryMiddleware(object):
             if 'etag' in req.headers and req.headers['etag'].lower()\
             != etag:
                 return HTTPUnprocessableEntity(request=req, headers=nexe_headers)
-            perf = "%s 2:%.3f" % (perf, time.time() - start)
-            start = time.time()
+            self.logger.info("PERF UNTAR: %s" % perf)
             config = None
             if 'sysmap' in channels:
                 config_file = channels.pop('sysmap')
@@ -434,8 +438,6 @@ class ObjectQueryMiddleware(object):
                     else:
                         response_channels.insert(0, ch)
 
-            perf = "%s 3:%.3f" % (perf, time.time() - start)
-            start = time.time()
             with tmpdir.mkstemp() as (zerovm_inputmnfst_fd,
                                     zerovm_inputmnfst_fn):
                 zerovm_inputmnfst = (
@@ -536,12 +538,11 @@ class ObjectQueryMiddleware(object):
                         zerovm_inputmnfst)
                     zerovm_inputmnfst = zerovm_inputmnfst[written:]
 
-                perf = "%s 4:%.3f" % (perf, time.time() - start)
                 start = time.time()
                 thrd = self.zerovm_thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn)
                 (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
-                perf = "%s 5:%.3f" % (perf, time.time() - start)
-                start = time.time()
+                perf = "%.3f" % (time.time() - start)
+                self.logger.info("PERF SPAWN: %s" % perf)
                 if nvram_file:
                     try:
                         os.unlink(nvram_file)
@@ -623,8 +624,6 @@ class ObjectQueryMiddleware(object):
                     resp_size += len(sysmap_info) +\
                              tar_stream.get_archive_size(len(sysmap_dump))
 
-                perf = "%s 6:%.3f" % (perf, time.time() - start)
-                start = time.time()
                 def resp_iter(channels, chunk_size):
                     tar_stream = TarStream(chunk_size=chunk_size)
                     if send_config:
@@ -660,8 +659,6 @@ class ObjectQueryMiddleware(object):
                 response.app_iter=resp_iter(immediate_responses,
                     self.app.network_chunk_size)
                 response.content_length = resp_size
-                perf = "%s 7:%.3f" % (perf, time.time() - start)
-                self.logger.info("PERF DATA: %s" % perf)
                 return req.get_response(response)
 
     def _read_cgi_response(self, ch, nph=True):
