@@ -330,18 +330,14 @@ class ObjectQueryMiddleware(object):
             reader = req.environ['wsgi.input'].read
             read_iter = iter(lambda: reader(self.app.network_chunk_size),'')
             upload_size = 0
-            etag = md5()
             upload_expiration = time.time() + self.app.max_upload_time
             untar_stream = UntarStream(read_iter)
             perf = "%.3f" % (time.time() - start)
-            start = time.time()
             for chunk in read_iter:
                 perf = "%s %.3f" % (perf, time.time() - start)
-                start = time.time()
                 upload_size += len(chunk)
                 if time.time() > upload_expiration:
                     return HTTPRequestTimeout(request=req, headers=nexe_headers)
-                etag.update(chunk)
                 untar_stream.update_buffer(chunk)
                 info = untar_stream.get_next_tarinfo()
                 while info:
@@ -353,16 +349,13 @@ class ObjectQueryMiddleware(object):
                         for data in untar_stream.untar_file_iter():
                             fp.write(data)
                             perf = "%s %s:%.3f" % (perf, info.name, time.time() - start)
-                            start = time.time()
                         fp.close()
                     info = untar_stream.get_next_tarinfo()
             if 'content-length' in req.headers\
             and int(req.headers['content-length']) != upload_size:
-                return HTTPClientDisconnect(request=req, headers=nexe_headers)
-            etag = etag.hexdigest()
-            if 'etag' in req.headers and req.headers['etag'].lower()\
-            != etag:
-                return HTTPUnprocessableEntity(request=req, headers=nexe_headers)
+                return HTTPClientDisconnect(request=req,
+                    headers=nexe_headers)
+            perf = "%s %.3f" % (perf, time.time() - start)
             self.logger.info("PERF UNTAR: %s" % perf)
             config = None
             if 'sysmap' in channels:
