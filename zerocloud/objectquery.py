@@ -188,9 +188,11 @@ class ObjectQueryMiddleware(object):
         if conf.get('disable_fallocate', 'no').lower() in TRUE_VALUES:
             disable_fallocate()
 
-    def execute_zerovm(self, zerovm_inputmnfst_fn):
+    def execute_zerovm(self, zerovm_inputmnfst_fn, zerovm_args=None):
         cmdline = []
         cmdline += self.zerovm_exename
+        if zerovm_args:
+            cmdline += zerovm_args
         cmdline += ['-M%s' % zerovm_inputmnfst_fn]
         proc = subprocess.Popen(cmdline, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
@@ -736,7 +738,6 @@ class ObjectQueryMiddleware(object):
         return res(env, start_response)
 
     def validate(self, req):
-        self.zerovm_exename.append('-F')
         try:
             (device, partition, account, container, obj) =\
                 split_path(unquote(req.path), 5, 5, True)
@@ -762,8 +763,13 @@ class ObjectQueryMiddleware(object):
             return False
         if file.is_deleted():
             return False
-        with file.mkstemp() as zerovm_inputmnfst_fd:
-            zerovm_inputmnfst_fn = file.tmppath
+        tmpdir = TmpDir(
+            self.app.devices,
+            device,
+            disk_chunk_size=self.app.disk_chunk_size,
+            os_interface=self.os_interface
+        )
+        with tmpdir.mkstemp() as (zerovm_inputmnfst_fd, zerovm_inputmnfst_fn):
             zerovm_inputmnfst = (
                 'Version=%s\n'
                 'Nexe=%s\n'
@@ -789,7 +795,7 @@ class ObjectQueryMiddleware(object):
                     zerovm_inputmnfst)
                 zerovm_inputmnfst = zerovm_inputmnfst[written:]
 
-            thrd = self.zerovm_thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn)
+            thrd = self.zerovm_thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, ['-F'])
             (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
             if zerovm_stderr:
                 self.logger.warning('zerovm stderr: ' + zerovm_stderr)

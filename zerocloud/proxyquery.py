@@ -68,7 +68,7 @@ CONFIG_BYTE_SIZE = 128 * 1024
 
 DEFAULT_EXE_SYSTEM_MAP = r'''
     [{
-        "name": "excutable",
+        "name": "executable",
         "exec": {
             "path": "{.object_path}",
             "args": "{.args}"
@@ -1077,7 +1077,8 @@ class ClusterController(Controller):
             if image_resp:
                 node.last_data = image_resp
                 image_resp.nodes.append({'node':node, 'dev':'image'})
-            node_iter = self.iter_nodes(partition, obj_nodes, self.app.object_ring)
+            node_iter = self.iter_nodes(self.app.object_ring, partition)
+            #node_iter = self.iter_nodes(partition, obj_nodes, self.app.object_ring)
             pile.spawn(self._connect_exec_node, node_iter, partition,
                 exec_request, self.app.logger.thread_locals, node,
                 nexe_headers)

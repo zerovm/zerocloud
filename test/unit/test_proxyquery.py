@@ -137,9 +137,9 @@ exe = file(mnfst.Nexe, 'r').read()
 if 'INVALID' == exe:
     valid = 2
     retcode = 0
-    errdump(8, valid, retcode, '', accounting, status)
+    errdump(8, valid, retcode, '', accounting, 'nexe is invalid')
 if args.validate:
-    errdump(0, valid, retcode, '', accounting, status)
+    errdump(0, valid, retcode, '', accounting, 'nexe is valid')
 if not getattr(mnfst, 'NexeEtag', None):
     mnfst.NexeEtag = 'DISABLED'
 
@@ -215,42 +215,41 @@ if getattr(mnfst, 'NameServer', None):
             break
     if bind_map:
         sleep(0.5)
-if valid < 2:
-    try:
-        inf = file(mnfst.input, 'r')
-        ouf = file(mnfst.output, 'w')
-        err = file(mnfst.err, 'w')
-        ins = inf.read()
-        accounting[4] += 1
-        accounting[5] += len(ins)
-        id = pickle.loads(ins)
-    except EOFError:
-        id = []
-    except Exception:
-        errdump(1,valid,0,mnfst.NexeEtag,accounting,'Std files I/O error')
+try:
+    inf = file(mnfst.input, 'r')
+    ouf = file(mnfst.output, 'w')
+    err = file(mnfst.err, 'w')
+    ins = inf.read()
+    accounting[4] += 1
+    accounting[5] += len(ins)
+    id = pickle.loads(ins)
+except EOFError:
+    id = []
+except Exception:
+    errdump(1,valid,0,mnfst.NexeEtag,accounting,'Std files I/O error')
 
-    od = ''
-    try:
-        od = str(eval_as_function(exe))
-    except Exception, e:
-        err.write(e.message+'\n')
-        accounting[6] += 1
-        accounting[7] += len(e.message+'\n')
+od = ''
+try:
+    od = str(eval_as_function(exe))
+except Exception, e:
+    err.write(e.message+'\n')
+    accounting[6] += 1
+    accounting[7] += len(e.message+'\n')
 
-    ouf.write(od)
+ouf.write(od)
+accounting[6] += 1
+accounting[7] += len(od)
+for t in con_list:
+    err.write('%s, %s\n' % (t[1], t[0]))
     accounting[6] += 1
-    accounting[7] += len(od)
-    for t in con_list:
-        err.write('%s, %s\n' % (t[1], t[0]))
-        accounting[6] += 1
-        accounting[7] += len('%s, %s\n' % (t[1], t[0]))
-    inf.close()
-    ouf.close()
-    err.write('\nfinished\n')
-    accounting[6] += 1
-    accounting[7] += len('\nfinished\n')
-    err.close()
-    status = 'ok.'
+    accounting[7] += len('%s, %s\n' % (t[1], t[0]))
+inf.close()
+ouf.close()
+err.write('\nfinished\n')
+accounting[6] += 1
+accounting[7] += len('\nfinished\n')
+err.close()
+status = 'ok.'
 errdump(0, valid, retcode, mnfst.NexeEtag, accounting, status)
 '''
 
@@ -1389,9 +1388,14 @@ resp = '<html><body>Test this</body></html>'
 return resp
 '''[1:-1]
         self.create_object(prolis, '/v1/a/c/exe2', nexe, content_type='application/x-nexe')
+        req = self.object_request('/v1/a/c/exe2')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, nexe)
         req = Request.blank('/open/a/c/exe2?' + urlencode({'content_type':'text/html'}))
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
+        print res.headers
         self.assertEqual(res.body, '<html><body>Test this</body></html>')
         self.assertEqual(res.headers['content-type'], 'text/html')
         self.create_object(prolis, '/v1/a/c/my.nexe', nexe, content_type='application/x-nexe')
