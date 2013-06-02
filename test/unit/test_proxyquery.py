@@ -734,15 +734,9 @@ class TestProxyQuery(unittest.TestCase):
         req.body = conf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.headers,{
-            'x-nexe-retcode': '0',
-            'content-length': '0',
-            'x-nexe-cdr-line': '0 0 0 0 0 0 0 0 0 0 0 0',
-            'x-nexe-validation': '1',
-            'x-nexe-system': 'sort',
-            'x-nexe-etag': 'DISABLED',
-            'x-nexe-status': 'ok.'
-        })
+        self.assertEqual(res.headers['x-nexe-status'], 'ok.')
+        self.assertEqual(res.headers['x-nexe-system'], 'sort')
+        self.assertEqual(res.headers['x-nexe-retcode'], '0')
         req = self.object_request('/v1/a/c/o2')
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
@@ -752,473 +746,6 @@ class TestProxyQuery(unittest.TestCase):
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, '\nfinished\n')
-
-    def test_QUERY_sort_store_stdout_stderr_realzvm(self):
-        self.setup_QUERY()
-        (_prosrv, _acc1srv, _acc2srv, _con1srv,
-         _con2srv, _obj1srv, _obj2srv) = _test_servers
-        _obj1srv.zerovm_exename = ['zerovm']
-        _obj2srv.zerovm_exename = ['zerovm']
-        prosrv = _test_servers[0]
-        prolis = _test_sockets[0]
-        fd = open('sort_uint_proper_with_args.nexe')
-        exe = fd.read()
-        fd.close()
-        self.create_object(prolis, '/v1/a/c/sort.exe', exe)
-        randomnum = self.get_random_numbers(0, 1024 * 1024 / 4, proto='binary')
-        self.create_object(prolis, '/v1/a/c/binary.data', randomnum)
-        conf = [
-                {
-                'name':'sort',
-                'exec':{
-                    'path':'/c/sort.exe',
-                    'args':'%d' % (1024 * 1024)
-                    },
-                'file_list':[
-                        {'device':'stdin','path':'/c/binary.data'},
-                        {'device':'stdout','path':'/c/binary.out'},
-                        {'device':'stderr','path':'/c/sort.log'}
-                ]
-            }
-        ]
-        conf = json.dumps(conf)
-        req = self.zerovm_request()
-        req.body = conf
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.headers, {
-            'x-nexe-retcode': '0',
-            'content-length': '0',
-            'x-nexe-cdr-line': '0 0 0 0 0 0 0 0 0 0 0 0',
-            'x-nexe-validation': '1',
-            'x-nexe-system': 'sort',
-            'x-nexe-etag': 'disabled',
-            'x-nexe-status': 'ok'
-        })
-
-        req = self.object_request('/v1/a/c/binary.out')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, self.get_sorted_numbers(0, 1024 * 1024 / 4, proto='binary'))
-
-        req = self.object_request('/v1/a/c/sort.log')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assert_('done\n' in res.body)
-
-    def test_QUERY_sort_transform_realzvm(self):
-        self.setup_QUERY()
-        (_prosrv, _acc1srv, _acc2srv, _con1srv,
-         _con2srv, _obj1srv, _obj2srv) = _test_servers
-        _obj1srv.zerovm_exename = ['zerovm']
-        _obj2srv.zerovm_exename = ['zerovm']
-        prosrv = _test_servers[0]
-        prolis = _test_sockets[0]
-        fd = open('sort_uint_proper_with_args.nexe')
-        exe = fd.read()
-        fd.close()
-        self.create_object(prolis, '/v1/a/c/sort.exe', exe)
-        size = 1024 * 1024 / 4
-        randomnum = self.get_random_numbers(0, size, proto='binary')
-        self.create_object(prolis, '/v1/a/c/binary.data', randomnum)
-        randomnum = self.get_random_numbers(size, size * 2, proto='binary')
-        self.create_object(prolis, '/v1/a/c/binary1.data', randomnum)
-        randomnum = self.get_random_numbers(size * 2, size * 3, proto='binary')
-        self.create_object(prolis, '/v1/a/c/binary2.data', randomnum)
-        conf = [
-            {
-                'name':'sort',
-                'exec':{
-                    'path':'/c/sort.exe',
-                    'args':'%d' % (1024 * 1024)
-                },
-                'file_list':[
-                    {'device':'stdin','path':'/c/binary*.data'},
-                    {'device':'stdout','path':'/c/binary*.out'}
-                ]
-            }
-        ]
-        conf = json.dumps(conf)
-        req = self.zerovm_request()
-        req.body = conf
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.headers,{
-            'x-nexe-retcode': '0,'
-                              '0,'
-                              '0',
-            'content-length': '0',
-            'x-nexe-cdr-line': '0 0 0 0 0 0 0 0 0 0 0 0,'
-                               '0 0 0 0 0 0 0 0 0 0 0 0,'
-                               '0 0 0 0 0 0 0 0 0 0 0 0',
-            'x-nexe-validation': '1,'
-                                 '1,'
-                                 '1',
-            'x-nexe-system': 'sort-1,'
-                             'sort-2,'
-                             'sort-3',
-            'x-nexe-etag': 'disabled,'
-                           'disabled,'
-                           'disabled',
-            'x-nexe-status': 'ok,'
-                             'ok,'
-                             'ok'
-        })
-
-        req = self.object_request('/v1/a/c/binary.out')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, self.get_sorted_numbers(0, size, proto='binary'))
-
-        req = self.object_request('/v1/a/c/binary1.out')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, self.get_sorted_numbers(size, size * 2, proto='binary'))
-
-        req = self.object_request('/v1/a/c/binary2.out')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, self.get_sorted_numbers(size * 2, size * 3, proto='binary'))
-
-    def test_QUERY_mapred_realzvm(self):
-        raise SkipTest
-        def upload_file(listener, name, url):
-            fd = open(name)
-            content = fd.read()
-            fd.close()
-            self.create_object(listener, url, content)
-
-        self.setup_QUERY()
-        (_prosrv, _acc1srv, _acc2srv, _con1srv,
-         _con2srv, _obj1srv, _obj2srv) = _test_servers
-        _obj1srv.zerovm_exename = ['zerovm']
-        _obj2srv.zerovm_exename = ['zerovm']
-        _obj1srv.zerovm_timeout = 60
-        _obj2srv.zerovm_timeout = 60
-        _obj1srv.zerovm_maxnexemem = 128 * 1048576
-        _obj2srv.zerovm_maxnexemem = 128 * 1048576
-        _prosrv.app.node_timeout = 60
-        prosrv = _test_servers[0]
-        prolis = _test_sockets[0]
-        fd = open('mapred/map.nexe')
-        map_nexe = fd.read()
-        fd.close()
-        fd = open('mapred/reduce.nexe')
-        red_nexe = fd.read()
-        fd.close()
-        #upload_file(prolis, 'mapred/map.nexe', '/v1/a/c/map.nexe')
-        #upload_file(prolis, 'mapred/reduce.nexe', '/v1/a/c/reduce.nexe')
-        upload_file(prolis, 'mapred/1input.txt', '/v1/a/c/1input.txt')
-        upload_file(prolis, 'mapred/2input.txt', '/v1/a/c/2input.txt')
-        upload_file(prolis, 'mapred/3input.txt', '/v1/a/c/3input.txt')
-        upload_file(prolis, 'mapred/4input.txt', '/v1/a/c/4input.txt')
-        conf = [
-            {
-                'name':'map',
-                'exec':{
-                    'path':'boot/map.nexe',
-                    'env':{ 'MAP_NAME':'map', 'REDUCE_NAME':'red'}
-                },
-                'file_list':[
-                    {'device':'stdin','path':'/c/*input.txt'}
-                ],
-                'connect': [ 'map', 'red' ]
-            },
-            {
-                'name':'red',
-                'exec':{
-                    'path':'boot/reduce.nexe',
-                    'env':{ 'MAP_NAME':'map', 'REDUCE_NAME':'red'}
-                },
-                'file_list':[
-                    {'device':'stdout','path':'/c/*output.txt'}
-                ],
-                'connect': [ 'map' ],
-                'count': 5
-            }
-        ]
-        conf = json.dumps(conf)
-        req = self.zerovm_tar_request()
-        sysmap = StringIO(conf)
-        map_nexe = StringIO(map_nexe)
-        red_nexe = StringIO(red_nexe)
-        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap,
-                              'boot/map.nexe': map_nexe,
-                              'boot/reduce.nexe': red_nexe}) \
-        as tar:
-            req.body_file = open(tar, 'rb')
-            req.content_length = os.path.getsize(tar)
-            res = req.get_response(prosrv)
-#        req = self.zerovm_request()
-#        req.body = conf
-#        res = req.get_response(prosrv)
-            print res.headers
-            print res.body
-
-    def test_QUERY_dist_sort_realzvm(self):
-        raise SkipTest
-        def upload_file(listener, name, url):
-            fd = open(name)
-            content = fd.read()
-            fd.close()
-            self.create_object(listener, url, content)
-
-        def load_file(name):
-            fd = open(name)
-            content = fd.read()
-            fd.close()
-            return StringIO(content)
-
-        self.setup_QUERY()
-        (_prosrv, _acc1srv, _acc2srv, _con1srv,
-         _con2srv, _obj1srv, _obj2srv) = _test_servers
-        _obj1srv.zerovm_exename = ['zerovm']
-        _obj2srv.zerovm_exename = ['zerovm']
-        _obj1srv.zerovm_timeout = 60
-        _obj2srv.zerovm_timeout = 60
-        _obj1srv.zerovm_maxnexemem = 128 * 1048576
-        _obj2srv.zerovm_maxnexemem = 128 * 1048576
-        _prosrv.app.node_timeout = 60
-        prosrv = _test_servers[0]
-        prolis = _test_sockets[0]
-        fd = open('generator.uint32_t.nexe')
-        gen_nexe = fd.read()
-        fd.close()
-        self.create_container(prolis, '/v1/a/disort')
-        #upload_file(prolis, 'mapred/map.nexe', '/v1/a/c/map.nexe')
-        #upload_file(prolis, 'mapred/reduce.nexe', '/v1/a/c/reduce.nexe')
-        conf = [
-            {
-                "name":"gen",
-                "exec":{
-                    "path":"generator.uint32_t.nexe",
-                    "args":"5000000"
-                },
-                "file_list":[
-                    { "device":"stdout", "path":"/disort/unsorted*.data" }
-                ],
-                "count": 5
-            }
-        ]
-        conf = json.dumps(conf)
-        req = self.zerovm_tar_request()
-        sysmap = StringIO(conf)
-        gen_nexe = StringIO(gen_nexe)
-        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap,
-                              'generator.uint32_t.nexe': gen_nexe}) \
-        as tar:
-            req.body_file = open(tar, 'rb')
-            req.content_length = os.path.getsize(tar)
-            res = req.get_response(prosrv)
-            #        req = self.zerovm_request()
-            #        req.body = conf
-            #        res = req.get_response(prosrv)
-            print res.headers
-            print res.body
-
-        req = self.object_request('/v1/a/disort/unsortedgen-1.data')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(len(res.body), res.content_length)
-        conf = [
-            {
-                "name": "man",
-                "exec": {
-                    "path": "nodeman.nexe",
-                    "args":"5000000",
-                    "env": {"SOURCE_NAME": "src", "DEST_NAME": "dst", "MAN_NAME": "man"}
-                },
-                "file_list": [
-                    {"device": "stderr"}
-                ],
-                "connect": ["src"]
-            },
-            {
-                "name": "src",
-                "exec": {
-                    "path": "nodesrc.nexe",
-                    "args":"5000000",
-                    "env": {"SOURCE_NAME": "src", "DEST_NAME": "dst", "MAN_NAME": "man"}
-                },
-                "file_list": [
-                    {"device": "stdin", "path": "/disort/unsorted*.data"}
-                ],
-                "connect": ["man", "dst"]
-            },
-            {
-                "name": "dst",
-                "exec": {
-                    "path": "nodedst.nexe",
-                    "args":"5000000",
-                    "env": {"SOURCE_NAME": "src", "DEST_NAME": "dst", "MAN_NAME": "man"}
-                },
-                "file_list": [
-                    {"device": "stdout", "path": "/disort/sorted*.data"}
-                ],
-                "connect": ["man"],
-                "count": 5
-            }
-        ]
-        conf = json.dumps(conf)
-        req = self.zerovm_tar_request()
-        sysmap = StringIO(conf)
-        man_nexe = load_file('nodeman.nexe')
-        src_nexe = load_file('nodesrc.nexe')
-        dst_nexe = load_file('nodedst.nexe')
-        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap,
-                              'nodeman.nexe': man_nexe,
-                              'nodesrc.nexe': src_nexe,
-                              'nodedst.nexe': dst_nexe})\
-        as tar:
-            req.body_file = open(tar, 'rb')
-            req.content_length = os.path.getsize(tar)
-            res = req.get_response(prosrv)
-            self.assertEqual(res.status_int, 200)
-            print res.headers
-            #self.assertIn('crc OK', res.body)
-
-        req = Request.blank('/v1/userstats/a/%s' % datetime.datetime.utcnow().strftime('%Y/%m/%d.log'),
-            environ={'REQUEST_METHOD': 'GET'})
-        res = req.get_response(prosrv)
-        print res.body
-
-    def test_QUERY_generator_zerovm(self):
-        raise SkipTest
-        self.setup_QUERY()
-        (_prosrv, _acc1srv, _acc2srv, _con1srv,
-         _con2srv, _obj1srv, _obj2srv) = _test_servers
-        prosrv = _test_servers[0]
-        prolis = _test_sockets[0]
-        self.create_container(prolis, '/v1/a/exe')
-        self.create_container(prolis, '/v1/a/unsorted')
-        self.create_container(prolis, '/v1/a/sorted')
-
-        @contextmanager
-        def save_args():
-            obj1_exe = _obj1srv.zerovm_exename
-            obj2_exe = _obj2srv.zerovm_exename
-            obj1_timeout = _obj1srv.zerovm_timeout
-            obj2_timeout = _obj2srv.zerovm_timeout
-            proxy_timeout = prosrv.app.node_timeout
-            try:
-                yield True
-            finally:
-                _obj1srv.zerovm_exename = obj1_exe
-                _obj2srv.zerovm_exename = obj2_exe
-                _obj1srv.zerovm_timeout = obj1_timeout
-                _obj2srv.zerovm_timeout = obj2_timeout
-                prosrv.app.node_timeout = proxy_timeout
-
-        with save_args():
-            _obj1srv.zerovm_exename = ['./zerovm']
-            _obj2srv.zerovm_exename = ['./zerovm']
-            _obj1srv.zerovm_timeout = 30
-            _obj2srv.zerovm_timeout = 30
-            prosrv.app.node_timeout = 30
-
-            fd = open('generator.uint32_t.nexe')
-            exe = fd.read()
-            fd.close()
-            self.create_object(prolis, '/v1/a/exe/generator.uint32_t.nexe', exe)
-            conf = [
-                    {
-                    "name": "generator",
-                    "exec": {"path": "/exe/generator.uint32_t.nexe"},
-                    "file_list": [
-                            {
-                            "device": "stdout",
-                            "path": "/unsorted/*.data"
-                        },
-                            {
-                            "device": "stderr"
-                        }
-                    ],
-                    "args": "500000",
-                    "count":2
-                }
-            ]
-            conf = json.dumps(conf)
-            req = self.zerovm_request()
-            req.body = conf
-            res = req.get_response(prosrv)
-            print res
-
-            fd = open('nodeman.nexe')
-            exe = fd.read()
-            fd.close()
-            self.create_object(prolis, '/v1/a/exe/nodeman.nexe', exe)
-            fd = open('nodesrc.nexe')
-            exe = fd.read()
-            fd.close()
-            self.create_object(prolis, '/v1/a/exe/nodesrc.nexe', exe)
-            fd = open('nodedst.nexe')
-            exe = fd.read()
-            fd.close()
-            self.create_object(prolis, '/v1/a/exe/nodedst.nexe', exe)
-            conf = [
-                    {
-                    "name":"src",
-                    "exec":{
-                        "path":"/exe/nodesrc.nexe"
-                    },
-                    "connect":[ "dst", "man" ],
-                    "file_list":[
-                            {
-                            "device":"stdin",
-                            "path":"/unsorted/generator*.data"
-                        }
-                    ],
-                    "env":{
-                        "SOURCE_NAME":"src",
-                        "MAN_NAME":"man",
-                        "DEST_NAME":"dst"
-                    }
-                },
-                    {
-                    "name":"dst",
-                    "exec":{
-                        "path":"/exe/nodedst.nexe"
-                    },
-                    "connect":[ "man" ],
-                    "file_list":[
-                            {
-                            "device":"stdout",
-                            "path":"/sorted/*.data"
-                        }
-                    ],
-                    "env":{
-                        "SOURCE_NAME":"src",
-                        "MAN_NAME":"man",
-                        "DEST_NAME":"dst"
-                    },
-                    "count":2
-                },
-                    {
-                    "name":"man",
-                    "exec":{
-                        "path":"/exe/nodeman.nexe"
-                    },
-                    "connect":[ "src" ],
-                    "file_list":[
-                            {
-                            "device":"stdout"
-                        },
-                            {
-                            "device":"stderr"
-                        }
-                    ],
-                    "env":{
-                        "SOURCE_NAME":"src",
-                        "MAN_NAME":"man",
-                        "DEST_NAME":"dst"
-                    }
-                }
-            ]
-            conf = json.dumps(conf)
-            req = self.zerovm_request()
-            req.body = conf
-            res = req.get_response(prosrv)
-            print res
 
     def test_QUERY_immediate_stdout(self):
         self.setup_QUERY()
@@ -1395,7 +922,6 @@ return resp
         req = Request.blank('/open/a/c/exe2?' + urlencode({'content_type':'text/html'}))
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
-        print res.headers
         self.assertEqual(res.body, '<html><body>Test this</body></html>')
         self.assertEqual(res.headers['content-type'], 'text/html')
         self.create_object(prolis, '/v1/a/c/my.nexe', nexe, content_type='application/x-nexe')
@@ -1591,7 +1117,7 @@ return open(mnfst.nvram).read()
         res = req.get_response(prosrv)
         self.assertEqual(res.body,
             '[fstab]\n'
-            'channel=/dev/image, mountpoint=/, access=rw\n'
+            'channel=/dev/image, mountpoint=/, access=ro\n'
             '[args]\n'
             'args = sort\n')
         conf = [
@@ -1618,7 +1144,7 @@ return open(mnfst.nvram).read()
         res = req.get_response(prosrv)
         self.assertEqual(res.body,
             '[fstab]\n'
-            'channel=/dev/image, mountpoint=/, access=rw\n'
+            'channel=/dev/image, mountpoint=/, access=ro\n'
             '[args]\n'
             'args = sort aa bb cc\n'
             '[env]\n'
@@ -1933,7 +1459,9 @@ return open(mnfst.nvram).read()
                 'nexe_retcode': 0
             }
         ]
-        self.assertEqual(json.dumps(resp), res.body)
+        self.assertEqual(res.headers['x-nexe-system'], 'sort-1,sort-2')
+        self.assertEqual(res.headers['x-nexe-status'], 'ok.,ok.')
+        self.assertEqual(res.headers['x-nexe-retcode'], '0,0')
         req = self.object_request('/v1/a/c_out1/out.sort-1')
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
@@ -1982,7 +1510,7 @@ return open(mnfst.nvram).read()
         self.assertEqual(res.body, self.get_sorted_numbers(30, 40))
 
     def test_QUERY_calls_authorize(self):
-        raise SkipTest
+        raise SkipTest # there is no pre-authorization right now, maybe we do not need it at all
         called = [False]
         def authorize(req):
             called[0] = True
@@ -2005,9 +1533,7 @@ return open(mnfst.nvram).read()
             req = self.zerovm_request()
             req.body = '12345'
             req.content_length = 10
-            print req.__dict__
             res = req.get_response(prosrv)
-            print req.__dict__
             self.assertEqual(res.status, '499 Client Disconnect')
 
     def test_QUERY_request_timed_out(self):
@@ -2061,10 +1587,9 @@ return open(mnfst.nvram).read()
         prosrv = _test_servers[0]
         req = self.zerovm_request()
         req.body = conf
-        #req.headers['etag'] = '1111'
         res = req.get_response(prosrv)
-        print res.body
-        #self.assertEqual(res.status_int, 422)
+        self.assertEqual(res.body, 'Error 404 Not Found while fetching /v1/a/c/error')
+        self.assertEqual(res.status_int, 404)
 
     def test_QUERY_missing_required_fields(self):
         conf = [
@@ -2192,60 +1717,6 @@ return open(mnfst.nvram).read()
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 400)
             self.assertEqual(res.body, 'Error querying object server for account a')
-
-    def test_QUERY_chunked(self):
-        raise SkipTest
-        class ChunkedFile():
-
-            def __init__(self, str):
-                self.str = str
-                self.bytes = len(str)
-                self.read_bytes = 0
-
-            @property
-            def bytes_left(self):
-                return self.bytes - self.read_bytes
-
-            def read(self, amt=None):
-                if self.read_bytes >= self.bytes:
-                    raise StopIteration()
-                if not amt:
-                    amt = self.bytes_left
-                data = self.str[self.read_bytes:self.read_bytes + min(amt, self.bytes_left)]
-                #data = '9' * min(amt, self.bytes_left)
-                self.read_bytes += len(data)
-                return data
-
-        with save_globals():
-            proxy_server.http_connect = \
-                fake_http_connect(200, 200, 201, 201, 201, body='1234567890')
-            swift.proxy.controllers.account.http_connect = \
-                fake_http_connect(200, 200, body='1234567890')
-            swift.proxy.controllers.container.http_connect =\
-                fake_http_connect(200, 200, body='1234567890')
-            swift.proxy.controllers.obj.http_connect =\
-                fake_http_connect(200, 200, 201, 201, 201, body='1234567890')
-            controller = proxyquery.ProxyQueryMiddleware(self.proxy_app,{}).\
-                get_controller('account', None, None)
-            req = Request.blank('/a', environ={'REQUEST_METHOD': 'POST'},
-                headers={'Transfer-Encoding': 'chunked',
-                         'Content-Type': 'application/json'})
-            conf = [
-                    {
-                    'name':'sort',
-                    'exec':{'path':'/c/exe'},
-                    'file_list':[
-                            {'device':'stdin','path':'/c/o'},
-                            {'device':'stdout'}
-                    ]
-                }
-            ]
-            conf = json.dumps(conf)
-            req.body_file = ChunkedFile(conf)
-            self.proxy_app.memcache.store = {}
-            self.proxy_app.update_request(req)
-            res = controller.POST(req)
-            self.assertEqual(res.status_int, 200)
 
     def test_QUERY_config_parser(self):
 

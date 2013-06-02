@@ -545,29 +545,36 @@ class ObjectQueryMiddleware(object):
                         pass
                 if zerovm_stderr:
                     self.logger.warning('zerovm stderr: '+zerovm_stderr)
-                if zerovm_retcode:
+                    zerovm_stdout += zerovm_stderr
+                # if zerovm_retcode:
+                #     err = 'ERROR OBJ.QUERY retcode=%s, '\
+                #           ' zerovm_stdout=%s'\
+                #             % (self.retcode_map[zerovm_retcode],
+                #                zerovm_stdout)
+                #     self.logger.exception(err)
+                report = zerovm_stdout.split('\n', 4)
+                if len(report) < 5 or zerovm_retcode > 1:
                     err = 'ERROR OBJ.QUERY retcode=%s, '\
                           ' zerovm_stdout=%s'\
                             % (self.retcode_map[zerovm_retcode],
                                zerovm_stdout)
                     self.logger.exception(err)
-                    resp = Response(body=err,status='503 Internal Error')
-                    nexe_headers['x-nexe-status'] = 'ZeroVM runtime error'
-                    resp.headers = nexe_headers
+                    resp = HTTPInternalServerError(body=err)
+                    #nexe_headers['x-nexe-status'] = 'ZeroVM runtime error'
+                    #resp.headers = nexe_headers
                     return req.get_response(resp)
-                report = zerovm_stdout.splitlines()
-                if len(report) < 5:
-                    nexe_validation = 0
-                    nexe_retcode = 0
-                    nexe_etag = ''
-                    nexe_cdr_line = '0 0 0 0 0 0 0 0 0 0 0 0'
-                    nexe_status = 'Zerovm crashed'
                 else:
-                    nexe_validation = int(report[0])
-                    nexe_retcode = int(report[1])
-                    nexe_etag = report[2]
-                    nexe_cdr_line = report[3]
-                    nexe_status = '\n'.join(report[4:])
+                    try:
+                        nexe_validation = int(report[0])
+                        nexe_retcode = int(report[1])
+                        nexe_etag = report[2]
+                        nexe_cdr_line = report[3]
+                        nexe_status = report[4].replace('\n', ' ').rstrip()
+                    except:
+                        resp = HTTPInternalServerError(body=zerovm_stdout)
+                        #nexe_headers['x-nexe-status'] = 'ZeroVM runtime error'
+                        #resp.headers = nexe_headers
+                        return req.get_response(resp)
 
                 self.logger.info('Zerovm CDR: %s' % nexe_cdr_line)
 
