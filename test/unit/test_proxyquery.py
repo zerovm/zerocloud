@@ -9,6 +9,8 @@ import random
 from urllib import urlencode
 import swift
 
+from test.unit import connect_tcp, readuntil2crlfs, FakeLogger, fake_http_connect
+
 from zerocloud.proxyquery import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
 
 try:
@@ -21,7 +23,6 @@ import cPickle as pickle
 from time import time, sleep
 from swift.common.swob import Request, HTTPNotFound, HTTPUnauthorized
 from hashlib import md5
-from test.unit import connect_tcp, readuntil2crlfs
 from tempfile import mkstemp, mkdtemp
 from shutil import rmtree
 
@@ -38,8 +39,6 @@ from swift.obj import server as object_server
 from swift.common.utils import mkdirs, normalize_timestamp, NullLogger
 from swift.common.wsgi import monkey_patch_mimetools
 from swift.common import ring
-from test.unit.proxy.test_server import fake_http_connect, save_globals, \
-    FakeRing, FakeMemcache, FakeMemcacheReturnsNone
 
 from zerocloud import proxyquery, objectquery
 
@@ -253,6 +252,87 @@ status = 'ok.'
 errdump(0, valid, retcode, mnfst.NexeEtag, accounting, status)
 '''
 
+class FakeRing(object):
+
+    def __init__(self, replicas=3):
+        # 9 total nodes (6 more past the initial 3) is the cap, no matter if
+        # this is set higher, or R^2 for R replicas
+        self.replicas = replicas
+        self.max_more_nodes = 0
+        self.devs = {}
+
+    def set_replicas(self, replicas):
+        self.replicas = replicas
+        self.devs = {}
+
+    @property
+    def replica_count(self):
+        return self.replicas
+
+    def get_part(self, account, container=None, obj=None):
+        return 1
+
+    def get_nodes(self, account, container=None, obj=None):
+        devs = []
+        for x in xrange(self.replicas):
+            devs.append(self.devs.get(x))
+            if devs[x] is None:
+                self.devs[x] = devs[x] = \
+                    {'ip': '10.0.0.%s' % x,
+                     'port': 1000 + x,
+                     'device': 'sd' + (chr(ord('a') + x)),
+                     'id': x}
+        return 1, devs
+
+    def get_part_nodes(self, part):
+        return self.get_nodes('blah')[1]
+
+    def get_more_nodes(self, nodes):
+        # replicas^2 is the true cap
+        for x in xrange(self.replicas, min(self.replicas + self.max_more_nodes,
+                                           self.replicas * self.replicas)):
+            yield {'ip': '10.0.0.%s' % x, 'port': 1000 + x, 'device': 'sda'}
+
+
+class FakeMemcache(object):
+
+    def __init__(self):
+        self.store = {}
+
+    def get(self, key):
+        return self.store.get(key)
+
+    def keys(self):
+        return self.store.keys()
+
+    def set(self, key, value, time=0):
+        self.store[key] = value
+        return True
+
+    def incr(self, key, time=0):
+        self.store[key] = self.store.setdefault(key, 0) + 1
+        return self.store[key]
+
+    @contextmanager
+    def soft_lock(self, key, timeout=0, retries=5):
+        yield True
+
+    def delete(self, key):
+        try:
+            del self.store[key]
+        except Exception:
+            pass
+        return True
+
+
+class FakeMemcacheReturnsNone(FakeMemcache):
+
+    def get(self, key):
+        # Returns None as the timestamp of the container; assumes we're only
+        # using the FakeMemcache for container existence checks.
+        return None
+
+
 def setup():
     global _testdir, _test_servers, _test_sockets,\
     _orig_container_listing_limit, _test_coros
@@ -374,102 +454,6 @@ def save_globals():
         proxy_server.ObjectController.account_info = orig_account_info
         proxyquery.http_connect = orig_query_connect
 
-def fake_http_connect(*code_iter, **kwargs):
-
-    class FakeConn(object):
-
-        def __init__(self, status, etag=None, body='', timestamp='1'):
-            self.status = status
-            self.reason = 'Fake'
-            self.host = '1.2.3.4'
-            self.port = '1234'
-            self.sent = 0
-            self.received = 0
-            self.etag = etag
-            self.body = body
-            self.timestamp = timestamp
-
-        def getresponse(self):
-            if kwargs.get('raise_exc'):
-                raise Exception('test')
-            if kwargs.get('raise_timeout_exc'):
-                raise Timeout()
-            return self
-
-        def getexpect(self):
-            if self.status == -2:
-                raise HTTPException()
-            if self.status == -3:
-                return FakeConn(507)
-            return FakeConn(100)
-
-        def getheaders(self):
-            headers = {'content-length': len(self.body),
-                       'content-type': 'x-application/test',
-                       'x-timestamp': self.timestamp,
-                       'last-modified': self.timestamp,
-                       'x-object-meta-test': 'testing',
-                       'etag':
-                           self.etag or '"68b329da9893e34099c7d8ad5cb9c940"',
-                       'x-works': 'yes',
-                       'x-account-container-count': 12345}
-            if not self.timestamp:
-                del headers['x-timestamp']
-            try:
-                if container_ts_iter.next() is False:
-                    headers['x-container-timestamp'] = '1'
-            except StopIteration:
-                pass
-            if 'slow' in kwargs:
-                headers['content-length'] = '4'
-            if 'headers' in kwargs:
-                headers.update(kwargs['headers'])
-            return headers.items()
-
-        def read(self, amt=None):
-            if 'slow' in kwargs:
-                if self.sent < 4:
-                    self.sent += 1
-                    sleep(0.1)
-                    return ' '
-            rv = self.body[:amt]
-            self.body = self.body[amt:]
-            return rv
-
-        def send(self, amt=None):
-            if 'slow' in kwargs:
-                if self.received < 4:
-                    self.received += 1
-                    sleep(0.1)
-
-        def getheader(self, name, default=None):
-            return dict(self.getheaders()).get(name.lower(), default)
-
-    timestamps_iter = iter(kwargs.get('timestamps') or ['1'] * len(code_iter))
-    etag_iter = iter(kwargs.get('etags') or [None] * len(code_iter))
-    x = kwargs.get('missing_container', [False] * len(code_iter))
-    if not isinstance(x, (tuple, list)):
-        x = [x] * len(code_iter)
-    container_ts_iter = iter(x)
-    code_iter = iter(code_iter)
-
-    def connect(*args, **ckwargs):
-        if 'give_content_type' in kwargs:
-            if len(args) >= 7 and 'Content-Type' in args[6]:
-                kwargs['give_content_type'](args[6]['Content-Type'])
-            else:
-                kwargs['give_content_type']('')
-        if 'give_connect' in kwargs:
-            kwargs['give_connect'](*args, **ckwargs)
-        status = code_iter.next()
-        etag = etag_iter.next()
-        timestamp = timestamps_iter.next()
-        if status <= 0:
-            raise HTTPException()
-        return FakeConn(status, etag, body=kwargs.get('body', ''),
-            timestamp=timestamp)
-
-    return connect
 
 class TestProxyQuery(unittest.TestCase):
 
@@ -600,30 +584,30 @@ class TestProxyQuery(unittest.TestCase):
         return req
 
     @contextmanager
-    def create_tar(self, dict):
+    def create_tar(self, filelist):
         tarfd, tarname = mkstemp()
         os.close(tarfd)
         tar = tarfile.open(name=tarname, mode='w')
         sysmap = None
-        for name, file in dict.iteritems():
+        for name, fd in filelist.iteritems():
             if name in [CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME]:
                 info = tarfile.TarInfo(name)
-                file.seek(0, 2)
-                size = file.tell()
+                fd.seek(0, os.SEEK_END)
+                size = fd.tell()
                 info.size = size
-                file.seek(0, 0)
-                tar.addfile(info, file)
+                fd.seek(0, os.SEEK_SET)
+                tar.addfile(info, fd)
                 sysmap = name
                 break
         if sysmap:
-            del dict[sysmap]
-        for name, file in dict.iteritems():
+            del filelist[sysmap]
+        for name, fd in filelist.iteritems():
             info = tarfile.TarInfo(name)
-            file.seek(0, 2)
-            size = file.tell()
+            fd.seek(0, os.SEEK_END)
+            size = fd.tell()
             info.size = size
-            file.seek(0, 0)
-            tar.addfile(info, file)
+            fd.seek(0, os.SEEK_SET)
+            tar.addfile(info, fd)
         tar.close()
         try:
             yield tarname
