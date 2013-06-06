@@ -534,6 +534,39 @@ class ClusterController(Controller):
                 None, marker)
         return ret
 
+    def build_connect_string(self, node, node_count, replicas=1):
+        tmp = []
+        for dst in node.bind:
+            dst_id = self.nodes.get(dst).id
+            proto = ';'.join(map(
+                lambda i: 'tcp:%d:0' % (dst_id + i * node_count),
+                range(replicas)
+            ))
+            tmp.append(
+                ','.join([proto,
+                          '/dev/in/' + dst,
+                          '0',
+                          str(self.app.zerovm_maxiops),
+                          str(self.app.zerovm_maxinput),
+                          '0,0'])
+            )
+        node.bind = tmp
+        tmp = []
+        for dst in node.connect:
+            dst_id = self.nodes.get(dst).id
+            proto = ';'.join(map(
+                lambda i: 'tcp:%d:' % (dst_id + i * node_count),
+                range(replicas)
+            ))
+            tmp.append(
+                ','.join([proto,
+                          '/dev/out/' + dst,
+                          '0,0,0',
+                          str(self.app.zerovm_maxiops),
+                          str(self.app.zerovm_maxoutput)])
+            )
+        node.connect = tmp
+
     def parse_cluster_config(self, req, cluster_config):
         try:
             nid = 1
@@ -844,31 +877,9 @@ class ClusterController(Controller):
                     body='Non existing node in connect string for node %s'
                         % node_name)
 
+        node_count = len(self.nodes)
         for node in self.nodes.itervalues():
-            tmp = []
-            for dst in node.bind:
-                dst_id = self.nodes.get(dst).id
-                tmp.append(
-                ','.join(['tcp:%d:0' % dst_id,
-                          '/dev/in/' + dst,
-                          '0',
-                          str(self.app.zerovm_maxiops),
-                          str(self.app.zerovm_maxinput),
-                          '0,0'])
-                )
-            node.bind = tmp
-            tmp = []
-            for dst in node.connect:
-                dst_id = self.nodes.get(dst).id
-                tmp.append(
-                ','.join(['tcp:%d:' % dst_id,
-                          '/dev/out/' + dst,
-                          '0,0,0',
-                          str(self.app.zerovm_maxiops),
-                          str(self.app.zerovm_maxoutput)])
-                )
-            node.connect = tmp
-
+            self.build_connect_string(node, node_count)
         #for n in self.nodes.itervalues():
         #    print n.__dict__
 
