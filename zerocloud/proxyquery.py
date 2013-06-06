@@ -1,3 +1,4 @@
+from copy import deepcopy
 import ctypes
 import re
 import struct
@@ -969,8 +970,8 @@ class ClusterController(Controller):
         for k in sorted(self.nodes.iterkeys()):
             node_list.append(self.nodes[k])
 
-        #for n in node_list:
-        #    print n.__dict__
+        # for n in node_list:
+        #     print json.dumps(n, cls=NodeEncoder)
 
         image_resp = None
         if user_image:

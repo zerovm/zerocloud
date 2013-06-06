@@ -22,13 +22,15 @@ JSON format describing a servlet configuration
             "meta": {   <i>metadata for the object, optional</i>
                 "metakey1":"value1",
                 "metakey2":"value2"
+                }
             }
         ],
         "count":1, <i>number of nodes, optional</i>
         "connect":[ <i>destination nodes to connect to, optional</i>
             "nodename1",
             "nodename2"
-        ]
+        ],
+        "replicate":1 <i>how many replicas of this node should run, optional, not implemented yet</i>
         }
     ,
     ....
@@ -142,12 +144,23 @@ The following devices _must_ have existing, readable path:
 The `Content-Type` for a device without a `path` property will be set on the HTTP response.
 `content_type` property set for read-only devices will be ignored.
 
-13. Device with `content_type: message/http` has a special meaning. The output object of such device will be parsed as an HTTP response. Headers taken from the parsed response will be supplied either to PUT if this object to be saved in object store, or in response if it is an immediate response object (no `path` set)
+13. Device with `content_type: message/http` has a special meaning. The output object of such device will be parsed as an HTTP response.
+Headers taken from the parsed response will be supplied either to PUT if this object to be saved in object store, or in response if it
+is an immediate response object (no `path` set)
 Only the following headers will be parsed from this object: `Content-Type` `X-Object-Meta-*`
 
 14. Device can have `meta` property set. `meta` contains meta-tag dictionary for this object.
 The meta-tags will be written alongside the object when the object is saved.
 Meta-tags will be sent within HTTP response if it is an immediate response object (no `path` set)
+
+15. Each node can have `replicate` property set. Default replication value is 1 (no replication).
+This property supports `replicate: 2` and `replicate: 3` for double and triple replication respectively.
+If it was set to > 1 additional copies of the node will run.
+Zerovm will replicate channels data for these nodes and compare it at the runtime.
+If it encounters errors the data from these nodes will be temporarily ignored.
+This feature allows cluster to be fault-tolerant and improves the cluster processing speeds slightly.
+Zerocloud may decide to run specific nodes in replicated way even when it was not specified in the servlet config file
+to add redundancy or increase replication count for the resulting Swift objects.
 
 ## Examples
 
