@@ -621,7 +621,7 @@ class TestProxyQuery(unittest.TestCase):
         ns_server = proxyquery.NameService()
         pool = GreenPool()
         peers = 3
-        ns_port = ns_server.start(pool, peers)
+        ns_server.start(pool, peers)
         map = {}
         sleep(0.1)
         def mock_client(ns_port, conf, id):
@@ -665,9 +665,9 @@ class TestProxyQuery(unittest.TestCase):
         dev1 = [[2, 3],[2, 3]]
         dev2 = [[1, 3],[1, 3]]
         dev3 = [[2, 1],[2, 1]]
-        th1 = pool.spawn(mock_client, ns_port, dev1, 1)
-        th2 = pool.spawn(mock_client, ns_port, dev2, 2)
-        th3 = pool.spawn(mock_client, ns_port, dev3, 3)
+        th1 = pool.spawn(mock_client, ns_server.port, dev1, 1)
+        th2 = pool.spawn(mock_client, ns_server.port, dev2, 2)
+        th3 = pool.spawn(mock_client, ns_server.port, dev3, 3)
         th1.wait()
         th2.wait()
         th3.wait()

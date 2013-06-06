@@ -215,12 +215,14 @@ class NameService(object):
     def __init__(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.port = None
+        self.hostaddr = None
 
     def start(self, pool, peers):
         self.sock.bind(('', 0))
         self.peers = peers
         self.thread = pool.spawn(self._run)
-        return self.sock.getsockname()[1]
+        (self.hostaddr, self.port) = self.sock.getsockname()
 
     def _run(self):
         bind_map = {}
@@ -981,16 +983,17 @@ class ClusterController(Controller):
             return HTTPServiceUnavailable(
                 body='Cannot find own address, check zerovm_ns_hostname')
         ns_server = None
-        ns_port = None
         if len(node_list) > 1:
             ns_server = NameService()
             if self.app.zerovm_ns_thrdpool.free() <= 0:
                 return HTTPServiceUnavailable(body='Cluster slot not available',
                     request=req)
-            ns_port = ns_server.start(self.app.zerovm_ns_thrdpool, len(self.nodes))
+            ns_server.start(self.app.zerovm_ns_thrdpool, len(self.nodes))
+            if not ns_server.port:
+                return HTTPServiceUnavailable(body='Cannot bind name service')
         for node in node_list:
             if ns_server:
-                node.name_service = 'udp:%s:%d' % (addr, ns_port)
+                node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
             sysmap = json.dumps(node, cls=NodeEncoder)
             #print sysmap
             sysmap_iter = iter([sysmap])
