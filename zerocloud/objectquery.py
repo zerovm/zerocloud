@@ -127,7 +127,7 @@ class ObjectQueryMiddleware(object):
         else:
             self.logger = get_logger(conf, log_route='obj-query')
 
-        self.zerovm_manifest_ver = conf.get('zerovm_manifest_ver','09082012')
+        self.zerovm_manifest_ver = conf.get('zerovm_manifest_ver','20130611')
         self.zerovm_exename = [i.strip() for i in conf.get('zerovm_exename', 'zerovm').split() if i.strip()]
         #self.zerovm_xparams = set(i.strip() for i in conf.get('zerovm_xparams', '').split() if i.strip())
 
@@ -437,14 +437,12 @@ class ObjectQueryMiddleware(object):
                                     zerovm_inputmnfst_fn):
                 zerovm_inputmnfst = (
                     'Version=%s\n'
-                    'Nexe=%s\n'
-                    'NexeMax=%s\n'
+                    'Program=%s\n'
                     'Timeout=%s\n'
-                    'MemMax=%s\n'
+                    'Memory=%s\n'
                     % (
                         self.zerovm_manifest_ver,
                         zerovm_nexe,
-                        self.zerovm_maxnexe,
                         self.zerovm_timeout,
                         self.zerovm_maxnexemem
                         ))
@@ -492,15 +490,15 @@ class ObjectQueryMiddleware(object):
                 env = None
                 if config.get('env'):
                     env = '[env]\n'
-                    zerovm_inputmnfst += 'Environment=%s\n' % ','.join(
-                        reduce(lambda x, y: x + y, config['env'].items()))
+                    # zerovm_inputmnfst += 'Environment=%s\n' % ','.join(
+                    #     reduce(lambda x, y: x + y, config['env'].items()))
                     for k,v in config['env'].iteritems():
                         env += '%s = %s\n' % (k, v)
 
                 args = '[args]\nargs = %s' % config['name']
                 if config.get('args'):
-                    zerovm_inputmnfst += 'CommandLine=%s\n'\
-                                         % config['args']
+                    # zerovm_inputmnfst += 'CommandLine=%s\n'\
+                    #                      % config['args']
                     args += ' %s' % config['args']
                 args += '\n'
                 nvram_file = None
@@ -517,11 +515,9 @@ class ObjectQueryMiddleware(object):
 #                     self.zerovm_maxiops, self.zerovm_maxoutput)
                     0, 0)
 
-                nexe_name = config.get('name', None)
-                if nexe_name:
-                    nexe_headers['x-nexe-system'] = nexe_name
-                zerovm_inputmnfst += 'NodeName=%s,%d\n' \
-                                     % (nexe_name, config['id'])
+                nexe_headers['x-nexe-system'] = config.get('name', '')
+                zerovm_inputmnfst += 'Node=%d\n' \
+                                     % (config['id'])
                 if 'name_service' in config:
                     zerovm_inputmnfst += 'NameServer=%s\n'\
                                          % config['name_service']
@@ -778,9 +774,9 @@ class ObjectQueryMiddleware(object):
         with tmpdir.mkstemp() as (zerovm_inputmnfst_fd, zerovm_inputmnfst_fn):
             zerovm_inputmnfst = (
                 'Version=%s\n'
-                'Nexe=%s\n'
+                'Program=%s\n'
                 'Timeout=%s\n'
-                'MemMax=%s\n'
+                'Memory=%s\n'
                 % (
                     self.zerovm_manifest_ver,
                     file.data_file,

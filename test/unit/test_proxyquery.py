@@ -120,31 +120,27 @@ def retrieve_mnfst_field(n, eq=None, min=None, max=None, isint=False, optional=F
     setattr(mnfst, n.strip(), v)
 
 
-retrieve_mnfst_field('Version', '09082012')
-retrieve_mnfst_field('Nexe')
-retrieve_mnfst_field('NexeMax', isint=True, optional=True)
-retrieve_mnfst_field('SyscallsMax', min=1, isint=True, optional=True)
-retrieve_mnfst_field('NexeEtag', optional=True)
+retrieve_mnfst_field('Version', '20130611')
+retrieve_mnfst_field('Program')
+retrieve_mnfst_field('Etag', optional=True)
 retrieve_mnfst_field('Timeout', min=1, isint=True)
-retrieve_mnfst_field('MemMax', min=32*1048576, max=4096*1048576, isint=True)
-retrieve_mnfst_field('Environment', optional=True)
-retrieve_mnfst_field('CommandLine', optional=True)
+retrieve_mnfst_field('Memory', min=32*1048576, max=4096*1048576, isint=True)
 retrieve_mnfst_field('Channel')
-retrieve_mnfst_field('NodeName', optional=True)
+retrieve_mnfst_field('Node', optional=True, isint=True)
 retrieve_mnfst_field('NameServer', optional=True)
-exe = file(mnfst.Nexe, 'r').read()
+exe = file(mnfst.Program, 'r').read()
 if 'INVALID' == exe:
     valid = 2
     retcode = 0
     errdump(8, valid, retcode, '', accounting, 'nexe is invalid')
 if args.validate:
     errdump(0, valid, retcode, '', accounting, 'nexe is valid')
-if not getattr(mnfst, 'NexeEtag', None):
-    mnfst.NexeEtag = 'DISABLED'
+if not getattr(mnfst, 'Etag', None):
+    mnfst.Etag = 'DISABLED'
 
 channel_list = re.split('\s*,\s*',mnfst.Channel)
 if len(channel_list) % 7 != 0:
-    errdump(1,valid,0,mnfst.NexeEtag,accounting,'wrong channel config: %s' % mnfst.Channel)
+    errdump(1,valid,0,mnfst.Etag,accounting,'wrong channel config: %s' % mnfst.Channel)
 dev_list = channel_list[1::7]
 bind_data = ''
 bind_count = 0
@@ -152,7 +148,7 @@ connect_data = ''
 connect_count = 0
 con_list = []
 bind_map = {}
-alias = int(re.split('\s*,\s*', mnfst.NodeName)[1])
+alias = int(mnfst.Node)
 mnfst.channels = {}
 for fname,device,type,rd,rd_byte,wr,wr_byte in zip(*[iter(channel_list)]*7):
     if device == '/dev/stdin' or device == '/dev/input':
@@ -225,7 +221,7 @@ try:
 except EOFError:
     id = []
 except Exception:
-    errdump(1,valid,0,mnfst.NexeEtag,accounting,'Std files I/O error')
+    errdump(1,valid,0,mnfst.Etag,accounting,'Std files I/O error')
 
 od = ''
 try:
@@ -249,7 +245,7 @@ accounting[6] += 1
 accounting[7] += len('\nfinished\n')
 err.close()
 status = 'ok.'
-errdump(0, valid, retcode, mnfst.NexeEtag, accounting, status)
+errdump(0, valid, retcode, mnfst.Etag, accounting, status)
 '''
 
 class FakeRing(object):
