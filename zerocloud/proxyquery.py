@@ -21,7 +21,7 @@ from swift.common.http import HTTP_CONTINUE, is_success, \
 from swift.proxy.controllers.base import update_headers, delay_denial, \
     Controller, cors_validation
 from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
-    get_remote_client, ContextPool, cache_from_env
+    get_remote_client, ContextPool, cache_from_env, GreenthreadSafeIterator
 from swift.proxy.server import ObjectController, ContainerController, \
     AccountController
 from swift.common.bufferedhttp import http_connect
@@ -379,7 +379,7 @@ class ProxyQueryMiddleware(object):
 
 
 class ZvmNode(object):
-    def __init__(self, nid, name, nexe_path, args=None, env=None):
+    def __init__(self, nid, name, nexe_path, args=None, env=None, replicate=1):
         self.id = nid
         self.name = name
         self.exe = nexe_path
@@ -388,6 +388,8 @@ class ZvmNode(object):
         self.channels = []
         self.connect = []
         self.bind = []
+        self.replicate = replicate
+        self.replicas = []
 
     def add_channel(self, device, access, path=None,
                     content_type='application/octet-stream', meta_data=None):
@@ -481,11 +483,10 @@ class ClusterController(Controller):
         s.close()
         return result
 
-    def get_random_nodes(self):
+    def get_random_partition(self):
         partition_count = self.app.object_ring.partition_count
         part = randrange(0, partition_count)
-        nodes = self.app.object_ring.get_part_nodes(part)
-        return part, nodes
+        return part
 
     def list_account(self, req, account, mask=None, marker=None):
         new_req = req.copy_get()
@@ -535,13 +536,13 @@ class ClusterController(Controller):
                 None, marker)
         return ret
 
-    def build_connect_string(self, node, node_count, replicas=1):
+    def build_connect_string(self, node, node_count):
         tmp = []
         for dst in node.bind:
             dst_id = self.nodes.get(dst).id
             proto = ';'.join(map(
                 lambda i: 'tcp:%d:0' % (dst_id + i * node_count),
-                range(replicas)
+                range(node.replicate)
             ))
             tmp.append(
                 ','.join([proto,
@@ -557,7 +558,7 @@ class ClusterController(Controller):
             dst_id = self.nodes.get(dst).id
             proto = ';'.join(map(
                 lambda i: 'tcp:%d:' % (dst_id + i * node_count),
-                range(replicas)
+                range(node.replicate)
             ))
             tmp.append(
                 ','.join([proto,
@@ -596,6 +597,7 @@ class ClusterController(Controller):
                 if not isinstance(node_count, int):
                     return HTTPBadRequest(request=req,
                         body='Invalid node count')
+                node_replicate = node.get('replicate', 1)
                 file_list = node.get('file_list')
                 read_list = []
                 write_list = []
@@ -700,7 +702,7 @@ class ClusterController(Controller):
                                 new_node = self.nodes.get(new_name)
                                 if not new_node:
                                     new_node = ZvmNode(nid, new_name,
-                                        nexe_path, nexe_args, nexe_env)
+                                        nexe_path, nexe_args, nexe_env, node_replicate)
                                     nid += 1
                                     self.nodes[new_name] = new_node
                                 new_node.add_channel(device, access,
@@ -714,7 +716,7 @@ class ClusterController(Controller):
                                     new_node = self.nodes.get(new_name)
                                     if not new_node:
                                         new_node = ZvmNode(nid, new_name,
-                                            nexe_path, nexe_args, nexe_env)
+                                            nexe_path, nexe_args, nexe_env, node_replicate)
                                         nid += 1
                                         self.nodes[new_name] = new_node
                                     new_node.add_channel(device, access,
@@ -723,7 +725,7 @@ class ClusterController(Controller):
                                 new_node = self.nodes.get(node_name)
                                 if not new_node:
                                     new_node = ZvmNode(nid, node_name, nexe_path,
-                                        nexe_args, nexe_env)
+                                        nexe_args, nexe_env, node_replicate)
                                     nid += 1
                                     self.nodes[node_name] = new_node
                                 new_node.add_channel(device, access, path=path)
@@ -771,7 +773,7 @@ class ClusterController(Controller):
                                     new_node = self.nodes.get(new_name)
                                     if not new_node:
                                         new_node = ZvmNode(nid, new_name,
-                                            nexe_path, nexe_args, nexe_env)
+                                            nexe_path, nexe_args, nexe_env, node_replicate)
                                         nid += 1
                                         self.nodes[new_name] = new_node
                                     new_node.add_channel(device, access,
@@ -786,7 +788,7 @@ class ClusterController(Controller):
                             new_node = self.nodes.get(node_name)
                             if not new_node:
                                 new_node = ZvmNode(nid, node_name, nexe_path,
-                                    nexe_args, nexe_env)
+                                    nexe_args, nexe_env, node_replicate)
                                 nid += 1
                                 self.nodes[node_name] = new_node
                             new_node.add_channel(device, access,
@@ -808,7 +810,7 @@ class ClusterController(Controller):
                                 new_node = self.nodes.get(node_name)
                                 if not new_node:
                                     new_node = ZvmNode(nid, node_name,
-                                        nexe_path, nexe_args, nexe_env)
+                                        nexe_path, nexe_args, nexe_env, node_replicate)
                                     nid += 1
                                     self.nodes[node_name] = new_node
                                 new_node.add_channel(device, access,
@@ -831,7 +833,7 @@ class ClusterController(Controller):
                                 new_node = self.nodes.get(new_name)
                                 if not new_node:
                                     new_node = ZvmNode(nid, new_name,
-                                        nexe_path, nexe_args, nexe_env)
+                                        nexe_path, nexe_args, nexe_env, node_replicate)
                                     nid += 1
                                     self.nodes[new_name] = new_node
                                 new_node.add_channel(device, access, path=path)
@@ -839,7 +841,7 @@ class ClusterController(Controller):
                             new_node = self.nodes.get(node_name)
                             if not new_node:
                                 new_node = ZvmNode(nid, node_name, nexe_path,
-                                    nexe_args, nexe_env)
+                                    nexe_args, nexe_env, node_replicate)
                                 nid += 1
                                 self.nodes[node_name] = new_node
                             new_node.add_channel(device, access, path=path)
@@ -878,13 +880,38 @@ class ClusterController(Controller):
                     body='Non existing node in connect string for node %s'
                         % node_name)
 
-        node_count = len(self.nodes)
-        for node in self.nodes.itervalues():
-            self.build_connect_string(node, node_count)
+        #node_count = len(self.nodes)
+        #for node in self.nodes.itervalues():
+        #    self.build_connect_string(node, node_count)
         #for n in self.nodes.itervalues():
         #    print n.__dict__
 
         return None
+
+    def create_sysmap_data_source(self, data_sources, node):
+        sysmap = json.dumps(node, cls=NodeEncoder)
+        #print sysmap
+        sysmap_iter = iter([sysmap])
+        sysmap_resp = Response(app_iter=sysmap_iter,
+                               headers={'Content-Length': str(len(sysmap))})
+        data_sources.insert(0, sysmap_resp)
+        if not getattr(node, 'last_data', None):
+            node.last_data = sysmap_resp
+        sysmap_resp.nodes = [{'node': node, 'dev': 'sysmap'}]
+
+    def _get_own_address(self):
+        if self.app.zerovm_ns_hostname:
+            addr = self.app.zerovm_ns_hostname
+        else:
+            addr = None
+            partition_count = self.app.object_ring.partition_count
+            part = randrange(0, partition_count)
+            nodes = self.app.object_ring.get_part_nodes(part)
+            for n in nodes:
+                addr = self.get_local_address(n)
+                if addr:
+                    break
+        return addr
 
     @delay_denial
     @cors_validation
@@ -982,38 +1009,32 @@ class ClusterController(Controller):
                 n.add_channel('image', ACCESS_CDR)
 
         data_sources = []
-        pile = GreenPile(len(node_list))
-        partition, obj_nodes = self.get_random_nodes()
-        if self.app.zerovm_ns_hostname:
-            addr = self.app.zerovm_ns_hostname
-        else:
-            for n in obj_nodes:
-                addr = self.get_local_address(n)
-                if addr:
-                    break
+        addr = self._get_own_address()
         if not addr:
             return HTTPServiceUnavailable(
                 body='Cannot find own address, check zerovm_ns_hostname')
+        node_count = self.get_total_node_count(node_list)
+        pile = GreenPile(node_count)
         ns_server = None
         if len(node_list) > 1:
-            ns_server = NameService()
             if self.app.zerovm_ns_thrdpool.free() <= 0:
                 return HTTPServiceUnavailable(body='Cluster slot not available',
                     request=req)
-            ns_server.start(self.app.zerovm_ns_thrdpool, len(self.nodes))
+            ns_server = NameService()
+            ns_server.start(self.app.zerovm_ns_thrdpool, node_count)
             if not ns_server.port:
                 return HTTPServiceUnavailable(body='Cannot bind name service')
         for node in node_list:
             if ns_server:
                 node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
-            sysmap = json.dumps(node, cls=NodeEncoder)
-            #print sysmap
-            sysmap_iter = iter([sysmap])
-            sysmap_resp = Response(app_iter=sysmap_iter,
-            headers={'Content-Length':str(len(sysmap))})
-            data_sources.insert(0, sysmap_resp)
-            node.last_data = sysmap_resp
-            sysmap_resp.nodes = [{'node':node, 'dev':'sysmap'}]
+                self.build_connect_string(node, len(node_list))
+                if node.replicate > 1:
+                    for i in range(0, node.replicate - 1):
+                        node.replicas.append(deepcopy(node))
+                        node.replicas[i].id = node.id + i * len(node_list)
+                    for repl_node in node.replicas:
+                        self.create_sysmap_data_source(data_sources, repl_node)
+            self.create_sysmap_data_source(data_sources, node)
             nexe_headers = {
                 'x-nexe-system': node.name,
                 'x-nexe-status': 'ZeroVM did not run',
@@ -1023,15 +1044,6 @@ class ClusterController(Controller):
                 'x-nexe-cdr-line': '0 0 0 0 0 0 0 0 0 0 0 0'
             }
             path_info = req.path_info
-            top_channel = node.channels[0]
-            if top_channel.path and top_channel.path[0] == '/' and \
-               (top_channel.access & (ACCESS_READABLE | ACCESS_CDR)):
-                path_info += top_channel.path
-                account, container, obj = split_path(path_info, 1, 3, True)
-                partition, obj_nodes = self.app.object_ring.get_nodes(
-                    account, container, obj)
-            else:
-                partition, obj_nodes = self.get_random_nodes()
             exec_request = Request.blank(path_info,
                 environ=req.environ, headers=req.headers)
             exec_request.path_info = path_info
@@ -1089,19 +1101,48 @@ class ClusterController(Controller):
                     data_sources.append(source_resp)
                 node.last_data = source_resp
                 source_resp.nodes.append({'node':node, 'dev':ch.device})
+                for repl_node in node.replicas:
+                    repl_node.last_data = source_resp
+                    source_resp.nodes.append({'node':repl_node, 'dev':ch.device})
             if image_resp:
                 node.last_data = image_resp
                 image_resp.nodes.append({'node':node, 'dev':'image'})
-            node_iter = self.iter_nodes(self.app.object_ring, partition)
-            #node_iter = self.iter_nodes(partition, obj_nodes, self.app.object_ring)
-            pile.spawn(self._connect_exec_node, node_iter, partition,
-                exec_request, self.app.logger.thread_locals, node,
-                nexe_headers)
+                for repl_node in node.replicas:
+                    repl_node.last_data = image_resp
+                    image_resp.nodes.append({'node':repl_node, 'dev':'image'})
+            top_channel = node.channels[0]
+            if top_channel.path and top_channel.path[0] == '/' and \
+               (top_channel.access & (ACCESS_READABLE | ACCESS_CDR)):
+                path_info += top_channel.path
+                account, container, obj = split_path(path_info, 1, 3, True)
+                partition = self.app.object_ring.get_part(account, container, obj)
+                node_iter = GreenthreadSafeIterator(
+                    self.iter_nodes(self.app.object_ring, partition))
+                exec_request.path_info = path_info
+                pile.spawn(self._connect_exec_node, node_iter, partition,
+                    exec_request, self.app.logger.thread_locals, node,
+                    nexe_headers)
+                for repl_node in node.replicas:
+                    pile.spawn(self._connect_exec_node, node_iter, partition,
+                        exec_request, self.app.logger.thread_locals, repl_node,
+                        nexe_headers)
+            else:
+                partition = self.get_random_partition()
+                node_iter = self.iter_nodes(self.app.object_ring, partition)
+                pile.spawn(self._connect_exec_node, node_iter, partition,
+                    exec_request, self.app.logger.thread_locals, node,
+                    nexe_headers)
+                for repl_node in node.replicas:
+                    partition = self.get_random_partition()
+                    node_iter = self.iter_nodes(self.app.object_ring, partition)
+                    pile.spawn(self._connect_exec_node, node_iter, partition,
+                        exec_request, self.app.logger.thread_locals, repl_node,
+                        nexe_headers)
         if image_resp:
             data_sources.append(image_resp)
 
         conns = [conn for conn in pile if conn]
-        if len(conns) < len(node_list):
+        if len(conns) < node_count:
             self.app.logger.exception(
                 _('ERROR Cannot find suitable node to execute code on'))
             return HTTPServiceUnavailable(
@@ -1118,7 +1159,7 @@ class ClusterController(Controller):
         #chunked = req.headers.get('transfer-encoding')
         chunked = True
         try:
-            with ContextPool(len(node_list)) as pool:
+            with ContextPool(node_count) as pool:
                 for conn in conns:
                     conn.failed = False
                     conn.queue = Queue(self.app.put_queue_depth)
@@ -1453,7 +1494,7 @@ class ClusterController(Controller):
         handler = getattr(controller, req.method, None)
         obj_resp = handler(obj_req)
         content = obj_resp.content_type.split(';')[0].strip()
-        print content
+        #print content
         if content in 'application/x-nexe':
             run = True
         elif run:
@@ -1522,6 +1563,12 @@ class ClusterController(Controller):
         if memcache_client and req.template:
             memcache_client.set(memcache_key, req.template,
                 time=float(self.app.zerovm_cache_config_timeout))
+
+    def get_total_node_count(self, node_list):
+        count = 0
+        for n in node_list:
+            count += n.replicate
+        return count
 
 
 def filter_factory(global_conf, **local_conf):

@@ -449,7 +449,6 @@ class ObjectQueryMiddleware(object):
                         self.zerovm_maxnexemem
                         ))
 
-
                 for ch in config['channels']:
                     type = CHANNEL_TYPE_MAP.get(ch['device'])
                     if type is None:
