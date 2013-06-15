@@ -1148,6 +1148,11 @@ class ClusterController(Controller):
             return HTTPServiceUnavailable(
                 body='Cannot find suitable node to execute code on')
 
+        for conn in conns:
+            if getattr(conn, 'error', None):
+                return Response(body=conn.error,
+                                status="%d %s" % (conn.resp.status, conn.resp.reason),
+                                headers=conn.nexe_headers)
         for data_src in data_sources:
             data_src.conns = []
             for node in data_src.nodes:
@@ -1387,22 +1392,23 @@ class ClusterController(Controller):
                         request.path_info, request.headers)
                 with Timeout(self.app.node_timeout):
                     resp = conn.getexpect()
+                conn.node = node
+                conn.cnode = cnode
+                conn.nexe_headers = nexe_headers
                 if resp.status == HTTP_CONTINUE:
                     conn.resp = None
-                    conn.node = node
-                    conn.cnode = cnode
-                    conn.nexe_headers = nexe_headers
                     return conn
                 elif is_success(resp.status):
                     conn.resp = resp
-                    conn.node = node
-                    conn.cnode = cnode
-                    conn.nexe_headers = nexe_headers
                     return conn
                 elif resp.status == HTTP_INSUFFICIENT_STORAGE:
                     self.error_limit(node)
                 else:
-                    self.app.logger.warn('Obj server failed with: %d %s' % (resp.status, resp.reason))
+                    resp = conn.getresponse()
+                    conn.error = resp.read()
+                    conn.resp = resp
+                    self.app.logger.warn('Obj server failed with: %d %s %s' % (resp.status, resp.reason, conn.error))
+                    return conn
             except:
                 self.exception_occurred(node, _('Object'),
                     _('Expect: 100-continue on %s') % request.path_info)
