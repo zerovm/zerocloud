@@ -17,7 +17,7 @@ from eventlet.green import socket
 from eventlet.timeout import Timeout
 
 from swift.common.http import HTTP_CONTINUE, is_success, \
-    HTTP_INSUFFICIENT_STORAGE
+    HTTP_INSUFFICIENT_STORAGE, is_client_error
 from swift.proxy.controllers.base import update_headers, delay_denial, \
     Controller, cors_validation
 from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
@@ -1403,12 +1403,12 @@ class ClusterController(Controller):
                     return conn
                 elif resp.status == HTTP_INSUFFICIENT_STORAGE:
                     self.error_limit(node)
-                else:
-                    resp = conn.getresponse()
+                elif is_client_error(resp.status):
                     conn.error = resp.read()
                     conn.resp = resp
-                    self.app.logger.warn('Obj server failed with: %d %s %s' % (resp.status, resp.reason, conn.error))
                     return conn
+                else:
+                    self.app.logger.warn('Obj server failed with: %d %s' % (resp.status, resp.reason))
             except:
                 self.exception_occurred(node, _('Object'),
                     _('Expect: 100-continue on %s') % request.path_info)
