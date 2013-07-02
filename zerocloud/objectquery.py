@@ -29,6 +29,8 @@ from zerocloud.proxyquery import TAR_MIMES, ACCESS_CDR, ACCESS_READABLE, \
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 from zerocloud.fastcgi import PseudoSocket
 
+ENV_ITEM = 'name=%s, value=%s\n'
+
 STD_DEVICES = ['stdin', 'stdout', 'stderr']
 
 try:
@@ -497,15 +499,15 @@ class ObjectQueryMiddleware(object):
                 if config.get('env'):
                     env = '[env]\n'
                     if file:
-                        env += '%s = %s\n' % ('CONTENT_LENGTH', file.get_data_file_size())
-                        env += '%s = %s\n' % ('CONTENT_TYPE',
+                        env += ENV_ITEM % ('CONTENT_LENGTH', file.get_data_file_size())
+                        env += ENV_ITEM % ('CONTENT_TYPE',
                                               file.metadata.get('Content-Type',
                                                                 'application/octet-stream'))
                         config['env']['REQUEST_METHOD'] = 'POST'
                         config['env']['PATH_INFO'] = file.name
                     for k, v in config['env'].iteritems():
                         if v:
-                            env += '%s = %s\n' % (k, v)
+                            env += ENV_ITEM % (k, v)
 
                 args = '[args]\nargs = %s' % config['name']
                 if config.get('args'):

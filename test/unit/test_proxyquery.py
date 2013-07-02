@@ -1127,8 +1127,8 @@ return open(mnfst.nvram).read()
         self.assertIn('[args]\n'
                       'args = sort aa bb cc',
                       res.body)
-        self.assertIn('key2 = val2\n'
-                      'key1 = val1',
+        self.assertIn('name=key2, value=val2\n'
+                      'name=key1, value=val1',
                       res.body)
 
     def test_QUERY_sort_immediate_stdout_stderr(self):
