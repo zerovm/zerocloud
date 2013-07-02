@@ -29,6 +29,8 @@ from zerocloud.proxyquery import TAR_MIMES, ACCESS_CDR, ACCESS_READABLE, \
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 from zerocloud.fastcgi import PseudoSocket
 
+STD_DEVICES = ['stdin', 'stdout', 'stderr']
+
 try:
     import simplejson as json
 except ImportError:
@@ -474,11 +476,15 @@ class ObjectQueryMiddleware(object):
                         (ch['lpath'], ch['device'], type,
                          self.zerovm_maxiops, self.zerovm_maxoutput)
 
+                network_devices = []
                 for conn in config['connect'] + config['bind']:
                     zerovm_inputmnfst += 'Channel=%s\n' % conn
+                    dev = conn.split(',', 2)[1][5:] # len('/dev/') = 5
+                    if dev in STD_DEVICES:
+                        network_devices.append(dev)
 
-                for dev in ['stdin', 'stdout', 'stderr']:
-                    if not dev in channels:
+                for dev in STD_DEVICES:
+                    if not dev in channels and not dev in network_devices:
                         if 'stdin' in dev:
                             zerovm_inputmnfst +=\
                             'Channel=/dev/null,/dev/stdin,0,%s,%s,0,0\n' %\
@@ -490,10 +496,16 @@ class ObjectQueryMiddleware(object):
                 env = None
                 if config.get('env'):
                     env = '[env]\n'
-                    # zerovm_inputmnfst += 'Environment=%s\n' % ','.join(
-                    #     reduce(lambda x, y: x + y, config['env'].items()))
-                    for k,v in config['env'].iteritems():
-                        env += '%s = %s\n' % (k, v)
+                    if file:
+                        env += '%s = %s\n' % ('CONTENT_LENGTH', file.get_data_file_size())
+                        env += '%s = %s\n' % ('CONTENT_TYPE',
+                                              file.metadata.get('Content-Type',
+                                                                'application/octet-stream'))
+                        config['env']['REQUEST_METHOD'] = 'POST'
+                        config['env']['PATH_INFO'] = file.name
+                    for k, v in config['env'].iteritems():
+                        if v:
+                            env += '%s = %s\n' % (k, v)
 
                 args = '[args]\nargs = %s' % config['name']
                 if config.get('args'):

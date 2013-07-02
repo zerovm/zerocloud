@@ -60,7 +60,7 @@ DEVICE_MAP = {
     'debug': ACCESS_NETWORK,
     'image': ACCESS_CDR,
     'db': ACCESS_CHECKPOINT
-    }
+}
 
 TAR_MIMES = ['application/x-tar', 'application/x-gtar', 'application/x-ustar']
 CLUSTER_CONFIG_FILENAME = 'boot/cluster.map'
@@ -82,6 +82,7 @@ DEFAULT_EXE_SYSTEM_MAP = r'''
         ]
     }]
     '''
+
 
 def merge_headers(current, new):
     if hasattr(new, 'keys'):
@@ -407,25 +408,73 @@ class ZvmNode(object):
                     return chan
         return None
 
-    def add_connections(self, nodes, connect_list):
-        for bind_name in connect_list:
-            if nodes.get(bind_name):
-                bind_node = nodes.get(bind_name)
-                if bind_node is self:
-                    raise Exception('Cannot bind to itself: %s' % bind_name)
-                bind_node.bind.append(self.name)
-                self.connect.append(bind_name)
-            elif nodes.get(bind_name + '-1'):
-                i = 1
-                bind_node = nodes.get(bind_name + '-' + str(i))
-                while bind_node:
-                    if not bind_node is self:
-                        bind_node.bind.append(self.name)
-                        self.connect.append(bind_name + '-' + str(i))
-                    i += 1
-                    bind_node = nodes.get(bind_name + '-' + str(i))
+    def resolve_wildcards(self, param):
+        if param.count('*') > 0:
+            for wc in getattr(self, 'wildcards', []):
+                param = param.replace('*', wc, 1)
+            if param.count('*') > 0:
+                raise Exception('Cannot resolve wildcard for node %s' % self.name)
+        return param
+
+    def add_connection(self, bind_name, nodes, src_device=None, dst_device=None):
+        if not dst_device:
+            dst_device = '/dev/in/' + self.name
+        else:
+            dst_device = self.resolve_wildcards(dst_device)
+        if nodes.get(bind_name):
+            bind_node = nodes.get(bind_name)
+            if bind_node is self:
+                raise Exception('Cannot bind to itself: %s' % bind_name)
+            bind_node.bind.append((self.name, dst_device))
+            if not src_device:
+                self.connect.append((bind_name, '/dev/out/' + bind_name))
             else:
-                raise Exception('Non-existing node in connect %s' % bind_name)
+                src_device = bind_node.resolve_wildcards(src_device)
+                self.connect.append((bind_name, src_device))
+        elif nodes.get(bind_name + '-1'):
+            i = 1
+            bind_node = nodes.get(bind_name + '-1')
+            while bind_node:
+                if not bind_node is self:
+                    bind_node.bind.append((self.name, dst_device))
+                    if not src_device:
+                        self.connect.append((bind_name + '-' + str(i),
+                                            '/dev/out/' + bind_name + '-' + str(i)))
+                    else:
+                        src_device = bind_node.resolve_wildcards(src_device)
+                        self.connect.append((bind_name + '-' + str(i), src_device))
+                i += 1
+                bind_node = nodes.get(bind_name + '-' + str(i))
+        else:
+            raise Exception('Non-existing node in connect %s' % bind_name)
+
+    def copy_cgi_env(self, request):
+        if not self.env:
+            self.env = {}
+        self.env['HTTP_HOST'] = request.host
+        self.env['REMOTE_ADDR'] = request.remote_addr
+        self.env['REMOTE_USER'] = request.remote_user
+        self.env['HTTP_USER_AGENT'] = request.user_agent
+        self.env['QUERY_STRING'] = request.query_string
+        self.env['SERVER_NAME'] = request.environ.get('SERVER_NAME', 'localhost')
+        self.env['SERVER_PORT'] = request.environ.get('SERVER_PORT', '80')
+        self.env['SERVER_PROTOCOL'] = request.environ.get('SERVER_PROTOCOL', 'HTTP/1.0')
+        self.env['SERVER_SOFTWARE'] = 'zerocloud'
+        self.env['GATEWAY_INTERFACE'] = 'CGI/1.1'
+        self.env['SCRIPT_NAME'] = self.exe
+        self.env['PATH_INFO'] = request.path_info
+        self.env['REQUEST_METHOD'] = 'GET'
+
+    def create_sysmap_data_source(self, data_sources):
+        sysmap = json.dumps(self, cls=NodeEncoder)
+        #print sysmap
+        sysmap_iter = iter([sysmap])
+        sysmap_resp = Response(app_iter=sysmap_iter,
+                               headers={'Content-Length': str(len(sysmap))})
+        data_sources.insert(0, sysmap_resp)
+        if not getattr(self, 'last_data', None):
+            self.last_data = sysmap_resp
+        sysmap_resp.nodes = [{'node': self, 'dev': 'sysmap'}]
 
 
 class ZvmChannel(object):
@@ -529,6 +578,8 @@ class ClusterController(Controller):
         ret = []
         while data:
             for item in data:
+                if item['name'][-1] == '/':
+                    continue
                 if not mask or mask.match(item['name']):
                     ret.append(item['name'])
             marker = data[-1]['name']
@@ -538,7 +589,7 @@ class ClusterController(Controller):
 
     def build_connect_string(self, node, node_count):
         tmp = []
-        for dst in node.bind:
+        for (dst, dst_dev) in node.bind:
             dst_id = self.nodes.get(dst).id
             proto = ';'.join(map(
                 lambda i: 'tcp:%d:0' % (dst_id + i * node_count),
@@ -546,7 +597,7 @@ class ClusterController(Controller):
             ))
             tmp.append(
                 ','.join([proto,
-                          '/dev/in/' + dst,
+                          dst_dev,
                           '0',
                           str(self.app.zerovm_maxiops),
                           str(self.app.zerovm_maxinput),
@@ -554,7 +605,7 @@ class ClusterController(Controller):
             )
         node.bind = tmp
         tmp = []
-        for dst in node.connect:
+        for (dst, dst_dev) in node.connect:
             dst_id = self.nodes.get(dst).id
             proto = ';'.join(map(
                 lambda i: 'tcp:%d:' % (dst_id + i * node_count),
@@ -562,7 +613,7 @@ class ClusterController(Controller):
             ))
             tmp.append(
                 ','.join([proto,
-                          '/dev/out/' + dst,
+                          dst_dev,
                           '0,0,0',
                           str(self.app.zerovm_maxiops),
                           str(self.app.zerovm_maxoutput)])
@@ -572,6 +623,7 @@ class ClusterController(Controller):
     def parse_cluster_config(self, req, cluster_config):
         try:
             nid = 1
+            connect_devices = {}
             for node in cluster_config:
                 node_name = node.get('name')
                 if not node_name:
@@ -602,6 +654,7 @@ class ClusterController(Controller):
                 read_list = []
                 write_list = []
                 other_list = []
+                # connect_devices = {}
 
                 if file_list:
                     for f in file_list:
@@ -617,6 +670,12 @@ class ClusterController(Controller):
                             return HTTPBadRequest(request=req,
                                 body='Must specify device for file in %s'
                                 % node_name)
+                        if path and ':/dev/' in path:
+                            (dst_host, dst_dev) = path.split(':', 1)
+                            if not connect_devices.get(node_name, None):
+                                connect_devices[node_name] = {}
+                            connect_devices[node_name][dst_host] = ('/dev/' + device, dst_dev)
+                            continue
                         access = DEVICE_MAP.get(device, -1)
                         if access < 0:
                             if device in self.app.zerovm_sysimage_devices:
@@ -696,6 +755,8 @@ class ClusterController(Controller):
                             if not list:
                                 return HTTPBadRequest(request=req,
                                     body='No objects found in path %s' % path)
+                            read_mask = re.escape(path).replace('\\*', '(.*)')
+                            read_mask = re.compile(read_mask)
                             for i in range(len(list)):
                                 new_name = self.create_name(node_name, i+1)
                                 new_path = list[i]
@@ -707,6 +768,9 @@ class ClusterController(Controller):
                                     self.nodes[new_name] = new_node
                                 new_node.add_channel(device, access,
                                     path=new_path)
+                                new_match = read_mask.match(new_path)
+                                new_node.wildcards = map(lambda i: new_match.group(i),
+                                                         range(1, new_match.lastindex + 1))
                             node_count = len(list)
                         elif path:
                             if node_count > 1:
@@ -741,27 +805,17 @@ class ClusterController(Controller):
                         meta = f.get('meta', None)
                         if path and '*' in path:
                             if read_group:
-                                read_mask = read_list[0].get('path')
-                                read_count = read_mask.count('*')
-                                write_count = path.count('*')
-                                if read_count != write_count:
-                                    return HTTPBadRequest(request=req,
-                                        body='Wildcards in input %s cannot be'
-                                             ' resolved into output %s'
-                                            % (read_mask, path))
-                                read_mask = re.escape(read_mask).replace(
-                                    '\\*', '(.*)'
-                                )
-                                read_mask = re.compile(read_mask)
                                 for i in range(1, node_count + 1):
                                     new_name = self.create_name(node_name, i)
                                     new_path = path
                                     new_node = self.nodes.get(new_name)
-                                    read_path = new_node.channels[0].path
-                                    m = read_mask.match(read_path)
-                                    for j in range(1, m.lastindex + 1):
-                                        new_path = new_path.replace('*',
-                                            m.group(j), 1)
+                                    for wc in new_node.wildcards:
+                                        new_path = new_path.replace('*', wc, 1)
+                                    if new_path.count('*') > 0:
+                                        return HTTPBadRequest(request=req,
+                                                              body='Wildcards in input cannot be'
+                                                                   ' resolved into output path %s'
+                                                                   % path)
                                     new_node.add_channel(device, access,
                                         path=new_path, content_type=content_type,
                                         meta_data=meta)
@@ -779,6 +833,7 @@ class ClusterController(Controller):
                                     new_node.add_channel(device, access,
                                         path=new_path, content_type=content_type,
                                         meta_data=meta)
+                                    new_node.wildcards = [new_name] * path.count('*')
                         elif path:
                             if node_count > 1:
                                 return HTTPBadRequest(request=req,
@@ -855,10 +910,18 @@ class ClusterController(Controller):
             if not connect:
                 continue
             node_name = node.get('name')
+            src = connect_devices.get(node_name, None)
             if self.nodes.get(node_name):
                 connect_node = self.nodes.get(node_name)
                 try:
-                    connect_node.add_connections(self.nodes, connect)
+                    for bind_name in connect:
+                        src_dev = None
+                        dst_dev = None
+                        if src:
+                            devices = src.get(bind_name, None)
+                            if devices:
+                                (src_dev, dst_dev) = devices
+                        connect_node.add_connection(bind_name, self.nodes, src_dev, dst_dev)
                 except Exception:
                     return HTTPBadRequest(request=req,
                         body='Invalid connect string for node %s' % node_name)
@@ -867,7 +930,14 @@ class ClusterController(Controller):
                 connect_node = self.nodes.get(self.create_name(node_name, j))
                 while connect_node:
                     try:
-                        connect_node.add_connections(self.nodes, connect)
+                        for bind_name in connect:
+                            src_dev = None
+                            dst_dev = None
+                            if src:
+                                devices = src.get(bind_name, None)
+                                if devices:
+                                    (src_dev, dst_dev) = devices
+                            connect_node.add_connection(bind_name, self.nodes, src_dev, dst_dev)
                     except Exception, e:
                         return HTTPBadRequest(request=req,
                             body='Invalid connect string for node %s: %s'
@@ -887,17 +957,6 @@ class ClusterController(Controller):
         #    print n.__dict__
 
         return None
-
-    def create_sysmap_data_source(self, data_sources, node):
-        sysmap = json.dumps(node, cls=NodeEncoder)
-        #print sysmap
-        sysmap_iter = iter([sysmap])
-        sysmap_resp = Response(app_iter=sysmap_iter,
-                               headers={'Content-Length': str(len(sysmap))})
-        data_sources.insert(0, sysmap_resp)
-        if not getattr(node, 'last_data', None):
-            node.last_data = sysmap_resp
-        sysmap_resp.nodes = [{'node': node, 'dev': 'sysmap'}]
 
     def _get_own_address(self):
         if self.app.zerovm_ns_hostname:
@@ -1025,16 +1084,6 @@ class ClusterController(Controller):
             if not ns_server.port:
                 return HTTPServiceUnavailable(body='Cannot bind name service')
         for node in node_list:
-            if ns_server:
-                node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
-                self.build_connect_string(node, len(node_list))
-                if node.replicate > 1:
-                    for i in range(0, node.replicate - 1):
-                        node.replicas.append(deepcopy(node))
-                        node.replicas[i].id = node.id + i * len(node_list)
-                    for repl_node in node.replicas:
-                        self.create_sysmap_data_source(data_sources, repl_node)
-            self.create_sysmap_data_source(data_sources, node)
             nexe_headers = {
                 'x-nexe-system': node.name,
                 'x-nexe-status': 'ZeroVM did not run',
@@ -1056,6 +1105,19 @@ class ClusterController(Controller):
                 aresp = exec_request.environ['swift.authorize'](exec_request)
                 if aresp:
                     return aresp
+
+            if ns_server:
+                node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
+                self.build_connect_string(node, len(node_list))
+                if node.replicate > 1:
+                    for i in range(0, node.replicate - 1):
+                        node.replicas.append(deepcopy(node))
+                        node.replicas[i].id = node.id + i * len(node_list)
+                    for repl_node in node.replicas:
+                        repl_node.copy_cgi_env(exec_request)
+                        repl_node.create_sysmap_data_source(data_sources)
+            node.copy_cgi_env(exec_request)
+            node.create_sysmap_data_source(data_sources)
 
             channels = []
             if node.exe[0] == '/':
@@ -1308,11 +1370,11 @@ class ClusterController(Controller):
                           server_response.read())
             return conn
         resp = Response(status='%d %s' %
-                            (server_response.status,
-                             server_response.reason),
-            app_iter=iter(lambda:
-                server_response.read(self.app.network_chunk_size),''),
-            headers = dict(server_response.getheaders()))
+                               (server_response.status,
+                                server_response.reason),
+                        app_iter=iter(lambda:
+                                      server_response.read(self.app.network_chunk_size),''),
+                        headers=dict(server_response.getheaders()))
         conn.resp = resp
         if resp.content_length == 0:
             return conn

@@ -52,6 +52,10 @@ import logging
 import cPickle as pickle
 from time import sleep
 from argparse import ArgumentParser
+try:
+    import simplejson as json
+except ImportError:
+    import json
 
 def errdump(zvm_errcode, nexe_validity, nexe_errcode, nexe_etag, nexe_accounting, status_line):
     print '%d\n%d\n%s\n%s\n%s' % (nexe_validity, nexe_errcode, nexe_etag,
@@ -151,6 +155,21 @@ bind_map = {}
 alias = int(mnfst.Node)
 mnfst.channels = {}
 for fname,device,type,rd,rd_byte,wr,wr_byte in zip(*[iter(channel_list)]*7):
+    if fname.startswith('tcp:'):
+        proto, host, port = fname.split(':')
+        host = int(host)
+        if int(rd) > 0:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind(('', 0))
+            s.listen(1)
+            port = s.getsockname()[1]
+            bind_map[host] = {'name':device, 'port':port, 'proto':proto, 'sock':s}
+            bind_data += struct.pack('!IIH', host, 0, int(port))
+            bind_count += 1
+        else:
+            connect_data += struct.pack('!IIH', host, 0, 0)
+            connect_count += 1
+            con_list.append(device)
     if device == '/dev/stdin' or device == '/dev/input':
         mnfst.input = fname
     elif device == '/dev/stdout' or device == '/dev/output':
@@ -161,22 +180,6 @@ for fname,device,type,rd,rd_byte,wr,wr_byte in zip(*[iter(channel_list)]*7):
         mnfst.image = fname
     elif device == '/dev/nvram':
         mnfst.nvram = fname
-    elif '/dev/in/' in device or '/dev/out/' in device:
-        node_name = device.split('/')[3]
-        proto, host, port = fname.split(':')
-        host = int(host)
-        if '/dev/in/' in device:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.bind(('', 0))
-            s.listen(1)
-            port = s.getsockname()[1]
-            bind_map[host] = {'name':device,'port':port,'proto':proto, 'sock':s}
-            bind_data += struct.pack('!IIH', host, 0, int(port))
-            bind_count += 1
-        else:
-            connect_data += struct.pack('!IIH', host, 0, 0)
-            connect_count += 1
-            con_list.append(device)
     mnfst.channels[device] = {
         'path': fname,
         'type': type,
@@ -230,7 +233,6 @@ except Exception, e:
     err.write(e.message+'\n')
     accounting[6] += 1
     accounting[7] += len(e.message+'\n')
-
 ouf.write(od)
 accounting[6] += 1
 accounting[7] += len(od)
@@ -1019,12 +1021,12 @@ return open(mnfst.nvram).read() + \
             req.body = conf
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 200)
-            self.assertEqual(res.body,
-                '[fstab]\n'
-                'channel=/dev/sysimage, mountpoint=/, access=ro\n'
-                '[args]\n'
-                'args = sort\n'
-                '%d %s' % (3, sysimage_path))
+            self.assertIn('[fstab]\n'
+                          'channel=/dev/sysimage, mountpoint=/, access=ro\n'
+                          '[args]\n'
+                          'args = sort\n', res.body)
+            self.assertIn('%d %s' % (3, sysimage_path),
+                          res.body)
 
     def test_QUERY_use_nvram(self):
         self.setup_QUERY()
@@ -1052,9 +1054,8 @@ return open(mnfst.nvram).read()
         req.body = conf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body,
-            '[args]\n'
-            'args = sort\n')
+        self.assertIn('[args]\n'
+                      'args = sort\n', res.body)
         conf = [
             {
                 'name':'sort',
@@ -1073,9 +1074,8 @@ return open(mnfst.nvram).read()
         req.body = conf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body,
-            '[args]\n'
-            'args = sort aa bb cc\n')
+        self.assertIn('[args]\n'
+                      'args = sort aa bb cc\n', res.body)
         image = 'This is image file'
         self.create_object(prolis, '/v1/a/c/img', image)
         conf = [
@@ -1095,11 +1095,10 @@ return open(mnfst.nvram).read()
         req = self.zerovm_request()
         req.body = conf
         res = req.get_response(prosrv)
-        self.assertEqual(res.body,
-            '[fstab]\n'
-            'channel=/dev/image, mountpoint=/, access=ro\n'
-            '[args]\n'
-            'args = sort\n')
+        self.assertIn('[fstab]\n'
+                      'channel=/dev/image, mountpoint=/, access=ro\n'
+                      '[args]\n'
+                      'args = sort\n', res.body)
         conf = [
             {
                 'name':'sort',
@@ -1122,14 +1121,15 @@ return open(mnfst.nvram).read()
         req = self.zerovm_request()
         req.body = conf
         res = req.get_response(prosrv)
-        self.assertEqual(res.body,
-            '[fstab]\n'
-            'channel=/dev/image, mountpoint=/, access=ro\n'
-            '[args]\n'
-            'args = sort aa bb cc\n'
-            '[env]\n'
-            'key2 = val2\n'
-            'key1 = val1\n')
+        self.assertIn('[fstab]\n'
+                      'channel=/dev/image, mountpoint=/, access=ro',
+                      res.body)
+        self.assertIn('[args]\n'
+                      'args = sort aa bb cc',
+                      res.body)
+        self.assertIn('key2 = val2\n'
+                      'key1 = val1',
+                      res.body)
 
     def test_QUERY_sort_immediate_stdout_stderr(self):
         self.setup_QUERY()
@@ -1234,25 +1234,70 @@ return open(mnfst.nvram).read()
         self.assertIn('finished', res.body)
         self.assert_(re.match('tcp://127.0.0.1:\d+, /dev/out/%s' % conf[1]['connect'][0], res.body))
 
+    def test_QUERY_networked_devices(self):
+        self.setup_QUERY()
+        nexe =\
+r'''
+return 'ok'
+'''[1:-1]
+        prolis = _test_sockets[0]
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': '/c/exe2'},
+                'file_list':[
+                    {'device': 'stdout', 'path': 'merge:/dev/sort'},
+                    {'device': 'stderr', 'path': '/c/o2'}
+                ],
+                'connect': ['merge']
+            },
+            {
+                'name': 'merge',
+                'exec': {'path': '/c/exe2'},
+                'file_list': [
+                    {'device': 'stderr', 'path': '/c/o3'}
+                ]
+            }
+        ]
+        jconf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        req = self.zerovm_request()
+        req.body = jconf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+
+        req = self.object_request('/v1/a/c/o2')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertIn('finished', res.body)
+        self.assert_(re.match('tcp://127.0.0.1:\d+, /dev/stdout', res.body))
+
+        req = self.object_request('/v1/a/c/o3')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertIn('finished', res.body)
+        #self.assert_(re.match('tcp://127.0.0.1:\d+, /dev/out/%s' % conf[1]['connect'][0], res.body))
+
     def test_QUERY_network_resolve_multiple(self):
         self.setup_QUERY()
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stderr', 'path':'/c_out1/*.stderr'}
+            {
+                'name': 'sort',
+                'exec': {'path': '/c/exe'},
+                'file_list': [
+                    {'device': 'stderr', 'path': '/c_out1/*.stderr'}
                 ],
-                'connect':['merge','sort'],
+                'connect': ['merge', 'sort'],
                 'count':3
             },
-                {
-                'name':'merge',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stderr', 'path':'/c_out1/*.stderr'}
+            {
+                'name': 'merge',
+                'exec': {'path': '/c/exe'},
+                'file_list': [
+                    {'device': 'stderr', 'path': '/c_out1/*.stderr'}
                 ],
-                'count':2
+                'count': 2
             }
         ]
         jconf = json.dumps(conf)
