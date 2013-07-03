@@ -1131,6 +1131,30 @@ return open(mnfst.nvram).read()
                       'name=key1, value=val1',
                       res.body)
 
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {
+                    'path': '/c/exe2'
+                },
+                'file_list': [
+                    {'device': 'input', 'path': '/c/o', 'mode': 'file'},
+                    {'device': 'stdout', 'mode': 'char'},
+                    {'device': 'image', 'path': '/c/img'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertIn('[args]\n'
+                      'args = sort\n', res.body)
+        self.assertIn('[mapping]\n'
+                      'channel=/dev/input, mode=file\n'
+                      'channel=/dev/stdout, mode=char\n',
+                      res.body)
+
     def test_QUERY_sort_immediate_stdout_stderr(self):
         self.setup_QUERY()
         conf = [

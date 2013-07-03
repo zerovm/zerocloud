@@ -393,8 +393,10 @@ class ZvmNode(object):
         self.replicas = []
 
     def add_channel(self, device, access, path=None,
-                    content_type='application/octet-stream', meta_data=None):
-        channel = ZvmChannel(device, access, path, content_type, meta_data)
+                    content_type='application/octet-stream',
+                    meta_data=None, mode=None):
+        channel = ZvmChannel(device, access, path,
+                             content_type, meta_data, mode)
         self.channels.append(channel)
 
     def get_channel(self, device=None, path=None):
@@ -479,12 +481,14 @@ class ZvmNode(object):
 
 class ZvmChannel(object):
     def __init__(self, device, access, path=None,
-                 content_type='application/octet-stream', meta_data=None):
+                 content_type='application/octet-stream', meta_data=None,
+                 mode=None):
         self.device = device
         self.access = access
         self.path = path
         self.content_type = content_type
         self.meta = meta_data if meta_data else {}
+        self.mode = mode
 
 
 class ZvmResponse(object):
@@ -698,6 +702,7 @@ class ClusterController(Controller):
                         device = f.get('device')
                         access = DEVICE_MAP.get(device)
                         path = f.get('path')
+                        mode = f.get('mode', None)
                         if path and '*' in path:
                             read_group = 1
                             list = []
@@ -767,7 +772,7 @@ class ClusterController(Controller):
                                     nid += 1
                                     self.nodes[new_name] = new_node
                                 new_node.add_channel(device, access,
-                                    path=new_path)
+                                    path=new_path, mode=mode)
                                 new_match = read_mask.match(new_path)
                                 new_node.wildcards = map(lambda i: new_match.group(i),
                                                          range(1, new_match.lastindex + 1))
@@ -784,7 +789,7 @@ class ClusterController(Controller):
                                         nid += 1
                                         self.nodes[new_name] = new_node
                                     new_node.add_channel(device, access,
-                                        path=new_path)
+                                        path=new_path, mode=mode)
                             else:
                                 new_node = self.nodes.get(node_name)
                                 if not new_node:
@@ -792,7 +797,7 @@ class ClusterController(Controller):
                                         nexe_args, nexe_env, node_replicate)
                                     nid += 1
                                     self.nodes[node_name] = new_node
-                                new_node.add_channel(device, access, path=path)
+                                new_node.add_channel(device, access, path=path, mode=mode)
                         else:
                             return HTTPBadRequest(request=req,
                                 body='Readable file must have a path')
@@ -803,6 +808,7 @@ class ClusterController(Controller):
                         path = f.get('path')
                         content_type = f.get('content_type', self.app.zerovm_content_type)
                         meta = f.get('meta', None)
+                        mode = f.get('mode', None)
                         if path and '*' in path:
                             if read_group:
                                 for i in range(1, node_count + 1):
@@ -818,7 +824,7 @@ class ClusterController(Controller):
                                                                    % path)
                                     new_node.add_channel(device, access,
                                         path=new_path, content_type=content_type,
-                                        meta_data=meta)
+                                        meta_data=meta, mode=mode)
                             else:
                                 for i in range(1, node_count + 1):
                                     new_name = self.create_name(node_name, i)
@@ -832,7 +838,7 @@ class ClusterController(Controller):
                                         self.nodes[new_name] = new_node
                                     new_node.add_channel(device, access,
                                         path=new_path, content_type=content_type,
-                                        meta_data=meta)
+                                        meta_data=meta, mode=mode)
                                     new_node.wildcards = [new_name] * path.count('*')
                         elif path:
                             if node_count > 1:
@@ -848,7 +854,7 @@ class ClusterController(Controller):
                                 self.nodes[node_name] = new_node
                             new_node.add_channel(device, access,
                                 path=path, content_type=content_type,
-                                meta_data=meta)
+                                meta_data=meta, mode=mode)
                         else:
                             if 'stdout' not in device \
                             and 'stderr' not in device:
@@ -860,7 +866,8 @@ class ClusterController(Controller):
                                     new_name = self.create_name(node_name, i)
                                     new_node = self.nodes.get(new_name)
                                     new_node.add_channel(device, access,
-                                        content_type=f.get('content_type', 'text/html'))
+                                        content_type=f.get('content_type', 'text/html'),
+                                        mode=mode)
                             else:
                                 new_node = self.nodes.get(node_name)
                                 if not new_node:
@@ -869,7 +876,8 @@ class ClusterController(Controller):
                                     nid += 1
                                     self.nodes[node_name] = new_node
                                 new_node.add_channel(device, access,
-                                    content_type=f.get('content_type', 'text/html'))
+                                    content_type=f.get('content_type', 'text/html'),
+                                    mode=mode)
 
                     for f in other_list:
                         device = f.get('device')

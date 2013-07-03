@@ -18,12 +18,13 @@ JSON format describing a servlet configuration
             {
             <b>"device"</b>:"device name", <b>required</b>
             "path":"device file path, relative url", <i>optional</i>
-            "content_type": "MIME type of the content", <i>optional</i>
-            "meta": {   <i>metadata for the object, optional</i>
+            "content_type": "MIME type of the content", <i>optional, ignored for read-only devices</i>
+            "meta": {   <i>metadata for the object, optional, ignored for read-only devices</i>
                 "metakey1":"value1",
                 "metakey2":"value2"
                 }
-            }
+            "mode": "changes stat() type of device, one of the: 'file', 'block', 'char', 'pipe'", <i>optional</i>
+            },
         ],
         "count":1, <i>number of nodes, optional</i>
         "connect":[ <i>destination nodes to connect to, optional</i>
@@ -161,6 +162,17 @@ If it encounters errors the data from these nodes will be temporarily ignored.
 This feature allows cluster to be fault-tolerant and improves the cluster processing speeds slightly.
 Zerocloud may decide to run specific nodes in replicated way even when it was not specified in the servlet config file
 to add redundancy or increase replication count for the resulting Swift objects.
+
+16. Some applications may expect devices/channels to produce specific output when stat() is run on the descriptor.
+You can change the type of the file with the `mode` property of the `device`.
+The types are:
+`file` - regular file
+`char` - character device
+`pipe` - FIFO pipe (default for standard channels `stdin` `stdout` `stderr`)
+`block` - block device (default for all other channels)
+The most useful combinations are: `file` instead of `block` and `char` instead of `pipe`.
+Other combinations are supported but make little sense.
+
 
 ## Examples
 

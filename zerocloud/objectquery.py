@@ -449,8 +449,9 @@ class ObjectQueryMiddleware(object):
                         zerovm_nexe,
                         self.zerovm_timeout,
                         self.zerovm_maxnexemem
-                        ))
+                    ))
 
+                mode_mapping = {}
                 for ch in config['channels']:
                     type = CHANNEL_TYPE_MAP.get(ch['device'])
                     if type is None:
@@ -477,6 +478,9 @@ class ObjectQueryMiddleware(object):
                         'Channel=%s,/dev/%s,%s,0,0,%s,%s\n' %\
                         (ch['lpath'], ch['device'], type,
                          self.zerovm_maxiops, self.zerovm_maxoutput)
+                    mode = ch.get('mode', None)
+                    if mode:
+                        mode_mapping[ch['device']] = mode
 
                 network_devices = []
                 for conn in config['connect'] + config['bind']:
@@ -515,19 +519,24 @@ class ObjectQueryMiddleware(object):
                     #                      % config['args']
                     args += ' %s' % config['args']
                 args += '\n'
-                nvram_file = None
-                if fstab or args or env:
-                    (output_fd, nvram_file) = mkstemp()
-                    os.write(output_fd, fstab or '')
-                    os.write(output_fd, args or '')
-                    os.write(output_fd, env or '')
-                    os.close(output_fd)
-                    #print open(nvram_file).read()
-                    zerovm_inputmnfst +=\
-                    'Channel=%s,/dev/nvram,3,%s,%s,%s,%s\n' %\
+
+                mapping = None
+                if mode_mapping:
+                    mapping = '[mapping]\n'
+                    for device, mode in mode_mapping.iteritems():
+                        mapping += 'channel=/dev/%s, mode=%s\n' % (device, mode)
+                (output_fd, nvram_file) = mkstemp()
+                os.write(output_fd, fstab or '')
+                os.write(output_fd, args or '')
+                os.write(output_fd, env or '')
+                os.write(output_fd, mapping or '')
+                os.close(output_fd)
+                #print open(nvram_file).read()
+                zerovm_inputmnfst += \
+                    'Channel=%s,/dev/nvram,3,%s,%s,%s,%s\n' % \
                     (nvram_file, self.zerovm_maxiops, self.zerovm_maxinput,
-#                     self.zerovm_maxiops, self.zerovm_maxoutput)
-                    0, 0)
+                     #                     self.zerovm_maxiops, self.zerovm_maxoutput)
+                     0, 0)
 
                 nexe_headers['x-nexe-system'] = config.get('name', '')
                 zerovm_inputmnfst += 'Node=%d\n' \
