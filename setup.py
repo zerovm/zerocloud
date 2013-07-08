@@ -22,6 +22,7 @@ setup(
         'paste.filter_factory': [
             'proxy_query=zerocloud.proxyquery:filter_factory',
             'object_query=zerocloud.objectquery:filter_factory',
+            'shared_containers=zerocloud.shared_containers:filter_factory',
         ],
     },
 )
