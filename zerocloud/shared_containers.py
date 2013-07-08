@@ -51,7 +51,9 @@ class SharedContainersMiddleware(object):
         elif version in (self.shared_container_add, self.shared_container_remove):
             if container:
                 return self.handle_shared(version, request.remote_user, account, container)
-            return HTTPNotFound()
+            return HTTPBadRequest(body='Cannot parse url path %s/%s'
+                                       % (request.environ.get('SCRIPT_NAME', ''),
+                                          request.environ['PATH_INFO']))
         return self.app
 
     def handle_shared(self, version, account, shared_account, shared_container):
