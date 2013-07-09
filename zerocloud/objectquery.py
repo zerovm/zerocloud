@@ -29,7 +29,7 @@ from zerocloud.proxyquery import TAR_MIMES, ACCESS_CDR, ACCESS_READABLE, \
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 from zerocloud.fastcgi import PseudoSocket
 
-ENV_ITEM = 'name=%s, value=%s\n'
+ENV_ITEM = 'name=%s, value="%s"\n'
 
 STD_DEVICES = ['stdin', 'stdout', 'stderr']
 

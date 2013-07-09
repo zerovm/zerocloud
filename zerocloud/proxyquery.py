@@ -472,6 +472,8 @@ class ZvmNode(object):
         self.env['SCRIPT_NAME'] = self.exe
         self.env['PATH_INFO'] = request.path_info
         self.env['REQUEST_METHOD'] = 'GET'
+        self.env['HTTP_REFERER'] = request.referer
+        self.env['HTTP_ACCEPT'] = request.accept
 
     def create_sysmap_data_source(self, data_sources):
         sysmap = json.dumps(self, cls=NodeEncoder)
