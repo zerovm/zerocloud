@@ -1244,9 +1244,9 @@ class ClusterController(Controller):
                 for data_src in data_sources:
                     data_src.bytes_transferred = 0
                     for conn in data_src.conns:
-                        info = conn['conn'].tar_stream.create_tarinfo(
-                            REGTYPE, conn['dev'],
-                            data_src.content_length)
+                        info = conn['conn'].tar_stream.create_tarinfo(ftype=REGTYPE,
+                                                                      name=conn['dev'],
+                                                                      size=data_src.content_length)
                         for chunk in conn['conn'].tar_stream._serve_chunk(info):
                             if not conn['conn'].failed:
                                 conn['conn'].queue.put('%x\r\n%s\r\n' %

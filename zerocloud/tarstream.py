@@ -935,22 +935,17 @@ class TarStream(object):
         else:
             self.data += buf
 
-    def create_tarinfo(self, path):
+    def create_tarinfo(self, path=None, ftype=None, name=None, size=None):
         tarinfo = TarInfo()
         tarinfo.tarfile = None
-        tarinfo.type = path.type
-        tarinfo.name = path.file_name
-        tarinfo.size = path.size
-        tarinfo.mtime = time.time()
-        buf = tarinfo.tobuf(self.format, self.encoding, self.errors)
-        return buf
-
-    def create_tarinfo(self, type, name, size):
-        tarinfo = TarInfo()
-        tarinfo.tarfile = None
-        tarinfo.type = type
-        tarinfo.name = name
-        tarinfo.size = size
+        if path:
+            tarinfo.type = path.type
+            tarinfo.name = path.file_name
+            tarinfo.size = path.size
+        else:
+            tarinfo.type = ftype
+            tarinfo.name = name
+            tarinfo.size = size
         tarinfo.mtime = time.time()
         buf = tarinfo.tobuf(self.format, self.encoding, self.errors)
         return buf
@@ -966,7 +961,7 @@ class TarStream(object):
                     for chunk in self._serve_chunk(data):
                         yield chunk
         for path in self.path_list:
-            buf = self.create_tarinfo(path)
+            buf = self.create_tarinfo(path=path)
             for chunk in self._serve_chunk(buf):
                 yield chunk
             for file_data in path:

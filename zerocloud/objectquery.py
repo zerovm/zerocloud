@@ -620,10 +620,9 @@ class ObjectQueryMiddleware(object):
                         send_config = True
                     else:
                         ch['size'] = self.os_interface.path.getsize(ch['lpath'])
-                    info = tar_stream.create_tarinfo(REGTYPE, ch['device'],
-                        ch['size'])
-                    resp_size += len(info) + \
-                                 tar_stream.get_archive_size(ch['size'])
+                    info = tar_stream.create_tarinfo(ftype=REGTYPE, name=ch['device'],
+                                                     size=ch['size'])
+                    resp_size += len(info) + tar_stream.get_archive_size(ch['size'])
                     ch['info'] = info
                     immediate_responses.append(ch)
                 sysmap_info = ''
@@ -639,8 +638,8 @@ class ObjectQueryMiddleware(object):
                         ch.pop('offset', None)
                         sysmap['channels'].append(ch)
                     sysmap_dump = json.dumps(sysmap)
-                    sysmap_info = tar_stream.create_tarinfo(REGTYPE, 'sysmap',
-                        len(sysmap_dump))
+                    sysmap_info = tar_stream.create_tarinfo(ftype=REGTYPE, name='sysmap',
+                                                            size=len(sysmap_dump))
                     resp_size += len(sysmap_info) +\
                              tar_stream.get_archive_size(len(sysmap_dump))
 
