@@ -462,18 +462,18 @@ class ZvmNode(object):
         self.env['HTTP_HOST'] = request.host
         self.env['REMOTE_ADDR'] = request.remote_addr
         self.env['REMOTE_USER'] = request.remote_user
-        self.env['HTTP_USER_AGENT'] = request.user_agent
-        self.env['QUERY_STRING'] = request.query_string
+        self.env['HTTP_USER_AGENT'] = quote(request.user_agent)
+        self.env['QUERY_STRING'] = quote(request.query_string)
         self.env['SERVER_NAME'] = request.environ.get('SERVER_NAME', 'localhost')
         self.env['SERVER_PORT'] = request.environ.get('SERVER_PORT', '80')
         self.env['SERVER_PROTOCOL'] = request.environ.get('SERVER_PROTOCOL', 'HTTP/1.0')
         self.env['SERVER_SOFTWARE'] = 'zerocloud'
         self.env['GATEWAY_INTERFACE'] = 'CGI/1.1'
         self.env['SCRIPT_NAME'] = self.exe
-        self.env['PATH_INFO'] = request.path_info
+        self.env['PATH_INFO'] = quote(request.path_info)
         self.env['REQUEST_METHOD'] = 'GET'
-        self.env['HTTP_REFERER'] = request.referer
-        self.env['HTTP_ACCEPT'] = request.accept
+        self.env['HTTP_REFERER'] = quote(request.referer)
+        self.env['HTTP_ACCEPT'] = quote(request.accept)
 
     def create_sysmap_data_source(self, data_sources):
         sysmap = json.dumps(self, cls=NodeEncoder)
