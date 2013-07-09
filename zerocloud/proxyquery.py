@@ -98,6 +98,7 @@ def merge_headers(current, new):
             else:
                 current[key.lower()] += ',' + str(value)
 
+
 def has_control_chars(line):
     if line:
         RE_ILLEGAL = u'([\u0000-\u0008\u000b-\u000c\u000e-\u001f\ufffe-\uffff])' +\
@@ -113,12 +114,13 @@ def has_control_chars(line):
             return True
     return False
 
+
 def update_metadata(request, meta_data):
     if not meta_data:
         return None
     meta_count = 0
     meta_size = 0
-    for key,value in meta_data.iteritems():
+    for key, value in meta_data.iteritems():
         meta_count += 1
         meta_size += len(key) + len(value)
         if len(key) > MAX_META_NAME_LENGTH:
@@ -130,6 +132,7 @@ def update_metadata(request, meta_data):
         elif meta_size > MAX_META_OVERALL_SIZE:
             return 'Total metadata too large; max %d' % MAX_META_OVERALL_SIZE
         request.headers['x-object-meta-%s' % key] = value
+
 
 class CachedBody(object):
 
@@ -173,6 +176,7 @@ class CachedBody(object):
             for chunk in self.read_iter:
                 yield chunk
 
+
 class FinalBody(object):
 
     def __init__(self, app_iter):
@@ -212,6 +216,7 @@ class SequentialResponseBody(object):
     def get_content_length(self):
         return self.max_transfer
 
+
 class NameService(object):
 
     def __init__(self):
@@ -232,7 +237,7 @@ class NameService(object):
         peer_map = {}
         while 1:
             try:
-                message,peer_address = self.sock.recvfrom(65535)
+                message, peer_address = self.sock.recvfrom(65535)
                 offset = 0
                 peer_id = struct.unpack_from('!I', message, offset)[0]
                 offset += 4
@@ -256,7 +261,7 @@ class NameService(object):
                             connecting_host = struct.unpack_from('!I', reply, offset)[0]
                             port = bind_map[connecting_host][peer_id]
                             struct.pack_into('!4sH', reply, offset + 4,
-                                socket.inet_pton(socket.AF_INET, peer_map[connecting_host][0]), port)
+                                             socket.inet_pton(socket.AF_INET, peer_map[connecting_host][0]), port)
                             offset += 10
                         self.sock.sendto(reply, (peer_map[peer_id][0], peer_map[peer_id][1]))
             except greenlet.GreenletExit:
@@ -268,6 +273,7 @@ class NameService(object):
     def stop(self):
         self.thread.kill()
         self.sock.close()
+
 
 class ProxyQueryMiddleware(object):
 
@@ -328,17 +334,17 @@ class ProxyQueryMiddleware(object):
         try:
             version, account, container, obj = split_path(req.path, 1, 4, True)
             path_parts = dict(version=version,
-                account_name=account,
-                container_name=container,
-                object_name=obj)
+                              account_name=account,
+                              container_name=container,
+                              object_name=obj)
         except ValueError:
             return HTTPNotFound(request=req)
         if account and \
-           (self.app.zerovm_execute in req.headers
-            or version in self.app.zerovm_allowed_commands):
+                (self.app.zerovm_execute in req.headers
+                 or version in self.app.zerovm_allowed_commands):
             if req.content_length and req.content_length < 0:
                 return HTTPBadRequest(request=req,
-                    body='Invalid Content-Length')
+                                      body='Invalid Content-Length')
             if not check_utf8(req.path_info):
                 return HTTPPreconditionFailed(request=req, body='Invalid UTF8')
             controller = self.get_controller(account, container, obj)
@@ -992,14 +998,12 @@ class ClusterController(Controller):
         req.bytes_transferred = 0
         path_list = [StringBuffer(CLUSTER_CONFIG_FILENAME),
                      StringBuffer(NODE_CONFIG_FILENAME)]
-        read_iter = iter(lambda:
-            req.environ['wsgi.input']
-            .read(self.app.network_chunk_size), '')
+        read_iter = iter(lambda: req.environ['wsgi.input'].read(self.app.network_chunk_size), '')
         if req.headers['content-type'].split(';')[0].strip() in TAR_MIMES:
         # Buffer first blocks of tar file and search for the system map
             if not 'content-length' in req.headers:
                 return HTTPBadRequest(request=req,
-                    body='Must specify Content-Length')
+                                      body='Must specify Content-Length')
 
             cached_body = CachedBody(read_iter)
             user_image = iter(cached_body)
@@ -1086,7 +1090,7 @@ class ClusterController(Controller):
         if len(node_list) > 1:
             if self.app.zerovm_ns_thrdpool.free() <= 0:
                 return HTTPServiceUnavailable(body='Cluster slot not available',
-                    request=req)
+                                              request=req)
             ns_server = NameService()
             ns_server.start(self.app.zerovm_ns_thrdpool, node_count)
             if not ns_server.port:
@@ -1102,7 +1106,8 @@ class ClusterController(Controller):
             }
             path_info = req.path_info
             exec_request = Request.blank(path_info,
-                environ=req.environ, headers=req.headers)
+                                         environ=req.environ,
+                                         headers=req.headers)
             exec_request.path_info = path_info
             exec_request.content_length = None
             exec_request.etag = None
@@ -1170,16 +1175,16 @@ class ClusterController(Controller):
                     source_resp.nodes = []
                     data_sources.append(source_resp)
                 node.last_data = source_resp
-                source_resp.nodes.append({'node':node, 'dev':ch.device})
+                source_resp.nodes.append({'node': node, 'dev': ch.device})
                 for repl_node in node.replicas:
                     repl_node.last_data = source_resp
-                    source_resp.nodes.append({'node':repl_node, 'dev':ch.device})
+                    source_resp.nodes.append({'node': repl_node, 'dev': ch.device})
             if image_resp:
                 node.last_data = image_resp
-                image_resp.nodes.append({'node':node, 'dev':'image'})
+                image_resp.nodes.append({'node': node, 'dev': 'image'})
                 for repl_node in node.replicas:
                     repl_node.last_data = image_resp
-                    image_resp.nodes.append({'node':repl_node, 'dev':'image'})
+                    image_resp.nodes.append({'node': repl_node, 'dev': 'image'})
             top_channel = node.channels[0]
             if top_channel.path and top_channel.path[0] == '/' and \
                (top_channel.access & (ACCESS_READABLE | ACCESS_CDR)):

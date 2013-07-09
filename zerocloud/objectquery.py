@@ -424,6 +424,7 @@ class ObjectQueryMiddleware(object):
                             if ch['path'] in local_object:
                                 ch['lpath'] = file.data_file
                                 channels[ch['device']] = file.data_file
+                                file.channel_device = '/dev/%s' % ch['device']
                     if ch['device'] in 'image':
                         fstab = add_to_fstab(fstab, ch['device'], 'ro')
                 elif ch['access'] & ACCESS_WRITABLE:
@@ -505,8 +506,9 @@ class ObjectQueryMiddleware(object):
                     if file:
                         env += ENV_ITEM % ('CONTENT_LENGTH', file.get_data_file_size())
                         env += ENV_ITEM % ('CONTENT_TYPE',
-                                              file.metadata.get('Content-Type',
-                                                                'application/octet-stream'))
+                                           file.metadata.get('Content-Type',
+                                                             'application/octet-stream'))
+                        env += ENV_ITEM % ('DOCUMENT_ROOT', file.channel_device)
                         config['env']['REQUEST_METHOD'] = 'POST'
                         config['env']['PATH_INFO'] = file.name
                     for k, v in config['env'].iteritems():
