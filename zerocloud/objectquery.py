@@ -513,7 +513,7 @@ class ObjectQueryMiddleware(object):
                         config['env']['PATH_INFO'] = file.name
                     for k, v in config['env'].iteritems():
                         if v:
-                            env += ENV_ITEM % (k, unquote(v))
+                            env += ENV_ITEM % (k, v)
 
                 args = '[args]\nargs = %s' % config['name']
                 if config.get('args'):
