@@ -616,10 +616,10 @@ class TestProxyQuery(unittest.TestCase):
                 pass
 
     def test_QUERY_name_service(self):
-        ns_server = proxyquery.NameService()
-        pool = GreenPool()
         peers = 3
-        ns_server.start(pool, peers)
+        ns_server = proxyquery.NameService(peers)
+        pool = GreenPool()
+        ns_server.start(pool)
         map = {}
         sleep(0.1)
         def mock_client(ns_port, conf, id):
@@ -801,7 +801,6 @@ return 'Test Test'
         self.assertEqual(res.headers['x-object-meta-key2'], 'test2')
         self.assertEqual(res.body, 'Test Test')
 
-
     def test_QUERY_hello(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
@@ -811,13 +810,15 @@ r'''
 return 'hello, world'
 '''[1:-1]
         self.create_object(prolis, '/v1/a/c/hello.nexe', nexe)
-        conf = [{
-                    "name": "hello",
-                    "exec": { "path": "/c/hello.nexe" },
-                    "file_list": [
-                        { "device": "stdout" }
-                    ]
-                }]
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "/c/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"}
+                ]
+            }
+        ]
         conf = json.dumps(conf)
         req = self.zerovm_request()
         req.body = conf
@@ -844,12 +845,12 @@ return resp + out
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
             {
-                'name':'http',
-                'exec':{'path':'/c/exe2'},
-                'file_list':[
-                    {'device':'stdout', 'content_type': 'message/http',
-                     'path': '/c/o3'
-                    }
+                'name': 'http',
+                'exec': {'path': '/c/exe2'},
+                'file_list': [
+                    {'device': 'stdout',
+                     'content_type': 'message/http',
+                     'path': '/c/o3'}
                 ]
             }
         ]
@@ -867,11 +868,11 @@ return resp + out
         self.assertEqual(res.body, '<html><body>Test this</body></html>')
         conf = [
             {
-                'name':'http',
-                'exec':{'path':'/c/exe2'},
-                'file_list':[
+                'name': 'http',
+                'exec': {'path': '/c/exe2'},
+                'file_list': [
                     {
-                        'device':'stdout',
+                        'device': 'stdout',
                         'content_type': 'message/http'
                     }
                 ]
@@ -1222,21 +1223,21 @@ return open(mnfst.nvram).read()
     def test_QUERY_network_resolve(self):
         self.setup_QUERY()
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stderr','path':'/c/o2'}
+            {
+                'name': 'sort',
+                'exec': {'path': '/c/exe'},
+                'file_list': [
+                    {'device': 'stderr', 'path': '/c/o2'}
                 ],
-                'connect':['merge']
+                'connect': ['merge']
             },
-                {
-                'name':'merge',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stderr','path':'/c/o3'}
+            {
+                'name': 'merge',
+                'exec': {'path': '/c/exe'},
+                'file_list': [
+                    {'device': 'stderr', 'path': '/c/o3'}
                 ],
-                'connect':['sort']
+                'connect': ['sort']
             }
         ]
         jconf = json.dumps(conf)
@@ -1475,13 +1476,12 @@ return 'ok'
     def test_QUERY_write_wildcard(self):
         self.setup_QUERY()
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stdout','path':'/c_out1/out.*'},
-                ],
-                'count':2
+            {
+                'name': 'sort',
+                'exec': {'path': '/c/exe'},
+                'file_list': [
+                    {'device': 'stdout', 'path': '/c_out1/out.*'}],
+                'count': 2
             }
         ]
         jconf = json.dumps(conf)
@@ -1490,24 +1490,6 @@ return 'ok'
         req.body = jconf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
-        resp = [
-                {
-                'status': '201 Created',
-                'body': '',
-                'name': 'sort-1',
-                'nexe_etag': '07405c77e6bdc4533612831e02bed9fb',
-                'nexe_status': 'ok.',
-                'nexe_retcode': 0
-            },
-                {
-                'status': '201 Created',
-                'body': '',
-                'name': 'sort-2',
-                'nexe_etag': '07405c77e6bdc4533612831e02bed9fb',
-                'nexe_status': 'ok.',
-                'nexe_retcode': 0
-            }
-        ]
         self.assertEqual(res.headers['x-nexe-system'], 'sort-1,sort-2')
         self.assertEqual(res.headers['x-nexe-status'], 'ok.,ok.')
         self.assertEqual(res.headers['x-nexe-retcode'], '0,0')

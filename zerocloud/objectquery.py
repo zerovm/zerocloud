@@ -26,7 +26,7 @@ from swift.common.constraints import check_mount, check_utf8
 from swift.common.exceptions import DiskFileError, DiskFileNotExist
 
 from zerocloud.proxyquery import TAR_MIMES, ACCESS_CDR, ACCESS_READABLE, \
-    ACCESS_WRITABLE
+    ACCESS_WRITABLE, NodeEncoder
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 from zerocloud.fastcgi import PseudoSocket
 
@@ -287,14 +287,14 @@ class ObjectQueryMiddleware(object):
             pass
         if not zerovm_execute_only:
             try:
-                (device, partition, account, container, obj) =\
-                split_path(unquote(req.path), 5, 5, True)
+                (device, partition, account, container, obj) = \
+                    split_path(unquote(req.path), 5, 5, True)
             except ValueError, err:
                 return HTTPBadRequest(body=str(err), request=req,
-                    content_type='text/plain')
+                                      content_type='text/plain')
 
-        if self.zerovm_thrdpool.free() <= 0\
-        and self.zerovm_thrdpool.waiting() >= self.zerovm_maxqueue:
+        if self.zerovm_thrdpool.free() <= 0 \
+                and self.zerovm_thrdpool.waiting() >= self.zerovm_maxqueue:
             return HTTPServiceUnavailable(body='Slot not available',
                 request=req, content_type='text/plain', headers=nexe_headers)
         if self.app.mount_check and not check_mount(self.app.devices, device):
@@ -317,26 +317,7 @@ class ObjectQueryMiddleware(object):
             disk_chunk_size=self.app.disk_chunk_size,
             os_interface=self.os_interface
         )
-        file = None
-        if not zerovm_execute_only:
-            file = DiskFile(
-                self.app.devices,
-                device,
-                partition,
-                account,
-                container,
-                obj,
-                self.logger,
-                disk_chunk_size=self.app.disk_chunk_size,
-            )
-            try:
-                input_file_size = file.get_data_file_size()
-            except (DiskFileError, DiskFileNotExist):
-                return HTTPNotFound(request=req, headers=nexe_headers)
-            if input_file_size > self.zerovm_maxinput:
-                return HTTPRequestEntityTooLarge(body='Data object too large'
-                    , request=req, content_type='text/plain', headers=nexe_headers)
-
+        disk_file = None
         start = time.time()
         channels = {}
         with tmpdir.mkdtemp() as zerovm_tmp:
@@ -385,6 +366,7 @@ class ObjectQueryMiddleware(object):
                 return HTTPBadRequest(request=req,
                     body='No system map found in request')
 
+            #print json.dumps(config, cls=NodeEncoder)
             zerovm_nexe = None
             if config['exe'][0] != '/' and 'image' in channels:
                 tar = tarfile.open(name=channels['image'])
@@ -404,16 +386,36 @@ class ObjectQueryMiddleware(object):
                     body='No executable found in request')
 
             fstab = None
+
             def add_to_fstab(fstab, device, access):
                 if not fstab:
                     fstab = '[fstab]\n'
                 fstab += 'channel=/dev/%s, mountpoint=/, access=%s\n' \
                          % (device, access)
                 return fstab
+
             response_channels = []
             local_object = None
             if not zerovm_execute_only:
                 local_object = '/'.join(['', container, obj])
+                disk_file = DiskFile(
+                    self.app.devices,
+                    device,
+                    partition,
+                    account,
+                    container,
+                    obj,
+                    self.logger,
+                    disk_chunk_size=self.app.disk_chunk_size,)
+                try:
+                    input_file_size = disk_file.get_data_file_size()
+                except (DiskFileError, DiskFileNotExist):
+                    return HTTPNotFound(request=req, headers=nexe_headers)
+                if input_file_size > self.zerovm_maxinput:
+                    return HTTPRequestEntityTooLarge(body='Data object too large',
+                                                     request=req,
+                                                     content_type='text/plain',
+                                                     headers=nexe_headers)
             for ch in config['channels']:
                 if ch['device'] in channels:
                     ch['lpath'] = channels[ch['device']]
@@ -429,9 +431,9 @@ class ObjectQueryMiddleware(object):
                                          % ch['path'])
                         if local_object and ch['path']:
                             if ch['path'] in local_object:
-                                ch['lpath'] = file.data_file
-                                channels[ch['device']] = file.data_file
-                                file.channel_device = '/dev/%s' % ch['device']
+                                ch['lpath'] = disk_file.data_file
+                                channels[ch['device']] = disk_file.data_file
+                                disk_file.channel_device = '/dev/%s' % ch['device']
                     if ch['device'] in 'image':
                         fstab = add_to_fstab(fstab, ch['device'], 'ro')
                 elif ch['access'] & ACCESS_WRITABLE:
@@ -510,14 +512,14 @@ class ObjectQueryMiddleware(object):
                 env = None
                 if config.get('env'):
                     env = '[env]\n'
-                    if file:
-                        env += ENV_ITEM % ('CONTENT_LENGTH', file.get_data_file_size())
+                    if disk_file:
+                        env += ENV_ITEM % ('CONTENT_LENGTH', disk_file.get_data_file_size())
                         env += ENV_ITEM % ('CONTENT_TYPE',
-                                           quote_for_env(file.metadata.get('Content-Type',
-                                                                           'application/octet-stream')))
-                        env += ENV_ITEM % ('DOCUMENT_ROOT', file.channel_device)
+                                           quote_for_env(disk_file.metadata.get('Content-Type',
+                                                                                'application/octet-stream')))
+                        env += ENV_ITEM % ('DOCUMENT_ROOT', disk_file.channel_device)
                         config['env']['REQUEST_METHOD'] = 'POST'
-                        config['env']['PATH_INFO'] = file.name
+                        config['env']['PATH_INFO'] = disk_file.name
                     for k, v in config['env'].iteritems():
                         if v:
                             env += ENV_ITEM % (k, quote_for_env(v))

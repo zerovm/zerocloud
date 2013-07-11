@@ -1,4 +1,4 @@
-from copy import deepcopy
+from copy import deepcopy, copy
 import ctypes
 import re
 import struct
@@ -21,7 +21,7 @@ from swift.common.http import HTTP_CONTINUE, is_success, \
 from swift.proxy.controllers.base import update_headers, delay_denial, \
     Controller, cors_validation
 from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
-    get_remote_client, ContextPool, cache_from_env, GreenthreadSafeIterator
+    get_remote_client, ContextPool, cache_from_env, GreenthreadSafeIterator, normalize_timestamp
 from swift.proxy.server import ObjectController, ContainerController, \
     AccountController
 from swift.common.bufferedhttp import http_connect
@@ -101,13 +101,12 @@ def merge_headers(current, new):
 
 def has_control_chars(line):
     if line:
-        RE_ILLEGAL = u'([\u0000-\u0008\u000b-\u000c\u000e-\u001f\ufffe-\uffff])' +\
-                         u'|' +\
-                         u'([%s-%s][^%s-%s])|([^%s-%s][%s-%s])|([%s-%s]$)|(^[%s-%s])' %\
-                         (unichr(0xd800),unichr(0xdbff),unichr(0xdc00),unichr(0xdfff),
-                          unichr(0xd800),unichr(0xdbff),unichr(0xdc00),unichr(0xdfff),
-                          unichr(0xd800),unichr(0xdbff),unichr(0xdc00),unichr(0xdfff),
-                             )
+        RE_ILLEGAL = u'([\u0000-\u0008\u000b-\u000c\u000e-\u001f\ufffe-\uffff])' + \
+                     u'|' + \
+                     u'([%s-%s][^%s-%s])|([^%s-%s][%s-%s])|([%s-%s]$)|(^[%s-%s])' % \
+                     (unichr(0xd800), unichr(0xdbff), unichr(0xdc00), unichr(0xdfff),
+                      unichr(0xd800), unichr(0xdbff), unichr(0xdc00), unichr(0xdfff),
+                      unichr(0xd800), unichr(0xdbff), unichr(0xdc00), unichr(0xdfff),)
         if re.search(RE_ILLEGAL, line):
             return True
         if re.search(r"[\x01-\x1F\x7F]", line):
@@ -219,15 +218,15 @@ class SequentialResponseBody(object):
 
 class NameService(object):
 
-    def __init__(self):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    def __init__(self, peers):
         self.port = None
         self.hostaddr = None
-
-    def start(self, pool, peers):
-        self.sock.bind(('', 0))
         self.peers = peers
+
+    def start(self, pool):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(('', 0))
         self.thread = pool.spawn(self._run)
         (self.hostaddr, self.port) = self.sock.getsockname()
 
@@ -477,16 +476,21 @@ class ZvmNode(object):
         self.env['HTTP_ACCEPT_ENCODING'] = request.headers.get('accept-encoding')
         self.env['HTTP_ACCEPT_LANGUAGE'] = request.headers.get('accept-language')
 
-    def create_sysmap_data_source(self, data_sources):
+    def _create_sysmap_resp(self):
         sysmap = json.dumps(self, cls=NodeEncoder)
         #print sysmap
         sysmap_iter = iter([sysmap])
-        sysmap_resp = Response(app_iter=sysmap_iter,
-                               headers={'Content-Length': str(len(sysmap))})
-        data_sources.insert(0, sysmap_resp)
-        if not getattr(self, 'last_data', None):
-            self.last_data = sysmap_resp
-        sysmap_resp.nodes = [{'node': self, 'dev': 'sysmap'}]
+        return Response(app_iter=sysmap_iter,
+                        headers={'Content-Length': str(len(sysmap))})
+
+    def _add_data_source(self, data_sources, resp, dev='sysmap', append=False):
+        if append:
+            data_sources.append(resp)
+        else:
+            data_sources.insert(0, resp)
+        if not getattr(self, 'last_data', None) or append:
+            self.last_data = resp
+        resp.nodes = [{'node': self, 'dev': dev}]
 
 
 class ZvmChannel(object):
@@ -642,27 +646,27 @@ class ClusterController(Controller):
                 node_name = node.get('name')
                 if not node_name:
                     return HTTPBadRequest(request=req,
-                        body='Must specify node name')
+                                          body='Must specify node name')
                 if has_control_chars(node_name):
                     return HTTPBadRequest(request=req,
-                        body='Invalid node name')
+                                          body='Invalid node name')
                 nexe = node.get('exec')
                 if not nexe:
                     return HTTPBadRequest(request=req,
-                        body='Must specify exec stanza for %s' % node_name)
+                                          body='Must specify exec stanza for %s' % node_name)
                 nexe_path = nexe.get('path')
                 if not nexe_path:
                     return HTTPBadRequest(request=req,
-                        body='Must specify executable path for %s' % node_name)
+                                          body='Must specify executable path for %s' % node_name)
                 nexe_args = nexe.get('args')
                 nexe_env = nexe.get('env')
                 if has_control_chars('%s %s %s' % (nexe_path, nexe_args, nexe_env)):
                     return HTTPBadRequest(request=req,
-                        body='Invalid nexe property')
+                                          body='Invalid nexe property')
                 node_count = node.get('count', 1)
                 if not isinstance(node_count, int):
                     return HTTPBadRequest(request=req,
-                        body='Invalid node count')
+                                          body='Invalid node count')
                 node_replicate = node.get('replicate', 1)
                 file_list = node.get('file_list')
                 read_list = []
@@ -675,15 +679,15 @@ class ClusterController(Controller):
                         device = f.get('device')
                         if has_control_chars(device):
                             return HTTPBadRequest(request=req,
-                                body='Bad device name')
+                                                  body='Bad device name')
                         path = f.get('path')
                         if has_control_chars(path):
                             return HTTPBadRequest(request=req,
-                                body='Bad device path')
+                                                  body='Bad device path')
                         if not device:
                             return HTTPBadRequest(request=req,
-                                body='Must specify device for file in %s'
-                                % node_name)
+                                                  body='Must specify device for file in %s'
+                                                       % node_name)
                         if path and ':/dev/' in path:
                             (dst_host, dst_dev) = path.split(':', 1)
                             if not connect_devices.get(node_name, None):
@@ -696,8 +700,8 @@ class ClusterController(Controller):
                                 other_list.append(f)
                                 continue
                             return HTTPBadRequest(request=req,
-                                body='Unknown device %s in %s'
-                                % (device, node_name))
+                                                  body='Unknown device %s in %s'
+                                                       % (device, node_name))
                         if access & ACCESS_READABLE:
                             read_list.insert(0, f)
                         elif access & ACCESS_CDR:
@@ -721,8 +725,8 @@ class ClusterController(Controller):
                                     path, 1, 2, True)
                             except ValueError:
                                 return HTTPBadRequest(request=req,
-                                    body='Invalid path %s in %s'
-                                    % (path, node_name))
+                                                      body='Invalid path %s in %s'
+                                                           % (path, node_name))
                             if '*' in container:
                                 container = re.escape(container).replace(
                                     '\\*', '.*'
@@ -730,12 +734,12 @@ class ClusterController(Controller):
                                 mask = re.compile(container)
                                 try:
                                     containers = self.list_account(req,
-                                        self.account_name, mask)
+                                                                   self.account_name, mask)
                                 except Exception:
                                     return HTTPBadRequest(request=req,
-                                        body='Error querying object server '
-                                             'for account %s'
-                                            % self.account_name)
+                                                          body='Error querying object server '
+                                                               'for account %s'
+                                                               % self.account_name)
                                 if object:
                                     if '*' in object:
                                         object = re.escape(object).replace(
@@ -747,11 +751,11 @@ class ClusterController(Controller):
                                 for c in containers:
                                     try:
                                         obj_list = self.list_container(req,
-                                            self.account_name, c, mask)
+                                                                       self.account_name, c, mask)
                                     except Exception:
                                         return HTTPBadRequest(request=req,
-                                            body='Error querying object server '
-                                                 'for container %s' % c)
+                                                              body='Error querying object server '
+                                                                   'for container %s' % c)
                                     for obj in obj_list:
                                         list.append('/' + c + '/' + obj)
                             else:
@@ -761,15 +765,15 @@ class ClusterController(Controller):
                                 mask = re.compile(object)
                                 try:
                                     for obj in self.list_container(req,
-                                        self.account_name, container, mask):
+                                                                   self.account_name, container, mask):
                                         list.append('/' + container + '/' + obj)
                                 except Exception:
                                     return HTTPBadRequest(request=req,
-                                        body='Error querying object server '
-                                             'for container %s' % container)
+                                                          body='Error querying object server '
+                                                               'for container %s' % container)
                             if not list:
                                 return HTTPBadRequest(request=req,
-                                    body='No objects found in path %s' % path)
+                                                      body='No objects found in path %s' % path)
                             read_mask = re.escape(path).replace('\\*', '(.*)')
                             read_mask = re.compile(read_mask)
                             for i in range(len(list)):
@@ -778,11 +782,11 @@ class ClusterController(Controller):
                                 new_node = self.nodes.get(new_name)
                                 if not new_node:
                                     new_node = ZvmNode(nid, new_name,
-                                        nexe_path, nexe_args, nexe_env, node_replicate)
+                                                       nexe_path, nexe_args, nexe_env, node_replicate)
                                     nid += 1
                                     self.nodes[new_name] = new_node
                                 new_node.add_channel(device, access,
-                                    path=new_path, mode=mode)
+                                                     path=new_path, mode=mode)
                                 new_match = read_mask.match(new_path)
                                 new_node.wildcards = map(lambda i: new_match.group(i),
                                                          range(1, new_match.lastindex + 1))
@@ -795,22 +799,22 @@ class ClusterController(Controller):
                                     new_node = self.nodes.get(new_name)
                                     if not new_node:
                                         new_node = ZvmNode(nid, new_name,
-                                            nexe_path, nexe_args, nexe_env, node_replicate)
+                                                           nexe_path, nexe_args, nexe_env, node_replicate)
                                         nid += 1
                                         self.nodes[new_name] = new_node
                                     new_node.add_channel(device, access,
-                                        path=new_path, mode=mode)
+                                                         path=new_path, mode=mode)
                             else:
                                 new_node = self.nodes.get(node_name)
                                 if not new_node:
                                     new_node = ZvmNode(nid, node_name, nexe_path,
-                                        nexe_args, nexe_env, node_replicate)
+                                                       nexe_args, nexe_env, node_replicate)
                                     nid += 1
                                     self.nodes[node_name] = new_node
                                 new_node.add_channel(device, access, path=path, mode=mode)
                         else:
                             return HTTPBadRequest(request=req,
-                                body='Readable file must have a path')
+                                                  body='Readable file must have a path')
 
                     for f in write_list:
                         device = f.get('device')
@@ -833,8 +837,8 @@ class ClusterController(Controller):
                                                                    ' resolved into output path %s'
                                                                    % path)
                                     new_node.add_channel(device, access,
-                                        path=new_path, content_type=content_type,
-                                        meta_data=meta, mode=mode)
+                                                         path=new_path, content_type=content_type,
+                                                         meta_data=meta, mode=mode)
                             else:
                                 for i in range(1, node_count + 1):
                                     new_name = self.create_name(node_name, i)
@@ -843,51 +847,51 @@ class ClusterController(Controller):
                                     new_node = self.nodes.get(new_name)
                                     if not new_node:
                                         new_node = ZvmNode(nid, new_name,
-                                            nexe_path, nexe_args, nexe_env, node_replicate)
+                                                           nexe_path, nexe_args, nexe_env, node_replicate)
                                         nid += 1
                                         self.nodes[new_name] = new_node
                                     new_node.add_channel(device, access,
-                                        path=new_path, content_type=content_type,
-                                        meta_data=meta, mode=mode)
+                                                         path=new_path, content_type=content_type,
+                                                         meta_data=meta, mode=mode)
                                     new_node.wildcards = [new_name] * path.count('*')
                         elif path:
                             if node_count > 1:
                                 return HTTPBadRequest(request=req,
-                                    body='Single path %s for multiple node '
-                                         'definition: %s, please use wildcard'
-                                    % (path, node_name))
+                                                      body='Single path %s for multiple node '
+                                                           'definition: %s, please use wildcard'
+                                                           % (path, node_name))
                             new_node = self.nodes.get(node_name)
                             if not new_node:
                                 new_node = ZvmNode(nid, node_name, nexe_path,
-                                    nexe_args, nexe_env, node_replicate)
+                                                   nexe_args, nexe_env, node_replicate)
                                 nid += 1
                                 self.nodes[node_name] = new_node
                             new_node.add_channel(device, access,
-                                path=path, content_type=content_type,
-                                meta_data=meta, mode=mode)
+                                                 path=path, content_type=content_type,
+                                                 meta_data=meta, mode=mode)
                         else:
                             if 'stdout' not in device \
-                            and 'stderr' not in device:
+                                and 'stderr' not in device:
                                 return HTTPBadRequest(request=req,
-                                    body='Immediate response is not available '
-                                         'for device %s' % device)
+                                                      body='Immediate response is not available '
+                                                           'for device %s' % device)
                             if node_count > 1:
                                 for i in range(1, node_count + 1):
                                     new_name = self.create_name(node_name, i)
                                     new_node = self.nodes.get(new_name)
                                     new_node.add_channel(device, access,
-                                        content_type=f.get('content_type', 'text/html'),
-                                        mode=mode)
+                                                         content_type=f.get('content_type', 'text/html'),
+                                                         mode=mode)
                             else:
                                 new_node = self.nodes.get(node_name)
                                 if not new_node:
                                     new_node = ZvmNode(nid, node_name,
-                                        nexe_path, nexe_args, nexe_env, node_replicate)
+                                                       nexe_path, nexe_args, nexe_env, node_replicate)
                                     nid += 1
                                     self.nodes[node_name] = new_node
                                 new_node.add_channel(device, access,
-                                    content_type=f.get('content_type', 'text/html'),
-                                    mode=mode)
+                                                     content_type=f.get('content_type', 'text/html'),
+                                                     mode=mode)
 
                     for f in other_list:
                         device = f.get('device')
@@ -899,14 +903,14 @@ class ClusterController(Controller):
                             path = f.get('path')
                             if not path:
                                 return HTTPBadRequest(request=req,
-                                    body='Path required for device %s' % device)
+                                                      body='Path required for device %s' % device)
                         if node_count > 1:
                             for i in range(1, node_count + 1):
                                 new_name = self.create_name(node_name, i)
                                 new_node = self.nodes.get(new_name)
                                 if not new_node:
                                     new_node = ZvmNode(nid, new_name,
-                                        nexe_path, nexe_args, nexe_env, node_replicate)
+                                                       nexe_path, nexe_args, nexe_env, node_replicate)
                                     nid += 1
                                     self.nodes[new_name] = new_node
                                 new_node.add_channel(device, access, path=path)
@@ -914,7 +918,7 @@ class ClusterController(Controller):
                             new_node = self.nodes.get(node_name)
                             if not new_node:
                                 new_node = ZvmNode(nid, node_name, nexe_path,
-                                    nexe_args, nexe_env, node_replicate)
+                                                   nexe_args, nexe_env, node_replicate)
                                 nid += 1
                                 self.nodes[node_name] = new_node
                             new_node.add_channel(device, access, path=path)
@@ -942,7 +946,7 @@ class ClusterController(Controller):
                         connect_node.add_connection(bind_name, self.nodes, src_dev, dst_dev)
                 except Exception:
                     return HTTPBadRequest(request=req,
-                        body='Invalid connect string for node %s' % node_name)
+                                          body='Invalid connect string for node %s' % node_name)
             elif self.nodes.get(node_name + '-1'):
                 j = 1
                 connect_node = self.nodes.get(self.create_name(node_name, j))
@@ -958,15 +962,15 @@ class ClusterController(Controller):
                             connect_node.add_connection(bind_name, self.nodes, src_dev, dst_dev)
                     except Exception, e:
                         return HTTPBadRequest(request=req,
-                            body='Invalid connect string for node %s: %s'
-                                % (connect_node.name, e))
+                                              body='Invalid connect string for node %s: %s'
+                                                   % (connect_node.name, e))
                     j += 1
                     connect_node = self.nodes.get(
                         self.create_name(node_name, j))
             else:
                 return HTTPBadRequest(request=req,
-                    body='Non existing node in connect string for node %s'
-                        % node_name)
+                                      body='Non existing node in connect string for node %s'
+                                           % node_name)
 
         #node_count = len(self.nodes)
         #for node in self.nodes.itervalues():
@@ -1060,17 +1064,25 @@ class ClusterController(Controller):
                 return error
         elif req.headers['content-type'].startswith('text/'):
         # We got a text file in POST request
-        # assume that it is a script and create system map
+        #TODO: assume that it is a script and create system map
             return HTTPBadRequest(request=req,
-                body='Unsupported Content-Type')
+                                  body='Unsupported Content-Type')
         else:
             return HTTPBadRequest(request=req,
-                body='Unsupported Content-Type')
+                                  body='Unsupported Content-Type')
         req.path_info = '/' + self.account_name
 
         node_list = []
         for k in sorted(self.nodes.iterkeys()):
-            node_list.append(self.nodes[k])
+            node = self.nodes[k]
+            top_channel = node.channels[0]
+            if top_channel.path and top_channel.path[0] == '/':
+                if top_channel.access & (ACCESS_READABLE | ACCESS_CDR):
+                    node.path_info = top_channel.path
+                elif top_channel.access & ACCESS_WRITABLE:
+                    node.path_info = top_channel.path
+                    node.replicate = self.app.object_ring.replica_count
+            node_list.append(node)
 
         # for n in node_list:
         #     print json.dumps(n, cls=NodeEncoder)
@@ -1078,7 +1090,7 @@ class ClusterController(Controller):
         image_resp = None
         if user_image:
             image_resp = Response(app_iter=user_image,
-                headers={'Content-Length':req.headers['content-length']})
+                headers={'Content-Length': req.headers['content-length']})
             image_resp.nodes = []
             for n in node_list:
                 n.add_channel('image', ACCESS_CDR)
@@ -1091,12 +1103,12 @@ class ClusterController(Controller):
         node_count = self.get_total_node_count(node_list)
         pile = GreenPile(node_count)
         ns_server = None
-        if len(node_list) > 1:
+        if node_count > 1:
+            ns_server = NameService(node_count)
             if self.app.zerovm_ns_thrdpool.free() <= 0:
                 return HTTPServiceUnavailable(body='Cluster slot not available',
                                               request=req)
-            ns_server = NameService()
-            ns_server.start(self.app.zerovm_ns_thrdpool, node_count)
+            ns_server.start(self.app.zerovm_ns_thrdpool)
             if not ns_server.port:
                 return HTTPServiceUnavailable(body='Cannot bind name service')
         for node in node_list:
@@ -1118,32 +1130,33 @@ class ClusterController(Controller):
             exec_request.headers['content-type'] = TAR_MIMES[0]
             exec_request.headers['transfer-encoding'] = 'chunked'
             exec_request.headers['x-account-name'] = self.account_name
+            exec_request.headers['x-timestamp'] = normalize_timestamp(time.time())
             if 'swift.authorize' in exec_request.environ:
                 aresp = exec_request.environ['swift.authorize'](exec_request)
                 if aresp:
                     return aresp
-
             if ns_server:
                 node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
                 self.build_connect_string(node, len(node_list))
                 if node.replicate > 1:
                     for i in range(0, node.replicate - 1):
                         node.replicas.append(deepcopy(node))
-                        node.replicas[i].id = node.id + i * len(node_list)
-                    for repl_node in node.replicas:
-                        repl_node.copy_cgi_env(exec_request)
-                        repl_node.create_sysmap_data_source(data_sources)
+                        node.replicas[i].id = node.id + (i + 1) * len(node_list)
             node.copy_cgi_env(exec_request)
-            node.create_sysmap_data_source(data_sources)
-
+            resp = node._create_sysmap_resp()
+            node._add_data_source(data_sources, resp, 'sysmap')
+            for repl_node in node.replicas:
+                repl_node.copy_cgi_env(exec_request)
+                resp = repl_node._create_sysmap_resp()
+                repl_node._add_data_source(data_sources, resp, 'sysmap')
             channels = []
             if node.exe[0] == '/':
                 channels.append(ZvmChannel('boot', None, node.exe))
             if len(node.channels) > 1:
                 for ch in node.channels[1:]:
                     if ch.path and ch.path[0] == '/' \
-                       and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
-                    and ch.device not in self.app.zerovm_sysimage_devices:
+                        and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
+                            and ch.device not in self.app.zerovm_sysimage_devices:
                         channels.append(ch)
 
             for ch in channels:
@@ -1189,34 +1202,32 @@ class ClusterController(Controller):
                 for repl_node in node.replicas:
                     repl_node.last_data = image_resp
                     image_resp.nodes.append({'node': repl_node, 'dev': 'image'})
-            top_channel = node.channels[0]
-            if top_channel.path and top_channel.path[0] == '/' and \
-               (top_channel.access & (ACCESS_READABLE | ACCESS_CDR)):
-                path_info += top_channel.path
-                account, container, obj = split_path(path_info, 1, 3, True)
+            path_info += getattr(node, 'path_info', '')
+            try:
+                account, container, obj = split_path(path_info, 3, 3, True)
                 partition = self.app.object_ring.get_part(account, container, obj)
                 node_iter = GreenthreadSafeIterator(
                     self.iter_nodes(self.app.object_ring, partition))
                 exec_request.path_info = path_info
                 pile.spawn(self._connect_exec_node, node_iter, partition,
-                    exec_request, self.app.logger.thread_locals, node,
-                    nexe_headers)
+                           exec_request, self.app.logger.thread_locals, node,
+                           nexe_headers)
                 for repl_node in node.replicas:
                     pile.spawn(self._connect_exec_node, node_iter, partition,
-                        exec_request, self.app.logger.thread_locals, repl_node,
-                        nexe_headers)
-            else:
+                               exec_request, self.app.logger.thread_locals, repl_node,
+                               nexe_headers)
+            except ValueError:
                 partition = self.get_random_partition()
                 node_iter = self.iter_nodes(self.app.object_ring, partition)
                 pile.spawn(self._connect_exec_node, node_iter, partition,
-                    exec_request, self.app.logger.thread_locals, node,
-                    nexe_headers)
+                           exec_request, self.app.logger.thread_locals, node,
+                           nexe_headers)
                 for repl_node in node.replicas:
                     partition = self.get_random_partition()
                     node_iter = self.iter_nodes(self.app.object_ring, partition)
                     pile.spawn(self._connect_exec_node, node_iter, partition,
-                        exec_request, self.app.logger.thread_locals, repl_node,
-                        nexe_headers)
+                               exec_request, self.app.logger.thread_locals, repl_node,
+                               nexe_headers)
         if image_resp:
             data_sources.append(image_resp)
 
