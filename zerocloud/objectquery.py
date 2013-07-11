@@ -1,5 +1,6 @@
 from StringIO import StringIO
 import os
+import re
 import shutil
 import time
 import traceback
@@ -48,6 +49,12 @@ CHANNEL_TYPE_MAP = {
     'image': 1,
     'sysimage': 3
 }
+
+
+# quotes commas as \x2c for [env] stanza in nvram file
+# see ZRT docs
+def quote_for_env(val):
+    return re.sub(r',', '\\x2c', val)
 
 
 class TmpDir(object):
@@ -469,16 +476,16 @@ class ObjectQueryMiddleware(object):
                             (ch['lpath'], ch['device'], type,
                              self.zerovm_maxiops, self.zerovm_maxinput)
                     elif access & ACCESS_CDR:
-                        zerovm_inputmnfst +=\
-                        'Channel=%s,/dev/%s,%s,%s,%s,%s,%s\n' %\
-                        (ch['lpath'], ch['device'], type,
-                         self.zerovm_maxiops, self.zerovm_maxinput,
-                         self.zerovm_maxiops, self.zerovm_maxoutput)
+                        zerovm_inputmnfst += \
+                            'Channel=%s,/dev/%s,%s,%s,%s,%s,%s\n' % \
+                            (ch['lpath'], ch['device'], type,
+                             self.zerovm_maxiops, self.zerovm_maxinput,
+                             self.zerovm_maxiops, self.zerovm_maxoutput)
                     elif access & ACCESS_WRITABLE:
-                        zerovm_inputmnfst +=\
-                        'Channel=%s,/dev/%s,%s,0,0,%s,%s\n' %\
-                        (ch['lpath'], ch['device'], type,
-                         self.zerovm_maxiops, self.zerovm_maxoutput)
+                        zerovm_inputmnfst += \
+                            'Channel=%s,/dev/%s,%s,0,0,%s,%s\n' % \
+                            (ch['lpath'], ch['device'], type,
+                             self.zerovm_maxiops, self.zerovm_maxoutput)
                     mode = ch.get('mode', None)
                     if mode:
                         mode_mapping[ch['device']] = mode
@@ -493,27 +500,27 @@ class ObjectQueryMiddleware(object):
                 for dev in STD_DEVICES:
                     if not dev in channels and not dev in network_devices:
                         if 'stdin' in dev:
-                            zerovm_inputmnfst +=\
-                            'Channel=/dev/null,/dev/stdin,0,%s,%s,0,0\n' %\
-                            (self.zerovm_maxiops, self.zerovm_maxinput)
+                            zerovm_inputmnfst += \
+                                'Channel=/dev/null,/dev/stdin,0,%s,%s,0,0\n' % \
+                                (self.zerovm_maxiops, self.zerovm_maxinput)
                         else:
-                            zerovm_inputmnfst +=\
-                            'Channel=/dev/null,/dev/%s,0,0,0,%s,%s\n' %\
-                            (dev, self.zerovm_maxiops, self.zerovm_maxoutput)
+                            zerovm_inputmnfst += \
+                                'Channel=/dev/null,/dev/%s,0,0,0,%s,%s\n' % \
+                                (dev, self.zerovm_maxiops, self.zerovm_maxoutput)
                 env = None
                 if config.get('env'):
                     env = '[env]\n'
                     if file:
                         env += ENV_ITEM % ('CONTENT_LENGTH', file.get_data_file_size())
                         env += ENV_ITEM % ('CONTENT_TYPE',
-                                           file.metadata.get('Content-Type',
-                                                             'application/octet-stream'))
+                                           quote_for_env(file.metadata.get('Content-Type',
+                                                                           'application/octet-stream')))
                         env += ENV_ITEM % ('DOCUMENT_ROOT', file.channel_device)
                         config['env']['REQUEST_METHOD'] = 'POST'
                         config['env']['PATH_INFO'] = file.name
                     for k, v in config['env'].iteritems():
                         if v:
-                            env += ENV_ITEM % (k, v)
+                            env += ENV_ITEM % (k, quote_for_env(v))
 
                 args = '[args]\nargs = %s' % config['name']
                 if config.get('args'):
