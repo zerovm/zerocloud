@@ -42,213 +42,7 @@ from swift.common import ring
 
 from zerocloud import proxyquery, objectquery
 
-ZEROVM_DEFAULT_MOCK =\
-r'''
-import socket
-import struct
-from sys import argv, exit
-import re
-import logging
-import cPickle as pickle
-from time import sleep
-from argparse import ArgumentParser
-try:
-    import simplejson as json
-except ImportError:
-    import json
-
-def errdump(zvm_errcode, nexe_validity, nexe_errcode, nexe_etag, nexe_accounting, status_line):
-    print '%d\n%d\n%s\n%s\n%s' % (nexe_validity, nexe_errcode, nexe_etag,
-                                  ' '.join([str(val) for val in nexe_accounting]), status_line)
-    exit(zvm_errcode)
-
-def eval_as_function(code, local_vars={}, global_vars=None):
-    if not global_vars:
-        global_vars = globals()
-    retval = None
-    context = {}
-    code = re.sub(r"(?m)^", "    ", code)
-    code = "def anon(" + ','.join(local_vars.keys()) + "):\n" + code
-    exec code in global_vars, context
-    retval = context['anon'](*(local_vars.values()))
-    return retval
-
-parser = ArgumentParser()
-parser.add_argument('-M', dest='manifest')
-parser.add_argument('-s', action='store_true', dest='skip')
-parser.add_argument('-F', action='store_true', dest='validate')
-args = parser.parse_args()
-
-valid = 1
-if args.skip:
-    valid = 0
-accounting = [0,0,0,0,0,0,0,0,0,0,0,0]
-manifest = args.manifest
-if not manifest:
-    errdump(1,valid, 0,'',accounting,'Manifest file required')
-try:
-    inputmnfst = file(manifest, 'r').read().splitlines()
-except IOError:
-    errdump(1,valid, 0,'',accounting,'Cannot open manifest file: %s' % manifest)
-dl = re.compile("\s*=\s*")
-mnfst_dict = dict()
-for line in inputmnfst:
-    (attr, val) = re.split(dl, line, 1)
-    if attr and attr in mnfst_dict:
-        mnfst_dict[attr] += ',' + val
-    else:
-        mnfst_dict[attr] = val
-
-class Mnfst:
-    pass
-
-mnfst = Mnfst()
-index = 0
-status = 'nexe did not run'
-retcode = 0
-
-def retrieve_mnfst_field(n, eq=None, min=None, max=None, isint=False, optional=False):
-    if n not in mnfst_dict:
-        if optional:
-            return
-        errdump(1,valid,0,'',accounting,'Manifest key missing "%s"' % n)
-    v = mnfst_dict[n]
-    if isint:
-        v = int(v)
-        if min and v < min:
-            errdump(1,valid,0,'',accounting,'%s = %d is less than expected: %d' % (n,v,min))
-        if max and v > max:
-            errdump(1,valid,0,'',accounting,'%s = %d is more than expected: %d' % (n,v,max))
-    if eq and v != eq:
-        errdump(1,valid,0,'',accounting,'%s = %s and expected %s' % (n,v,eq))
-    setattr(mnfst, n.strip(), v)
-
-
-retrieve_mnfst_field('Version', '20130611')
-retrieve_mnfst_field('Program')
-retrieve_mnfst_field('Etag', optional=True)
-retrieve_mnfst_field('Timeout', min=1, isint=True)
-retrieve_mnfst_field('Memory', min=32*1048576, max=4096*1048576, isint=True)
-retrieve_mnfst_field('Channel')
-retrieve_mnfst_field('Node', optional=True, isint=True)
-retrieve_mnfst_field('NameServer', optional=True)
-exe = file(mnfst.Program, 'r').read()
-if 'INVALID' == exe:
-    valid = 2
-    retcode = 0
-    errdump(8, valid, retcode, '', accounting, 'nexe is invalid')
-if args.validate:
-    errdump(0, valid, retcode, '', accounting, 'nexe is valid')
-if not getattr(mnfst, 'Etag', None):
-    mnfst.Etag = 'DISABLED'
-
-channel_list = re.split('\s*,\s*',mnfst.Channel)
-if len(channel_list) % 7 != 0:
-    errdump(1,valid,0,mnfst.Etag,accounting,'wrong channel config: %s' % mnfst.Channel)
-dev_list = channel_list[1::7]
-bind_data = ''
-bind_count = 0
-connect_data = ''
-connect_count = 0
-con_list = []
-bind_map = {}
-alias = int(mnfst.Node)
-mnfst.channels = {}
-for fname,device,type,rd,rd_byte,wr,wr_byte in zip(*[iter(channel_list)]*7):
-    if fname.startswith('tcp:'):
-        proto, host, port = fname.split(':')
-        host = int(host)
-        if int(rd) > 0:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.bind(('', 0))
-            s.listen(1)
-            port = s.getsockname()[1]
-            bind_map[host] = {'name':device, 'port':port, 'proto':proto, 'sock':s}
-            bind_data += struct.pack('!IIH', host, 0, int(port))
-            bind_count += 1
-        else:
-            connect_data += struct.pack('!IIH', host, 0, 0)
-            connect_count += 1
-            con_list.append(device)
-    if device == '/dev/stdin' or device == '/dev/input':
-        mnfst.input = fname
-    elif device == '/dev/stdout' or device == '/dev/output':
-        mnfst.output = fname
-    elif device == '/dev/stderr':
-        mnfst.err = fname
-    elif device == '/dev/image':
-        mnfst.image = fname
-    elif device == '/dev/nvram':
-        mnfst.nvram = fname
-    mnfst.channels[device] = {
-        'path': fname,
-        'type': type,
-        'read': rd,
-        'read_bytes': rd_byte,
-        'write': wr,
-        'write_bytes': wr_byte
-    }
-request = struct.pack('!I', alias) +\
-          struct.pack('!I', bind_count) + bind_data + struct.pack('!I', connect_count) + connect_data
-if getattr(mnfst, 'NameServer', None):
-    ns_proto, ns_host, ns_port = mnfst.NameServer.split(':')
-    ns = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    ns.connect((ns_host, int(ns_port)))
-    ns.sendto(request, (ns_host, int(ns_port)))
-    ns_host = ns.getpeername()[0]
-    ns_port = ns.getpeername()[1]
-    while 1:
-        reply, addr = ns.recvfrom(65535)
-        if addr[0] == ns_host and addr[1] == ns_port:
-            offset = 0
-            count = struct.unpack_from('!I', reply, offset)[0]
-            offset += 4
-            for i in range(count):
-                host, port = struct.unpack_from('!4sH', reply, offset+4)[0:2]
-                offset += 10
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.connect((socket.inet_ntop(socket.AF_INET, host), port))
-                con_list[i] = [con_list[i], 'tcp://%s:%d'
-                    % (socket.inet_ntop(socket.AF_INET, host), port)]
-            break
-    if bind_map:
-        sleep(0.5)
-try:
-    inf = file(mnfst.input, 'r')
-    ouf = file(mnfst.output, 'w')
-    err = file(mnfst.err, 'w')
-    ins = inf.read()
-    accounting[4] += 1
-    accounting[5] += len(ins)
-    id = pickle.loads(ins)
-except EOFError:
-    id = []
-except Exception:
-    errdump(1,valid,0,mnfst.Etag,accounting,'Std files I/O error')
-
-od = ''
-try:
-    od = str(eval_as_function(exe))
-except Exception, e:
-    err.write(e.message+'\n')
-    accounting[6] += 1
-    accounting[7] += len(e.message+'\n')
-ouf.write(od)
-accounting[6] += 1
-accounting[7] += len(od)
-for t in con_list:
-    err.write('%s, %s\n' % (t[1], t[0]))
-    accounting[6] += 1
-    accounting[7] += len('%s, %s\n' % (t[1], t[0]))
-inf.close()
-ouf.close()
-err.write('\nfinished\n')
-accounting[6] += 1
-accounting[7] += len('\nfinished\n')
-err.close()
-status = 'ok.'
-errdump(0, valid, retcode, mnfst.Etag, accounting, status)
-'''
+ZEROVM_DEFAULT_MOCK = 'test/unit/zerovm_mock.py'
 
 class FakeRing(object):
 
@@ -465,8 +259,11 @@ class TestProxyQuery(unittest.TestCase):
 #                'mount_check': 'false', 'allowed_headers':
 #                'content-encoding, x-object-manifest, content-disposition, foo'}
         #monkey_patch_mimetools()
+        self.zerovm_mock = None
 
     def tearDown(self):
+        if self.zerovm_mock:
+            os.unlink(self.zerovm_mock)
         proxy_server.CONTAINER_LISTING_LIMIT = _orig_container_listing_limit
 
     def create_container(self, prolis, url, auto_account=False):
@@ -526,11 +323,12 @@ class TestProxyQuery(unittest.TestCase):
 
             (_prosrv, _acc1srv, _acc2srv, _con1srv,
              _con2srv, _obj1srv, _obj2srv) = _test_servers
-            fd, zerovm_mock = mkstemp()
+            zerovm_mock = ZEROVM_DEFAULT_MOCK
             if mock:
+                fd, zerovm_mock = mkstemp()
                 os.write(fd, mock)
-            else:
-                os.write(fd, ZEROVM_DEFAULT_MOCK)
+                os.close(fd)
+                self.zerovm_mock = zerovm_mock
             _obj1srv.zerovm_exename = ['python', zerovm_mock]
             #_obj1srv.zerovm_nexe_xparams = ['ok.', '0']
             _obj2srv.zerovm_exename = ['python', zerovm_mock]
@@ -941,7 +739,7 @@ return resp
         prosrv = _test_servers[0]
         nexe =\
 r'''
-return [open(mnfst.image).read(), sorted(id)]
+return [open(mnfst.image['path']).read(), sorted(id)]
 '''[1:-1]
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         image = 'This is image file'
@@ -998,7 +796,7 @@ return [open(mnfst.image).read(), sorted(id)]
                     pass
         nexe =\
 r'''
-return open(mnfst.nvram).read() + \
+return open(mnfst.nvram['path']).read() + \
     str(mnfst.channels['/dev/sysimage']['type']) + ' ' + \
     str(mnfst.channels['/dev/sysimage']['path'])
 '''[1:-1]
@@ -1035,7 +833,7 @@ return open(mnfst.nvram).read() + \
         prosrv = _test_servers[0]
         nexe =\
 r'''
-return open(mnfst.nvram).read()
+return open(mnfst.nvram['path']).read()
 '''[1:-1]
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
@@ -1337,21 +1135,21 @@ return 'ok'
         self.assertEqual(res.status_int, 200)
         self.assertEqual(
             sorted(re.findall('tcp://127.0.0.1:\d+, /dev/out/([^\s]+)', res.body)),
-            ['merge-1', 'merge-2', 'sort-2', 'sort-3']
+            ['merge-1', 'merge-1', 'merge-2', 'merge-2', 'sort-2', 'sort-2', 'sort-3', 'sort-3']
         )
         req = self.object_request('/v1/a/c_out1/sort-2.stderr')
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(
             sorted(re.findall('tcp://127.0.0.1:\d+, /dev/out/([^\s]+)', res.body)),
-            ['merge-1', 'merge-2', 'sort-1', 'sort-3']
+            ['merge-1', 'merge-1', 'merge-2', 'merge-2', 'sort-1', 'sort-1', 'sort-3', 'sort-3']
         )
         req = self.object_request('/v1/a/c_out1/sort-3.stderr')
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(
             sorted(re.findall('tcp://127.0.0.1:\d+, /dev/out/([^\s]+)', res.body)),
-            ['merge-1', 'merge-2', 'sort-1', 'sort-2']
+            ['merge-1', 'merge-1', 'merge-2', 'merge-2', 'sort-1', 'sort-1', 'sort-2', 'sort-2']
         )
         req = self.object_request('/v1/a/c_out1/merge-1.stderr')
         res = req.get_response(prosrv)
@@ -1490,9 +1288,10 @@ return 'ok'
         req.body = jconf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.headers['x-nexe-system'], 'sort-1,sort-2')
-        self.assertEqual(res.headers['x-nexe-status'], 'ok.,ok.')
-        self.assertEqual(res.headers['x-nexe-retcode'], '0,0')
+        # each header is duplicated because we have replication level set to 2
+        self.assertEqual(res.headers['x-nexe-system'], 'sort-1,sort-1,sort-2,sort-2')
+        self.assertEqual(res.headers['x-nexe-status'], 'ok.,ok.,ok.,ok.')
+        self.assertEqual(res.headers['x-nexe-retcode'], '0,0,0,0')
         req = self.object_request('/v1/a/c_out1/out.sort-1')
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
@@ -1550,7 +1349,7 @@ return 'ok'
             proxy_server.http_connect =\
             fake_http_connect(200, 200, 201, 201, 201)
             prosrv = _test_servers[0]
-            req = self.zerovm_request()
+            req = self.zerovm_object_request()
             req.environ['swift.authorize'] = authorize
             req.body = '1234'
             res = req.get_response(prosrv)

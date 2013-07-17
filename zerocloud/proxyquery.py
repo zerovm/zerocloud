@@ -616,7 +616,7 @@ class ClusterController(Controller):
             tmp.append(
                 ','.join([proto,
                           dst_dev,
-                          '0',
+                          '0,0',  # type = 0, sequential, etag = 0, not needed
                           str(self.app.zerovm_maxiops),
                           str(self.app.zerovm_maxinput),
                           '0,0'])
@@ -632,7 +632,8 @@ class ClusterController(Controller):
             tmp.append(
                 ','.join([proto,
                           dst_dev,
-                          '0,0,0',
+                          '0,0',  # type = 0, sequential, etag = 0, not needed
+                          '0,0',
                           str(self.app.zerovm_maxiops),
                           str(self.app.zerovm_maxoutput)])
             )
