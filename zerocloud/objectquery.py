@@ -27,7 +27,6 @@ from swift.common.exceptions import DiskFileError, DiskFileNotExist
 from zerocloud.proxyquery import TAR_MIMES, ACCESS_CDR, ACCESS_READABLE, \
     ACCESS_WRITABLE, NodeEncoder
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
-from zerocloud.fastcgi import PseudoSocket
 
 ENV_ITEM = 'name=%s, value=%s\n'
 
@@ -54,6 +53,15 @@ CHANNEL_TYPE_MAP = {
 # see ZRT docs
 def quote_for_env(val):
     return re.sub(r',', '\\x2c', val)
+
+
+class PseudoSocket():
+
+    def __init__(self, file):
+        self.file = file
+
+    def makefile(self, mode, buffering):
+        return self.file
 
 
 class TmpDir(object):
