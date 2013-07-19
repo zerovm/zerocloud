@@ -1344,47 +1344,61 @@ time.sleep(10)
     def test_QUERY_prevalidate(self):
         self.setup_zerovm_query()
         req = Request.blank('/sda1/p/a/c/exe',
-            environ={'REQUEST_METHOD': 'PUT'},
-            headers={'X-Timestamp': normalize_timestamp(time()),
-                     'x-zerovm-validate': 'true',
-                     'Content-Type': 'application/octet-stream'})
+                            environ={'REQUEST_METHOD': 'PUT'},
+                            headers={'X-Timestamp': normalize_timestamp(time()),
+                                     'x-zerovm-validate': 'true',
+                                     'Content-Type': 'application/octet-stream'})
         req.body = self._nexescript
         resp = req.get_response(self.app)
         self.assertEquals(resp.status_int, 201)
         self.assertEquals(resp.headers['x-zerovm-valid'], 'true')
 
         req = Request.blank('/sda1/p/a/c/exe',
-            environ={'REQUEST_METHOD': 'PUT'},
-            headers={'X-Timestamp': normalize_timestamp(time()),
-                     'Content-Type': 'application/octet-stream'})
+                            headers={'x-zerovm-valid': 'true'})
+        req.body = self._nexescript
+        resp = req.get_response(self.app)
+        self.assertEquals(resp.status_int, 200)
+        self.assertEquals(resp.headers['x-zerovm-valid'], 'true')
+
+        req = Request.blank('/sda1/p/a/c/exe',
+                            environ={'REQUEST_METHOD': 'PUT'},
+                            headers={'X-Timestamp': normalize_timestamp(time()),
+                                     'Content-Type': 'application/octet-stream'})
         req.body = self._nexescript
         resp = req.get_response(self.app)
         self.assertEquals(resp.status_int, 201)
         self.assertNotIn('x-zerovm-valid', resp.headers)
 
         req = Request.blank('/sda1/p/a/c/exe',
-            environ={'REQUEST_METHOD': 'PUT'},
-            headers={'X-Timestamp': normalize_timestamp(time()),
-                     'Content-Type': 'application/x-nexe'})
+                            headers={'x-zerovm-valid': 'true'})
+        req.body = self._nexescript
+        resp = req.get_response(self.app)
+        self.assertEquals(resp.status_int, 200)
+        self.assertNotIn('x-zerovm-valid', resp.headers)
+
+        req = Request.blank('/sda1/p/a/c/exe',
+                            environ={'REQUEST_METHOD': 'PUT'},
+                            headers={'X-Timestamp': normalize_timestamp(time()),
+                                     'Content-Type': 'application/x-nexe'})
         req.body = self._nexescript
         resp = req.get_response(self.app)
         self.assertEquals(resp.status_int, 201)
         self.assertEquals(resp.headers['x-zerovm-valid'], 'true')
 
         req = Request.blank('/sda1/p/a/c/exe',
-            environ={'REQUEST_METHOD': 'PUT'},
-            headers={'X-Timestamp': normalize_timestamp(time()),
-                     'Content-Type': 'application/octet-stream'})
+                            environ={'REQUEST_METHOD': 'PUT'},
+                            headers={'X-Timestamp': normalize_timestamp(time()),
+                                     'Content-Type': 'application/octet-stream'})
         req.body = 'INVALID'
         resp = req.get_response(self.app)
         self.assertEquals(resp.status_int, 201)
         self.assertNotIn('x-zerovm-valid', resp.headers)
 
         req = Request.blank('/sda1/p/a/c/exe',
-            environ={'REQUEST_METHOD': 'PUT'},
-            headers={'X-Timestamp': normalize_timestamp(time()),
-                     'x-zerovm-validate': 'true',
-                     'Content-Type': 'application/octet-stream'})
+                            environ={'REQUEST_METHOD': 'PUT'},
+                            headers={'X-Timestamp': normalize_timestamp(time()),
+                                     'x-zerovm-validate': 'true',
+                                     'Content-Type': 'application/octet-stream'})
         req.body = 'INVALID'
         resp = req.get_response(self.app)
         self.assertEquals(resp.status_int, 201)

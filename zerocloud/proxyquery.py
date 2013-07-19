@@ -65,7 +65,7 @@ DEVICE_MAP = {
 TAR_MIMES = ['application/x-tar', 'application/x-gtar', 'application/x-ustar']
 CLUSTER_CONFIG_FILENAME = 'boot/cluster.map'
 NODE_CONFIG_FILENAME = 'boot/system.map'
-CONFIG_BYTE_SIZE = 128 * 1024
+STREAM_CACHE_SIZE = 128 * 1024
 
 DEFAULT_EXE_SYSTEM_MAP = r'''
     [{
@@ -135,7 +135,7 @@ def update_metadata(request, meta_data):
 
 class CachedBody(object):
 
-    def __init__(self, read_iter, cache=None, cache_size=CONFIG_BYTE_SIZE,
+    def __init__(self, read_iter, cache=None, cache_size=STREAM_CACHE_SIZE,
                  total_size=None):
         self.read_iter = read_iter
         self.total_size = total_size
@@ -158,7 +158,7 @@ class CachedBody(object):
                     yield chunk[:self.total_size]
                     break
                 else:
-                    yield  chunk
+                    yield chunk
             if self.total_size > 0:
                 for chunk in self.read_iter:
                     self.total_size -= len(chunk)
@@ -166,7 +166,7 @@ class CachedBody(object):
                         yield chunk[:self.total_size]
                         break
                     else:
-                        yield  chunk
+                        yield chunk
             for chunk in self.read_iter:
                 pass
         else:
@@ -190,30 +190,30 @@ class FinalBody(object):
         self.app_iters.append(app_iter)
 
 
-class SequentialResponseBody(object):
-
-    def __init__(self, response, size):
-        self.response = response
-        self.pos = 0
-        self.size = size
-        self.max_transfer = self.size.pop(0)
-
-    def read(self, size=None):
-        try:
-            if size is None or (self.pos + size > self.max_transfer):
-                size = self.max_transfer - self.pos
-            self.pos += size
-            return self.response.read(size)
-        except Exception:
-            raise
-
-    def next_response(self):
-        if len(self.size) > 0:
-            self.pos = 0
-            self.max_transfer = self.size.pop(0)
-
-    def get_content_length(self):
-        return self.max_transfer
+# class SequentialResponseBody(object):
+#
+#     def __init__(self, response, size):
+#         self.response = response
+#         self.pos = 0
+#         self.size = size
+#         self.max_transfer = self.size.pop(0)
+#
+#     def read(self, size=None):
+#         try:
+#             if size is None or (self.pos + size > self.max_transfer):
+#                 size = self.max_transfer - self.pos
+#             self.pos += size
+#             return self.response.read(size)
+#         except Exception:
+#             raise
+#
+#     def next_response(self):
+#         if len(self.size) > 0:
+#             self.pos = 0
+#             self.max_transfer = self.size.pop(0)
+#
+#     def get_content_length(self):
+#         return self.max_transfer
 
 
 class NameService(object):
@@ -286,11 +286,11 @@ class ProxyQueryMiddleware(object):
         self.app.zerovm_execute = 'x-zerovm-execute'
         # execution engine version
         self.app.zerovm_execute_ver = '1.0'
-        # total maximum iops for a cahnnel read or write op
+        # total maximum iops for channel read or write operations, per zerovm session
         self.app.zerovm_maxiops = int(conf.get('zerovm_maxiops', 1024 * 1048576))
-        # total maximum bytes for a channel write op
+        # total maximum bytes for a channel write operations, per zerovm session
         self.app.zerovm_maxoutput = int(conf.get('zerovm_maxoutput', 1024 * 1048576))
-        # total maximum bytes for a channel read op
+        # total maximum bytes for a channel read operations, per zerovm session
         self.app.zerovm_maxinput = int(conf.get('zerovm_maxinput', 1024 * 1048576))
         # maximum size of a system map file
         self.app.zerovm_maxconfig = int(conf.get('zerovm_maxconfig', 65536))
@@ -358,6 +358,7 @@ class ProxyQueryMiddleware(object):
             controller.trans_id = req.environ['swift.trans_id']
             self.logger.client_ip = get_remote_client(req)
             if path_parts['version']:
+                controller.command = path_parts['version']
                 req.path_info_pop()
             if not self.app.zerovm_execute in req.headers:
                 req.headers[self.app.zerovm_execute] = self.app.zerovm_execute_ver
@@ -537,6 +538,7 @@ class ClusterController(Controller):
         self.container_name = unquote(container_name) if container_name else None
         self.obj_name = unquote(obj_name) if obj_name else None
         self.nodes = {}
+        self.command = None
 
     def copy_request(self, request):
         env = request.environ.copy()
@@ -1001,7 +1003,7 @@ class ClusterController(Controller):
         user_image = None
         if 'content-type' not in req.headers:
             return HTTPBadRequest(request=req,
-                body='Must specify Content-Type')
+                                  body='Must specify Content-Type')
         upload_expiration = time.time() + self.app.max_upload_time
         etag = md5()
         req.bytes_transferred = 0
@@ -1091,7 +1093,7 @@ class ClusterController(Controller):
         image_resp = None
         if user_image:
             image_resp = Response(app_iter=user_image,
-                headers={'Content-Length': req.headers['content-length']})
+                                  headers={'Content-Length': req.headers['content-length']})
             image_resp.nodes = []
             for n in node_list:
                 n.add_channel('image', ACCESS_CDR)
@@ -1181,10 +1183,11 @@ class ClusterController(Controller):
                         source_req.acl = container_info['read_acl']
                         #if 'boot' in ch.device:
                         #    source_req.acl = container_info['exec_acl']
-                        source_resp =\
-                            ObjectController(self.app, acct,
-                                src_container_name, src_obj_name)\
-                            .GET(source_req)
+                        source_resp = \
+                            ObjectController(self.app,
+                                             acct,
+                                             src_container_name,
+                                             src_obj_name).GET(source_req)
                         if source_resp.status_int >= 300:
                             update_headers(source_resp, nexe_headers)
                             source_resp.body = 'Error %s while fetching %s' \
@@ -1588,7 +1591,7 @@ class ClusterController(Controller):
             self.account_name,
             self.container_name,
             self.obj_name)
-        handler = getattr(controller, req.method, None)
+        handler = getattr(controller, obj_req.method, None)
         obj_resp = handler(obj_req)
         content = obj_resp.content_type.split(';')[0].strip()
         #print content
@@ -1622,8 +1625,8 @@ class ClusterController(Controller):
         config = re.sub(r'\{\.[^=\}]+=?([^\}]*)\}', '\\1', config)
         #config = re.sub(r'\{\.[^\}]+\}', '', config)
         post_req = Request.blank('/%s' % self.account_name,
-            environ=obj_req.environ,
-            headers=obj_req.headers)
+                                 environ=obj_req.environ,
+                                 headers=obj_req.headers)
         post_req.method = 'POST'
         post_req.headers['content-type'] = 'application/json'
         exe_resp = None
@@ -1656,10 +1659,10 @@ class ClusterController(Controller):
                 if self.app.zerovm_maxconfig < len(req.template):
                     req.template = None
                     return HTTPRequestEntityTooLarge(request=config_req,
-                        body='Config file at %s is too large' % config_path)
+                                                     body='Config file at %s is too large' % config_path)
         if memcache_client and req.template:
             memcache_client.set(memcache_key, req.template,
-                time=float(self.app.zerovm_cache_config_timeout))
+                                time=float(self.app.zerovm_cache_config_timeout))
 
     def get_total_node_count(self, node_list):
         count = 0

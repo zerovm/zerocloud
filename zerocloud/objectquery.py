@@ -264,7 +264,7 @@ class ObjectQueryMiddleware(object):
                     while len(readable) > 0:
                         stdout_data, stderr_data = read_from_std(readable, stdout_data, stderr_data)
                         if len(stdout_data) > self.zerovm_stdout_size\
-                        or len(stderr_data) > self.zerovm_stderr_size:
+                                or len(stderr_data) > self.zerovm_stderr_size:
                             proc.kill()
                             return 4, stdout_data, stderr_data
                     return get_final_status(stdout_data, stderr_data, 2)
@@ -342,6 +342,11 @@ class ObjectQueryMiddleware(object):
             for chunk in read_iter:
                 perf = "%s %.3f" % (perf, time.time() - start)
                 upload_size += len(chunk)
+                if upload_size > self.zerovm_maxinput:
+                    return HTTPRequestEntityTooLarge(body='RPC request too large',
+                                                     request=req,
+                                                     content_type='text/plain',
+                                                     headers=nexe_headers)
                 if time.time() > upload_expiration:
                     return HTTPRequestTimeout(request=req, headers=nexe_headers)
                 untar_stream.update_buffer(chunk)
@@ -490,8 +495,8 @@ class ObjectQueryMiddleware(object):
                             type = CHANNEL_TYPE_MAP.get('sysimage')
                         else:
                             return HTTPBadRequest(request=req,
-                                body='Could not resolve channel type for: %s'
-                                     % ch['device'])
+                                                  body='Could not resolve channel type for: %s'
+                                                       % ch['device'])
                     access = ch['access']
                     if access & ACCESS_READABLE:
                         zerovm_inputmnfst += \
@@ -519,7 +524,7 @@ class ObjectQueryMiddleware(object):
                 network_devices = []
                 for conn in config['connect'] + config['bind']:
                     zerovm_inputmnfst += 'Channel=%s\n' % conn
-                    dev = conn.split(',', 2)[1][5:] # len('/dev/') = 5
+                    dev = conn.split(',', 2)[1][5:]  # len('/dev/') = 5
                     if dev in STD_DEVICES:
                         network_devices.append(dev)
 
@@ -848,19 +853,19 @@ class ObjectQueryMiddleware(object):
                     file.data_file,
                     self.zerovm_timeout,
                     self.zerovm_maxnexemem
-                    ))
-            zerovm_inputmnfst +=\
-            'Channel=/dev/null,/dev/stdin,0,%s,%s,0,0\n' %\
-            (self.zerovm_maxiops, self.zerovm_maxinput)
-            zerovm_inputmnfst +=\
-            'Channel=/dev/null,/dev/stdout,0,0,0,%s,%s\n' %\
-            (self.zerovm_maxiops, self.zerovm_maxoutput)
-            zerovm_inputmnfst +=\
-            'Channel=/dev/null,/dev/stderr,0,0,0,%s,%s\n' %\
-            (self.zerovm_maxiops, self.zerovm_maxoutput)
+                ))
+            zerovm_inputmnfst += \
+                'Channel=/dev/null,/dev/stdin,0,%s,%s,0,0\n' % \
+                (self.zerovm_maxiops, self.zerovm_maxinput)
+            zerovm_inputmnfst += \
+                'Channel=/dev/null,/dev/stdout,0,0,0,%s,%s\n' % \
+                (self.zerovm_maxiops, self.zerovm_maxoutput)
+            zerovm_inputmnfst += \
+                'Channel=/dev/null,/dev/stderr,0,0,0,%s,%s\n' % \
+                (self.zerovm_maxiops, self.zerovm_maxoutput)
             while zerovm_inputmnfst:
                 written = self.os_interface.write(zerovm_inputmnfst_fd,
-                    zerovm_inputmnfst)
+                                                  zerovm_inputmnfst)
                 zerovm_inputmnfst = zerovm_inputmnfst[written:]
 
             thrd = self.zerovm_thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, ['-F'])
@@ -876,8 +881,8 @@ class ObjectQueryMiddleware(object):
 
     def is_validated(self, req):
         try:
-            (device, partition, account, container, obj) =\
-            split_path(unquote(req.path), 5, 5, True)
+            (device, partition, account, container, obj) = \
+                split_path(unquote(req.path), 5, 5, True)
         except ValueError:
             return False
         if self.app.mount_check and not check_mount(self.app.devices, device):
