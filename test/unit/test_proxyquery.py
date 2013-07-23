@@ -842,8 +842,9 @@ r'''
 import tarfile
 tar = tarfile.open(mnfst.image['path'])
 members = tar.getmembers()
+names = tar.getnames()
 file = tar.extractfile(members[0])
-return file.read()
+return names[0] + '\n' + file.read()
 '''[1:-1]
         shell = StringIO(nexe)
         with self.create_tar({'bin/sh': shell}) as tar:
@@ -853,7 +854,7 @@ return file.read()
                 req.headers['content-type'] = 'application/x-shell'
                 res = req.get_response(prosrv)
                 self.assertEqual(res.status_int, 200)
-                self.assertIn(script, res.body)
+                self.assertIn('script\n' + script, res.body)
                 self.assertEqual(res.headers['x-nexe-retcode'], '0')
                 self.assertEqual(res.headers['x-nexe-status'], 'ok.')
 
@@ -911,13 +912,13 @@ return open(mnfst.nvram['path']).read()
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
             {
-                'name':'sort',
-                'exec':{
-                    'path':'/c/exe2'
+                'name': 'sort',
+                'exec': {
+                    'path': '/c/exe2'
                 },
-                'file_list':[
-                    {'device':'stdin','path':'/c/o'},
-                    {'device':'stdout'}
+                'file_list': [
+                    {'device': 'stdin', 'path': '/c/o'},
+                    {'device': 'stdout'}
                 ]
             }
         ]
@@ -930,14 +931,14 @@ return open(mnfst.nvram['path']).read()
                       'args = sort\n', res.body)
         conf = [
             {
-                'name':'sort',
-                'exec':{
-                    'path':'/c/exe2',
+                'name': 'sort',
+                'exec': {
+                    'path': '/c/exe2',
                     'args': 'aa bb cc'
                 },
-                'file_list':[
-                    {'device':'stdin','path':'/c/o'},
-                    {'device':'stdout'}
+                'file_list': [
+                    {'device': 'stdin', 'path': '/c/o'},
+                    {'device': 'stdout'}
                 ]
             }
         ]
@@ -952,14 +953,14 @@ return open(mnfst.nvram['path']).read()
         self.create_object(prolis, '/v1/a/c/img', image)
         conf = [
             {
-                'name':'sort',
-                'exec':{
-                    'path':'/c/exe2'
+                'name': 'sort',
+                'exec': {
+                    'path': '/c/exe2'
                 },
-                'file_list':[
-                    {'device':'stdin','path':'/c/o'},
-                    {'device':'stdout'},
-                    {'device':'image','path':'/c/img'}
+                'file_list': [
+                    {'device': 'stdin', 'path': '/c/o'},
+                    {'device': 'stdout'},
+                    {'device': 'image', 'path': '/c/img'}
                 ]
             }
         ]
@@ -973,19 +974,19 @@ return open(mnfst.nvram['path']).read()
                       'args = sort\n', res.body)
         conf = [
             {
-                'name':'sort',
-                'exec':{
-                    'path':'/c/exe2',
+                'name': 'sort',
+                'exec': {
+                    'path': '/c/exe2',
                     'args': 'aa bb cc',
                     'env': {
                         'key1': 'val1',
                         'key2': 'val2'
                     }
                 },
-                'file_list':[
-                    {'device':'stdin','path':'/c/o'},
-                    {'device':'stdout'},
-                    {'device':'image','path':'/c/img'}
+                'file_list': [
+                    {'device': 'stdin', 'path': '/c/o'},
+                    {'device': 'stdout'},
+                    {'device': 'image', 'path': '/c/img'}
                 ]
             }
         ]
