@@ -272,6 +272,22 @@ class ObjectQueryMiddleware(object):
                 proc.kill()
                 return get_final_status(stdout_data, stderr_data, 3)
 
+    def _extract_boot_file(self, channels, boot_file, image, zerovm_tmp):
+        tar = tarfile.open(name=image)
+        nexe = None
+        try:
+            nexe = tar.extractfile(boot_file)
+        except KeyError:
+            pass
+        if nexe:
+            channels['boot'] = os.path.join(zerovm_tmp, 'boot')
+            fp = open(channels['boot'], 'wb')
+            reader = iter(lambda: nexe.read(self.app.disk_chunk_size), '')
+            for chunk in reader:
+                fp.write(chunk)
+            fp.close()
+        tar.close()
+
     def zerovm_query(self, req):
         """Handle zerovm execution requests for the Swift Object Server."""
 
@@ -386,16 +402,13 @@ class ObjectQueryMiddleware(object):
             #print json.dumps(config, cls=NodeEncoder)
             zerovm_nexe = None
             if config['exe'][0] != '/' and 'image' in channels:
-                tar = tarfile.open(name=channels['image'])
-                nexe = tar.extractfile(config['exe'])
-                if nexe:
-                    channels['boot'] = os.path.join(zerovm_tmp, 'boot')
-                    fp = open(channels['boot'], 'wb')
-                    reader = iter(lambda: nexe.read(self.app.disk_chunk_size),'')
-                    for chunk in reader:
-                        fp.write(chunk)
-                    fp.close()
-                tar.close()
+                self._extract_boot_file(channels, config['exe'], channels['image'], zerovm_tmp)
+            if not 'boot' in channels and self.zerovm_sysimage_devices:
+                for ch in config['channels']:
+                    sysimage_path = self.zerovm_sysimage_devices.get(ch['device'], None)
+                    if sysimage_path:
+                        self._extract_boot_file(channels, config['exe'], sysimage_path, zerovm_tmp)
+                        break
             if 'boot' in channels:
                 zerovm_nexe = channels.pop('boot')
             else:

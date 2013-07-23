@@ -861,6 +861,20 @@ class _ringbuffer(list):
         self.idx = idx
         return item
 
+
+class Path:
+
+    def __init__(self, type, file_name, size, data):
+        self.type = type
+        self.file_name = file_name
+        self.size = size
+        self.data = data
+
+    def __iter__(self):
+        for chunk in self.data:
+            yield chunk
+
+
 class RegFile:
 
     def __init__(self, file_name, chunk_size=65536):
@@ -953,6 +967,13 @@ class TarStream(object):
     def get_archive_size(self, file_size):
         size = file_size + BLOCKSIZE - 1
         return (size / BLOCKSIZE) * BLOCKSIZE
+
+    def get_total_stream_length(self):
+        size = 0
+        for path in self.path_list:
+            size += self.get_archive_size(path.size)
+            size += len(self.create_tarinfo(path=path))
+        return size
 
     def __iter__(self):
         if self.append:

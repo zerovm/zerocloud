@@ -37,7 +37,7 @@ from swift.common.swob import Request, Response, HTTPNotFound, \
 from swiftclient.client import quote
 
 from zerocloud.tarstream import StringBuffer, UntarStream, RECORDSIZE, \
-    TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile
+    TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile, Path
 
 try:
     import simplejson as json
@@ -77,11 +77,47 @@ DEFAULT_EXE_SYSTEM_MAP = r'''
         "file_list": [
             {
                 "device": "stdout",
-                "content_type": "{.content_type}"
+                "content_type": "{.content_type=text/plain}"
             }
         ]
     }]
     '''
+
+POST_TEXT_ACCOUNT_SYSTEM_MAP = r'''
+    [{
+        "name": "script",
+        "exec": {
+            "path": "{.exe_path}",
+            "args": "script"
+        },
+        "file_list": [
+            {
+                "device": "stdout",
+                "content_type": "text/plain"
+            }
+        ]
+    }]
+'''
+
+POST_TEXT_OBJECT_SYSTEM_MAP = r'''
+    [{
+        "name": "script",
+        "exec": {
+            "path": "{.exe_path}",
+            "args": "script"
+        },
+        "file_list": [
+            {
+                "device": "stdin",
+                "path": {.object_path}
+            },
+            {
+                "device": "stdout",
+                "content_type": "text/plain"
+            }
+        ]
+    }]
+'''
 
 
 def merge_headers(current, new):
@@ -506,15 +542,15 @@ class ZvmChannel(object):
         self.mode = mode
 
 
-class ZvmResponse(object):
-    def __init__(self, name, status,
-                 nexe_status, nexe_retcode, nexe_etag):
-        self.name = name
-        self.status = status
-        #self.body = body
-        self.nexe_status = nexe_status
-        self.nexe_retcode = nexe_retcode
-        self.nexe_etag = nexe_etag
+# class ZvmResponse(object):
+#     def __init__(self, name, status,
+#                  nexe_status, nexe_retcode, nexe_etag):
+#         self.name = name
+#         self.status = status
+#         #self.body = body
+#         self.nexe_status = nexe_status
+#         self.nexe_retcode = nexe_retcode
+#         self.nexe_etag = nexe_etag
 
 
 class NodeEncoder(json.JSONEncoder):
@@ -1001,6 +1037,7 @@ class ClusterController(Controller):
     @cors_validation
     def POST(self, req, exe_resp=None, cluster_config=''):
         user_image = None
+        user_image_length = 0
         if 'content-type' not in req.headers:
             return HTTPBadRequest(request=req,
                                   body='Must specify Content-Type')
@@ -1011,20 +1048,22 @@ class ClusterController(Controller):
                      StringBuffer(NODE_CONFIG_FILENAME)]
         read_iter = iter(lambda: req.environ['wsgi.input'].read(self.app.network_chunk_size), '')
         if req.headers['content-type'].split(';')[0].strip() in TAR_MIMES:
-        # Buffer first blocks of tar file and search for the system map
+            # we must have Content-Length set for tar-based requests
+            # as it will be impossible to stream them otherwise
             if not 'content-length' in req.headers:
                 return HTTPBadRequest(request=req,
                                       body='Must specify Content-Length')
-
+            # buffer first blocks of tar file and search for the system map
             cached_body = CachedBody(read_iter)
             user_image = iter(cached_body)
+            user_image_length = req.headers['content-length']
             untar_stream = UntarStream(cached_body.cache, path_list)
             for chunk in untar_stream:
                 req.bytes_transferred += len(chunk)
                 etag.update(chunk)
-            for buffer in path_list:
-                if buffer.is_closed:
-                    cluster_config = buffer.body
+            for buf in path_list:
+                if buf.is_closed:
+                    cluster_config = buf.body
                     break
             if not cluster_config:
                 return HTTPBadRequest(request=req,
@@ -1065,14 +1104,66 @@ class ClusterController(Controller):
                 self.app.logger.warn(
                     _('ERROR Error parsing config: %s'), cluster_config)
                 return error
-        elif req.headers['content-type'].startswith('text/'):
-        # We got a text file in POST request
-        #TODO: assume that it is a script and create system map
-            return HTTPBadRequest(request=req,
-                                  body='Unsupported Content-Type')
         else:
-            return HTTPBadRequest(request=req,
-                                  body='Unsupported Content-Type')
+            # assume the posted data is a script and try to execute
+            if not 'content-length' in req.headers:
+                return HTTPBadRequest(request=req,
+                                      body='Must specify Content-Length')
+            cached_body = CachedBody(read_iter)
+            # all scripts must start with shebang
+            if not cached_body.cache[0].startswith('#!'):
+                return HTTPBadRequest(request=req,
+                                      body='Unsupported Content-Type')
+            buf = ''
+            shebang = None
+            for chunk in cached_body.cache:
+                i = chunk.find('\n')
+                if i > 0:
+                    shebang = buf + chunk[0:i]
+                    break
+                buf += chunk
+            if not shebang:
+                return HTTPBadRequest(request=req,
+                                      body='Cannot find shebang (#!) in script')
+            command_line = re.split('\s+', re.sub('^#!\s*(.*)', '\\1', shebang))
+            sysimage = None
+            if command_line[0].startswith('/'):
+                exe_path = command_line[0]
+            elif len(command_line) > 1:
+                exe_path = command_line[1]
+                if exe_path.startswith('/'):
+                    exe_path = exe_path[1:]
+                sysimage = command_line[0]
+            else:
+                exe_path = command_line[0]
+                try:
+                    sysimage = self.app.zerovm_sysimage_devices[0]
+                except IndexError:
+                    return HTTPBadRequest(request=req,
+                                          body='Cannot find interpreter: %s' % command_line[0])
+            params = {'exe_path': exe_path}
+            req.path_info_pop()
+            if self.container_name and self.obj_name:
+                template = POST_TEXT_OBJECT_SYSTEM_MAP
+            else:
+                template = POST_TEXT_ACCOUNT_SYSTEM_MAP
+            config = self._config_from_template(params, template, req.path_info)
+            try:
+                cluster_config = json.loads(config)
+            except Exception:
+                return HTTPUnprocessableEntity(body='Could not parse system map')
+            if sysimage:
+                cluster_config[0]['file_list'].append({'device': sysimage})
+            error = self.parse_cluster_config(req, cluster_config)
+            if error:
+                self.app.logger.warn(
+                    _('ERROR Error parsing config: %s'), cluster_config)
+                return error
+            string_path = Path(REGTYPE, 'script', int(req.headers['content-length']), cached_body)
+            stream = TarStream(path_list=[string_path])
+            user_image = iter(stream)
+            user_image_length = stream.get_total_stream_length()
+
         req.path_info = '/' + self.account_name
 
         node_list = []
@@ -1093,7 +1184,7 @@ class ClusterController(Controller):
         image_resp = None
         if user_image:
             image_resp = Response(app_iter=user_image,
-                                  headers={'Content-Length': req.headers['content-length']})
+                                  headers={'Content-Length': user_image_length})
             image_resp.nodes = []
             for n in node_list:
                 n.add_channel('image', ACCESS_CDR)
@@ -1191,7 +1282,7 @@ class ClusterController(Controller):
                         if source_resp.status_int >= 300:
                             update_headers(source_resp, nexe_headers)
                             source_resp.body = 'Error %s while fetching %s' \
-                                               % (source_resp.status, source_req.path)
+                                               % (source_resp.status, source_req.path_info)
                             return source_resp
                     source_resp.nodes = []
                     data_sources.append(source_resp)
@@ -1274,8 +1365,7 @@ class ClusterController(Controller):
                         for chunk in conn['conn'].tar_stream._serve_chunk(info):
                             if not conn['conn'].failed:
                                 conn['conn'].queue.put('%x\r\n%s\r\n' %
-                                                       (len(chunk), chunk)
-                                if chunked else chunk)
+                                                       (len(chunk), chunk) if chunked else chunk)
                     while True:
                         with ChunkReadTimeout(self.app.client_timeout):
                             try:
@@ -1327,6 +1417,7 @@ class ClusterController(Controller):
             self.app.logger.increment('client_timeouts')
             return HTTPRequestTimeout(request=req)
         except (Exception, Timeout):
+            print traceback.format_exc()
             self.app.logger.exception(
                 _('ERROR Exception causing client disconnect'))
             return HTTPClientDisconnect(request=req, body='exception')
@@ -1572,6 +1663,18 @@ class ClusterController(Controller):
                 if new_ch.get('meta', None):
                     for k,v in new_ch.get('meta').iteritems():
                         old_ch.meta[k] = v
+
+    def _config_from_template(self, params, template, path_info):
+        for k, v in params.iteritems():
+            if k in 'object_path':
+                continue
+            ptrn = r'\{\.%s(|=[^\}]+)\}'
+            ptrn = ptrn % k
+            template = re.sub(ptrn, v, template)
+        config = template.replace('{.object_path}', path_info)
+        config = re.sub(r'\{\.[^=\}]+=?([^\}]*)\}', '\\1', config)
+        return config
+
     @delay_denial
     @cors_validation
     def GET(self, req):
@@ -1611,18 +1714,9 @@ class ClusterController(Controller):
             template = obj_req.template
         elif not run:
             return HTTPNotFound(request=req,
-                body='No application registered for %s' % content)
-        for k, v in req.params.iteritems():
-            if k in 'object_path':
-                continue
-            #i = '{.%s}' % k
-            #template = template.replace(i, v)
-            ptrn = r'\{\.%s(|=[^\}]+)\}'
-            ptrn = ptrn % k
-            template = re.sub(ptrn, v, template)
+                                body='No application registered for %s' % content)
         req.path_info_pop()
-        config = template.replace('{.object_path}', req.path_info)
-        config = re.sub(r'\{\.[^=\}]+=?([^\}]*)\}', '\\1', config)
+        config = self._config_from_template(req.params, template, req.path_info)
         #config = re.sub(r'\{\.[^\}]+\}', '', config)
         post_req = Request.blank('/%s' % self.account_name,
                                  environ=obj_req.environ,

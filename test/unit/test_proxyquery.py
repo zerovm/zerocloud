@@ -413,6 +413,28 @@ class TestProxyQuery(unittest.TestCase):
             except OSError:
                 pass
 
+    @contextmanager
+    def add_sysimage_device(self, sysimage_path):
+        prosrv = _test_servers[0]
+        _obj1srv = _test_servers[5]
+        _obj2srv = _test_servers[6]
+        zerovm_sysimage_devices = prosrv.app.zerovm_sysimage_devices
+        zerovm_sysimage_devices1 = _obj1srv.zerovm_sysimage_devices
+        zerovm_sysimage_devices2 = _obj2srv.zerovm_sysimage_devices
+        prosrv.app.zerovm_sysimage_devices = ['sysimage']
+        _obj1srv.zerovm_sysimage_devices = {'sysimage': sysimage_path}
+        _obj2srv.zerovm_sysimage_devices = {'sysimage': sysimage_path}
+        try:
+            yield True
+        finally:
+            prosrv.app.zerovm_sysimage_devices = zerovm_sysimage_devices
+            _obj1srv.zerovm_sysimage_devices = zerovm_sysimage_devices1
+            _obj2srv.zerovm_sysimage_devices = zerovm_sysimage_devices2
+            try:
+                os.unlink(sysimage_path)
+            except IOError:
+                pass
+
     def test_QUERY_name_service(self):
         peers = 3
         ns_server = proxyquery.NameService(peers)
@@ -768,32 +790,9 @@ return [open(mnfst.image['path']).read(), sorted(id)]
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        _obj1srv = _test_servers[5]
-        _obj2srv = _test_servers[6]
         image = 'This is image file'
         sysimage_path = os.path.join(_testdir, 'sysimage.tar')
 
-        @contextmanager
-        def replace_conf():
-            zerovm_sysimage_devices = prosrv.app.zerovm_sysimage_devices
-            zerovm_sysimage_devices1 = _obj1srv.zerovm_sysimage_devices
-            zerovm_sysimage_devices2 = _obj2srv.zerovm_sysimage_devices
-            img = open(sysimage_path, 'wb')
-            img.write(image)
-            img.close()
-            prosrv.app.zerovm_sysimage_devices = ['sysimage']
-            _obj1srv.zerovm_sysimage_devices = { 'sysimage': sysimage_path }
-            _obj2srv.zerovm_sysimage_devices = { 'sysimage': sysimage_path }
-            try:
-                yield True
-            finally:
-                prosrv.app.zerovm_sysimage_devices = zerovm_sysimage_devices
-                _obj1srv.zerovm_sysimage_devices = zerovm_sysimage_devices1
-                _obj2srv.zerovm_sysimage_devices = zerovm_sysimage_devices2
-                try:
-                    os.unlink(sysimage_path)
-                except IOError:
-                    pass
         nexe =\
 r'''
 return open(mnfst.nvram['path']).read() + \
@@ -801,17 +800,20 @@ return open(mnfst.nvram['path']).read() + \
     str(mnfst.channels['/dev/sysimage']['path'])
 '''[1:-1]
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
-        with replace_conf():
+        img = open(sysimage_path, 'wb')
+        img.write(image)
+        img.close()
+        with self.add_sysimage_device(sysimage_path):
             conf = [
                 {
-                    'name':'sort',
-                    'exec':{
-                        'path':'/c/exe2'
+                    'name': 'sort',
+                    'exec': {
+                        'path': '/c/exe2'
                     },
-                    'file_list':[
-                        {'device':'stdin','path':'/c/o'},
-                        {'device':'stdout'},
-                        {'device':'sysimage'}
+                    'file_list': [
+                        {'device': 'stdin', 'path': '/c/o'},
+                        {'device': 'stdout'},
+                        {'device': 'sysimage'}
                     ]
                 }
             ]
@@ -826,6 +828,77 @@ return open(mnfst.nvram['path']).read() + \
                           'args = sort\n', res.body)
             self.assertIn('%d %s' % (3, sysimage_path),
                           res.body)
+
+    def test_QUERY_post_script_sysimage(self):
+        self.setup_QUERY()
+        prosrv = _test_servers[0]
+        script = \
+r'''
+#! sysimage bin/sh
+print 'Test'
+'''[1:-1]
+        nexe = \
+r'''
+import tarfile
+tar = tarfile.open(mnfst.image['path'])
+members = tar.getmembers()
+file = tar.extractfile(members[0])
+return file.read()
+'''[1:-1]
+        shell = StringIO(nexe)
+        with self.create_tar({'bin/sh': shell}) as tar:
+            with self.add_sysimage_device(tar):
+                req = self.zerovm_request()
+                req.body = script
+                req.headers['content-type'] = 'application/x-shell'
+                res = req.get_response(prosrv)
+                self.assertEqual(res.status_int, 200)
+                self.assertIn(script, res.body)
+                self.assertEqual(res.headers['x-nexe-retcode'], '0')
+                self.assertEqual(res.headers['x-nexe-status'], 'ok.')
+
+    def test_QUERY_post_script(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe = \
+r'''
+import tarfile
+tar = tarfile.open(mnfst.image['path'])
+members = tar.getmembers()
+file = tar.extractfile(members[0])
+return file.read()
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        script = \
+r'''
+#! /c/exe2
+print 'Test'
+'''[1:-1]
+        req = self.zerovm_request()
+        req.body = script
+        req.headers['content-type'] = 'application/x-python'
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertIn(script, res.body)
+        script = \
+r'''
+#! /aaa/bbb
+print 'Test'
+'''[1:-1]
+        req.body = script
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 404)
+        self.assertIn(' /a/aaa/bbb', res.body)
+        script = \
+r'''
+#! aaa/bbb
+print 'Test'
+'''[1:-1]
+        req.body = script
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 400)
+        self.assertIn(' aaa/bbb', res.body)
 
     def test_QUERY_use_nvram(self):
         self.setup_QUERY()
@@ -1418,7 +1491,7 @@ return 'ok'
         req = self.zerovm_request()
         req.body = conf
         res = req.get_response(prosrv)
-        self.assertEqual(res.body, 'Error 404 Not Found while fetching /v1/a/c/error')
+        self.assertEqual(res.body, 'Error 404 Not Found while fetching /a/c/error')
         self.assertEqual(res.status_int, 404)
 
     def test_QUERY_missing_required_fields(self):
