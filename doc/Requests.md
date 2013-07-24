@@ -59,12 +59,12 @@ The minimal ZeroVM image contains just a `boot/system.map` file.
 This file is a JSON job description file exactly the same as in a 'POST job description' topic above.
 Image can contain any number of files, all these files will be visible to the running ZeroVM instance as its local `root` filesystem.
 Essentially it's like "mounting" this tar file to `/`
-This tar file can also contain the executable itself. If `boot/system.map` has a realtive path in `exec['path']` variable,
+This tar file can also contain the executable itself. If `boot/system.map` has a relative path in `exec['path']` variable,
 the executable will be extracted from the image file and only then ZeroVM session will run.
-You can always incapsulate all the data your executable needs in this file: config files, executable, data files, libraries, etc.
-`boot/system.map` can referense not only files inside the image but also files outside by using absolute paths.
+You can always encapsulate all the data your executable needs in this file: config files, executable, data files, libraries, etc.
+`boot/system.map` can reference not only files inside the image but also files outside by using absolute paths.
 You can also have `boot/cluster.map` in the image. This JSON file will execute clustered jobs.
-The image file will be made available as a local filesystem on all the nodes in the cluseter.
+The image file will be made available as a local filesystem on all the nodes in the cluster.
 You can even reference different executables from the same image file to run on different nodes.
 
 ### POST any other file
@@ -73,8 +73,8 @@ This POST will work if url path info is of the form: /version/account or /versio
 
 If you issue a POST with `X-Zerovm-Execute: 1.0` and any other content type the data will be interpreted as a script.
 Each script must contain a "shebang" line at the top (reminder: #! ).
-Shebang can either include a full path to the executable, or include a system image file name (see. Configuration.md)
-and a relative path to the executble inside the system image file.
+Shebang can either include a full path to the executable, or include a system image file name (see. `doc/Configuration.md`)
+and a relative path to the executable inside the system image file.
 
 - If you POST to /version/account the script will run on any available node and the result (stdout) will be sent back to you as 'text/plain'
 - If you POST to /version/account/container/object the script will be run with the object file as input (stdin) and the result (stdout) will be sent back to you as 'text/plain'
@@ -89,7 +89,7 @@ Shebang examples:
 
 When your script is run, the filesystem will have it mounted as a `/script` file (absolute path, directly in root dir).
 The interpreter will have its home dir set to `/` and executed as `/path/to/interpreter script`
-If you want to get stderr or mount any other files into executable filesystem, you have to use other POST formats (preferrably: POST a ZeroVM image)
+If you want to get stderr or mount any other files into executable filesystem, you have to use other POST formats (preferably: POST a ZeroVM image)
 
 ### GET with version `open`
 
@@ -98,9 +98,9 @@ This GET will work if url path info is of the form: /version/account/container/o
 When you issue a GET request with version `open`: `/open/account/container/object` the following events will fire:
 
 - Zerocloud will get `Content-Type` of the object in url
-- Zerocloud will search for object with path /version/account/.zvm/content-type/config in Swift
+- Zerocloud will search for object with path `/version/account/.zvm/content-type/config` in Swift
 - if the object is found its contents will be used as a JSON job description template
-- the template will be filled with details from GET resuest: object url and parts of query string
+- the template will be filled with details from GET request: object url and parts of query string
 - the final JSON file will run and the result will be returned to user as a GET response
 
 Example:
