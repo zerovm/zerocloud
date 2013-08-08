@@ -226,32 +226,6 @@ class FinalBody(object):
         self.app_iters.append(app_iter)
 
 
-# class SequentialResponseBody(object):
-#
-#     def __init__(self, response, size):
-#         self.response = response
-#         self.pos = 0
-#         self.size = size
-#         self.max_transfer = self.size.pop(0)
-#
-#     def read(self, size=None):
-#         try:
-#             if size is None or (self.pos + size > self.max_transfer):
-#                 size = self.max_transfer - self.pos
-#             self.pos += size
-#             return self.response.read(size)
-#         except Exception:
-#             raise
-#
-#     def next_response(self):
-#         if len(self.size) > 0:
-#             self.pos = 0
-#             self.max_transfer = self.size.pop(0)
-#
-#     def get_content_length(self):
-#         return self.max_transfer
-
-
 class NameService(object):
 
     def __init__(self, peers):
@@ -542,17 +516,6 @@ class ZvmChannel(object):
         self.mode = mode
 
 
-# class ZvmResponse(object):
-#     def __init__(self, name, status,
-#                  nexe_status, nexe_retcode, nexe_etag):
-#         self.name = name
-#         self.status = status
-#         #self.body = body
-#         self.nexe_status = nexe_status
-#         self.nexe_retcode = nexe_retcode
-#         self.nexe_etag = nexe_etag
-
-
 class NodeEncoder(json.JSONEncoder):
 
     def default(self, o):
@@ -720,9 +683,10 @@ class ClusterController(Controller):
                             return HTTPBadRequest(request=req,
                                                   body='Bad device name')
                         path = f.get('path')
-                        if has_control_chars(path):
-                            return HTTPBadRequest(request=req,
-                                                  body='Bad device path')
+                        # comment it out for now, the path should not go into manifest anyway
+                        # if has_control_chars(path):
+                        #     return HTTPBadRequest(request=req,
+                        #                           body='Bad device path')
                         if not device:
                             return HTTPBadRequest(request=req,
                                                   body='Must specify device for file in %s'
@@ -758,9 +722,9 @@ class ClusterController(Controller):
                         mode = f.get('mode', None)
                         if path and '*' in path:
                             read_group = 1
-                            list = []
+                            temp_list = []
                             try:
-                                container, object = split_path(
+                                container, obj = split_path(
                                     path, 1, 2, True)
                             except ValueError:
                                 return HTTPBadRequest(request=req,
@@ -779,12 +743,12 @@ class ClusterController(Controller):
                                                           body='Error querying object server '
                                                                'for account %s'
                                                                % self.account_name)
-                                if object:
-                                    if '*' in object:
-                                        object = re.escape(object).replace(
+                                if obj:
+                                    if '*' in obj:
+                                        obj = re.escape(obj).replace(
                                             '\\*', '.*'
                                         )
-                                    mask = re.compile(object)
+                                    mask = re.compile(obj)
                                 else:
                                     mask = None
                                 for c in containers:
@@ -796,28 +760,28 @@ class ClusterController(Controller):
                                                               body='Error querying object server '
                                                                    'for container %s' % c)
                                     for obj in obj_list:
-                                        list.append('/' + c + '/' + obj)
+                                        temp_list.append('/' + c + '/' + obj)
                             else:
-                                object = re.escape(object).replace(
+                                obj = re.escape(obj).replace(
                                     '\\*', '.*'
                                 )
-                                mask = re.compile(object)
+                                mask = re.compile(obj)
                                 try:
                                     for obj in self.list_container(req,
                                                                    self.account_name, container, mask):
-                                        list.append('/' + container + '/' + obj)
+                                        temp_list.append('/' + container + '/' + obj)
                                 except Exception:
                                     return HTTPBadRequest(request=req,
                                                           body='Error querying object server '
                                                                'for container %s' % container)
-                            if not list:
+                            if not temp_list:
                                 return HTTPBadRequest(request=req,
                                                       body='No objects found in path %s' % path)
                             read_mask = re.escape(path).replace('\\*', '(.*)')
                             read_mask = re.compile(read_mask)
-                            for i in range(len(list)):
+                            for i in range(len(temp_list)):
                                 new_name = self.create_name(node_name, i+1)
-                                new_path = list[i]
+                                new_path = temp_list[i]
                                 new_node = self.nodes.get(new_name)
                                 if not new_node:
                                     new_node = ZvmNode(nid, new_name,
@@ -829,7 +793,7 @@ class ClusterController(Controller):
                                 new_match = read_mask.match(new_path)
                                 new_node.wildcards = map(lambda i: new_match.group(i),
                                                          range(1, new_match.lastindex + 1))
-                            node_count = len(list)
+                            node_count = len(temp_list)
                         elif path:
                             if node_count > 1:
                                 for i in range(1, node_count + 1):
@@ -1371,15 +1335,15 @@ class ClusterController(Controller):
                             try:
                                 data = next(data_src.app_iter)
                             except StopIteration:
-                                blocks, remainder = divmod(data_src.bytes_transferred,
-                                    BLOCKSIZE)
+                                blocks, remainder = divmod(data_src.bytes_transferred, BLOCKSIZE)
                                 if remainder > 0:
                                     nulls = NUL * (BLOCKSIZE - remainder)
                                     for conn in data_src.conns:
                                         for chunk in conn['conn'].tar_stream._serve_chunk(nulls):
                                             if not conn['conn'].failed:
-                                                conn['conn'].queue.put('%x\r\n%s\r\n' % (len(chunk), chunk)
-                                                if chunked else chunk)
+                                                conn['conn'].queue.put(
+                                                    '%x\r\n%s\r\n' % (len(chunk), chunk)
+                                                    if chunked else chunk)
                                             else:
                                                 return HTTPServiceUnavailable(request=req)
                                 for conn in data_src.conns:
@@ -1495,8 +1459,7 @@ class ClusterController(Controller):
         resp = Response(status='%d %s' %
                                (server_response.status,
                                 server_response.reason),
-                        app_iter=iter(lambda:
-                                      server_response.read(self.app.network_chunk_size),''),
+                        app_iter=iter(lambda: server_response.read(self.app.network_chunk_size),''),
                         headers=dict(server_response.getheaders()))
         conn.resp = resp
         if resp.content_length == 0:
@@ -1537,22 +1500,24 @@ class ClusterController(Controller):
                 dest_container_name, dest_obj_name =\
                     dest_header.split('/', 3)[2:]
                 dest_req = Request.blank(dest_header,
-                    environ=request.environ, headers=request.headers)
+                                         environ=request.environ,
+                                         headers=request.headers)
                 dest_req.path_info = dest_header
                 dest_req.method = 'PUT'
                 dest_req.headers['content-length'] = info.size
                 untar_stream.to_write = info.size
                 untar_stream.offset_data = info.offset_data
-                dest_req.environ['wsgi.input'] =\
-                    ExtractedFile(untar_stream)
+                dest_req.environ['wsgi.input'] = ExtractedFile(untar_stream)
                 dest_req.headers['content-type'] = chan.content_type
                 error = update_metadata(dest_req, chan.meta)
                 if error:
                     conn.error = error
                     return conn
                 dest_resp = \
-                    ObjectController(self.app, acct,
-                    dest_container_name, dest_obj_name).PUT(dest_req)
+                    ObjectController(self.app,
+                                     acct,
+                                     dest_container_name,
+                                     dest_obj_name).PUT(dest_req)
                 if dest_resp.status_int >= 300:
                     conn.error = 'Status %s when putting %s' \
                                  % (dest_resp.status, dest_header)
@@ -1564,7 +1529,7 @@ class ClusterController(Controller):
         return conn
 
     def _connect_exec_node(self, obj_nodes, part, request,
-                          logger_thread_locals, cnode, nexe_headers):
+                           logger_thread_locals, cnode, nexe_headers):
         self.app.logger.thread_locals = logger_thread_locals
         for node in obj_nodes:
             try:
@@ -1573,8 +1538,8 @@ class ClusterController(Controller):
                         request.headers['Expect'] = '100-continue'
                     #request.headers['Connection'] = 'close'
                     conn = http_connect(node['ip'], node['port'],
-                        node['device'], part, request.method,
-                        request.path_info, request.headers)
+                                        node['device'], part, request.method,
+                                        request.path_info, request.headers)
                 with Timeout(self.app.node_timeout):
                     resp = conn.getexpect()
                 conn.node = node
@@ -1587,7 +1552,7 @@ class ClusterController(Controller):
                     conn.resp = resp
                     return conn
                 elif resp.status == HTTP_INSUFFICIENT_STORAGE:
-                    self.error_limit(node)
+                    self.error_limit(node, _('ERROR Insufficient Storage'))
                 elif is_client_error(resp.status):
                     conn.error = resp.read()
                     conn.resp = resp
@@ -1596,7 +1561,7 @@ class ClusterController(Controller):
                     self.app.logger.warn('Obj server failed with: %d %s' % (resp.status, resp.reason))
             except:
                 self.exception_occurred(node, _('Object'),
-                    _('Expect: 100-continue on %s') % request.path_info)
+                                        _('Expect: 100-continue on %s') % request.path_info)
 
     def _send_file(self, conn, path):
         while True:
@@ -1626,9 +1591,9 @@ class ClusterController(Controller):
 #            except AttributeError:
 #                request.cdr_summary = cdr
             body = '%s %s %s (%s) [%s]\n' % (datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
-                                   txn_id, connection.nexe_headers['x-nexe-system'],
-                                   connection.nexe_headers['x-nexe-cdr-line'],
-                                   connection.nexe_headers['x-nexe-status'])
+                                             txn_id, connection.nexe_headers['x-nexe-system'],
+                                             connection.nexe_headers['x-nexe-cdr-line'],
+                                             connection.nexe_headers['x-nexe-status'])
             request.cdr_log.append(body)
         else:
 #            try:
@@ -1643,10 +1608,10 @@ class ClusterController(Controller):
                                                          self.app.cdr_account,
                                                          self.account_name,
                                                          acc_object),
-                headers={'X-Append-To': '-1',
-                         'Content-Length': len(body),
-                         'Content-Type': 'text/plain'},
-                body=body
+                                       headers={'X-Append-To': '-1',
+                                                'Content-Length': len(body),
+                                                'Content-Type': 'text/plain'},
+                                       body=body
             )
             append_req.method = 'POST'
             resp = append_req.get_response(self.app)
@@ -1654,14 +1619,14 @@ class ClusterController(Controller):
                 self.app.logger.warn(
                     _('ERROR Cannot write stats for account %s'), self.account_name)
 
-    def _load_channel_data(self, node, file):
-        config = json.loads(file.read())
+    def _load_channel_data(self, node, extracted_file):
+        config = json.loads(extracted_file.read())
         for new_ch in config['channels']:
             old_ch = node.get_channel(device=new_ch['device'])
             if old_ch:
                 old_ch.content_type = new_ch['content_type']
                 if new_ch.get('meta', None):
-                    for k,v in new_ch.get('meta').iteritems():
+                    for k, v in new_ch.get('meta').iteritems():
                         old_ch.meta[k] = v
 
     def _config_from_template(self, params, template, path_info):
