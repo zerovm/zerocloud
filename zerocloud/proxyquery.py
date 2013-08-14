@@ -609,9 +609,10 @@ class ClusterController(Controller):
         tmp = []
         for (dst, dst_dev) in node.bind:
             dst_id = self.nodes.get(dst).id
+            dst_repl = self.nodes.get(dst).replicate
             proto = ';'.join(map(
                 lambda i: 'tcp:%d:0' % (dst_id + i * node_count),
-                range(node.replicate)
+                range(dst_repl)
             ))
             tmp.append(
                 ','.join([proto,
@@ -625,9 +626,10 @@ class ClusterController(Controller):
         tmp = []
         for (dst, dst_dev) in node.connect:
             dst_id = self.nodes.get(dst).id
+            dst_repl = self.nodes.get(dst).replicate
             proto = ';'.join(map(
                 lambda i: 'tcp:%d:' % (dst_id + i * node_count),
-                range(node.replicate)
+                range(dst_repl)
             ))
             tmp.append(
                 ','.join([proto,
@@ -1206,6 +1208,7 @@ class ClusterController(Controller):
                 repl_node.copy_cgi_env(exec_request)
                 resp = repl_node._create_sysmap_resp()
                 repl_node._add_data_source(data_sources, resp, 'sysmap')
+            #print json.dumps(node, sort_keys=True, indent=2, cls=NodeEncoder)
             channels = []
             if node.exe[0] == '/':
                 channels.append(ZvmChannel('boot', None, node.exe))

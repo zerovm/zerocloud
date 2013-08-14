@@ -1636,18 +1636,18 @@ return 'ok'
     def test_QUERY_config_parser(self):
 
         fake_controller = proxyquery.ProxyQueryMiddleware(
-            self.proxy_app,{'zerovm_sysimage_devices': 'sysimage1 sysimage2'}).get_controller('a', None, None)
+            self.proxy_app, {'zerovm_sysimage_devices': 'sysimage1 sysimage2'}).get_controller('a', None, None)
         conf = [
             {
-                'name':'script',
-                'exec':{
-                    'path':'boot/lua',
-                    'args':'my_script.lua'
+                'name': 'script',
+                'exec': {
+                    'path': 'boot/lua',
+                    'args': 'my_script.lua'
                 },
-                'file_list':[
+                'file_list': [
                     {
-                        'device':'image',
-                        'path':'/images/lua.img'
+                        'device': 'image',
+                        'path': '/images/lua.img'
                     },
                     {
                         'device': 'stdin',
@@ -1657,14 +1657,80 @@ return 'ok'
                         'device': 'sysimage1'
                     }
                 ],
-                'connect':['script'],
+                'connect': ['script'],
                 'count':5
             }
         ]
         req = Request.blank('/a', environ={'REQUEST_METHOD': 'POST'},
-            headers={'Content-Type': 'application/json'})
+                            headers={'Content-Type': 'application/json'})
         error = fake_controller.parse_cluster_config(req, conf)
         self.assertIsNone(error)
         self.assertEqual(len(fake_controller.nodes), 5)
-        #print json.dumps(fake_controller.nodes,
-        #    cls=proxyquery.NodeEncoder, indent='  ')
+
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        self.create_container(prolis, '/v1/a/terasort')
+        self.create_object(prolis, '/v1/a/terasort/input/1.txt', 'xxx')
+        self.create_object(prolis, '/v1/a/terasort/input/2.txt', 'xxx')
+        self.create_object(prolis, '/v1/a/terasort/input/3.txt', 'xxx')
+        self.create_object(prolis, '/v1/a/terasort/input/4.txt', 'xxx')
+        self.create_object(prolis, '/v1/a/terasort/bin/map', 'xxx')
+        self.create_object(prolis, '/v1/a/terasort/bin/reduce', 'xxx')
+        conf = [
+            {
+                "name": "map",
+                "exec": {
+                    "path": "/terasort/bin/map",
+                    "env": {
+                        "MAP_NAME": "map",
+                        "REDUCE_NAME": "red",
+                        "MAP_CHUNK_SIZE": "100485700"
+                    }
+                },
+                "connect": ["red", "map"],
+                "file_list": [
+                    {
+                        "device": "stdin",
+                        "path": "/terasort/input/*.txt"
+                    },
+                    {
+                        "device": "stderr",
+                        "path": "/terasort/log/*.log",
+                        "content_type": "text/plain"
+                    }
+                ]
+            },
+            {
+                "name": "red",
+                "exec": {
+                    "path": "/terasort/bin/reduce",
+                    "env": {
+                        "MAP_NAME": "map",
+                        "REDUCE_NAME": "red"
+                    }
+                },
+                "connect": ["map"],
+                "file_list": [
+                    {
+                        "device": "stdout",
+                        "path": "/terasort/output/*.txt",
+                        "content_type": "text/plain"
+                    },
+                    {
+                        "device": "stderr",
+                        "path": "/terasort/log/*.log",
+                        "content_type": "text/plain"
+                    }
+                ],
+                "count": 4
+            }
+        ]
+        controller = prosrv.get_controller('a', None, None)
+        error = controller.parse_cluster_config(req, conf)
+        self.assertIsNone(error)
+        self.assertEqual(len(controller.nodes), 8)
+        for name, node in controller.nodes.iteritems():
+            self.assertEqual(node.replicate, 1)
+            self.assertEqual(node.replicas, [])
+        #print json.dumps(controller.nodes, sort_keys=True, indent=2, cls=proxyquery.NodeEncoder)
+
