@@ -1669,13 +1669,18 @@ return 'ok'
 
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
+        self.setup_QUERY()
         self.create_container(prolis, '/v1/a/terasort')
-        self.create_object(prolis, '/v1/a/terasort/input/1.txt', 'xxx')
-        self.create_object(prolis, '/v1/a/terasort/input/2.txt', 'xxx')
-        self.create_object(prolis, '/v1/a/terasort/input/3.txt', 'xxx')
-        self.create_object(prolis, '/v1/a/terasort/input/4.txt', 'xxx')
-        self.create_object(prolis, '/v1/a/terasort/bin/map', 'xxx')
-        self.create_object(prolis, '/v1/a/terasort/bin/reduce', 'xxx')
+        self.create_object(prolis, '/v1/a/terasort/input/1.txt', self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/terasort/input/2.txt', self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/terasort/input/3.txt', self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/terasort/input/4.txt', self.get_random_numbers())
+        nexe =\
+r'''
+return open(mnfst.nvram['path']).read()
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/terasort/bin/map', nexe)
+        self.create_object(prolis, '/v1/a/terasort/bin/reduce', nexe)
         conf = [
             {
                 "name": "map",
@@ -1725,12 +1730,27 @@ return 'ok'
                 "count": 4
             }
         ]
-        controller = prosrv.get_controller('a', None, None)
-        error = controller.parse_cluster_config(req, conf)
-        self.assertIsNone(error)
-        self.assertEqual(len(controller.nodes), 8)
-        for name, node in controller.nodes.iteritems():
-            self.assertEqual(node.replicate, 1)
-            self.assertEqual(node.replicas, [])
+        jconf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = jconf
+        res = req.get_response(prosrv)
+        for i in range(1, 5):
+            req = self.object_request('/v1/a/terasort/log/%d.log' % i)
+            res = req.get_response(prosrv)
+            print res.status
+            print res.headers
+            print res.body
+        for i in range(1, 5):
+            req = self.object_request('/v1/a/terasort/log/red-%d.log' % i)
+            res = req.get_response(prosrv)
+            print res.status
+            print res.headers
+            print res.body
+        # controller = prosrv.get_controller('a', None, None)
+        # error = controller.parse_cluster_config(req, conf)
+        # self.assertIsNone(error)
+        # self.assertEqual(len(controller.nodes), 8)
+        # for name, node in controller.nodes.iteritems():
+        #     self.assertEqual(node.replicate, 1)
+        #     self.assertEqual(node.replicas, [])
         #print json.dumps(controller.nodes, sort_keys=True, indent=2, cls=proxyquery.NodeEncoder)
-

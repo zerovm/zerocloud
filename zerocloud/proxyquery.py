@@ -232,6 +232,7 @@ class NameService(object):
         self.port = None
         self.hostaddr = None
         self.peers = peers
+        print "NameServer got %d peers" % self.peers
 
     def start(self, pool):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
