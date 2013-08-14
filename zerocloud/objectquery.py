@@ -291,6 +291,7 @@ class ObjectQueryMiddleware(object):
     def zerovm_query(self, req):
         """Handle zerovm execution requests for the Swift Object Server."""
 
+        #print "URL: " + req.url
         nexe_headers = {
             'x-nexe-retcode': 0,
             'x-nexe-status': 'Zerovm did not run',
@@ -584,10 +585,8 @@ class ObjectQueryMiddleware(object):
                     for ch_device, mode in mode_mapping.iteritems():
                         mapping += 'channel=/dev/%s, mode=%s\n' % (ch_device, mode)
                 (output_fd, nvram_file) = mkstemp()
-                os.write(output_fd, fstab or '')
-                os.write(output_fd, args or '')
-                os.write(output_fd, env or '')
-                os.write(output_fd, mapping or '')
+                for chunk in [fstab, args, env, mapping]:
+                    os.write(output_fd, chunk or '')
                 os.close(output_fd)
                 #print open(nvram_file).read()
                 zerovm_inputmnfst += \
@@ -600,11 +599,11 @@ class ObjectQueryMiddleware(object):
                 if 'name_service' in config:
                     zerovm_inputmnfst += 'NameServer=%s\n'\
                                          % config['name_service']
-                #print config
+                #print json.dumps(config, sort_keys=True, indent=2)
                 #print zerovm_inputmnfst
                 while zerovm_inputmnfst:
                     written = self.os_interface.write(zerovm_inputmnfst_fd,
-                        zerovm_inputmnfst)
+                                                      zerovm_inputmnfst)
                     zerovm_inputmnfst = zerovm_inputmnfst[written:]
 
                 start = time.time()
@@ -644,7 +643,7 @@ class ObjectQueryMiddleware(object):
                         nexe_etag = report[2]
                         nexe_cdr_line = report[3]
                         nexe_status = report[4].replace('\n', ' ').rstrip()
-                    except:
+                    except Exception:
                         resp = HTTPInternalServerError(body=zerovm_stdout)
                         #nexe_headers['x-nexe-status'] = 'ZeroVM runtime error'
                         #resp.headers = nexe_headers

@@ -250,28 +250,27 @@ class NameService(object):
                 offset = 0
                 peer_id = struct.unpack_from('!I', message, offset)[0]
                 offset += 4
-                count = struct.unpack_from('!I', message, offset)[0]
+                bind_count = struct.unpack_from('!I', message, offset)[0]
                 offset += 4
-                for i in range(count):
-                    connecting_host, _junk, port = struct.unpack_from('!IIH', message, offset)[0:3]
+                connect_count = struct.unpack_from('!I', message, offset)[0]
+                offset += 4
+                for i in range(bind_count):
+                    connecting_host, port = struct.unpack_from('!IH', message, offset)[0:2]
                     bind_map.setdefault(peer_id, {})[connecting_host] = port
-                    offset += 10
-                conn_map[peer_id] = ctypes.create_string_buffer(message[offset:])
+                    offset += 6
+                conn_map[peer_id] = (connect_count, offset, ctypes.create_string_buffer(message))
                 peer_map.setdefault(peer_id, {})[0] = peer_address[0]
                 peer_map.setdefault(peer_id, {})[1] = peer_address[1]
 
                 if len(peer_map) == self.peers:
                     for peer_id in peer_map.iterkeys():
-                        reply = conn_map[peer_id]
-                        offset = 0
-                        count = struct.unpack_from('!I', reply, offset)[0]
-                        offset += 4
-                        for i in range(count):
+                        (connect_count, offset, reply) = conn_map[peer_id]
+                        for i in range(connect_count):
                             connecting_host = struct.unpack_from('!I', reply, offset)[0]
                             port = bind_map[connecting_host][peer_id]
-                            struct.pack_into('!4sH', reply, offset + 4,
+                            struct.pack_into('!4sH', reply, offset,
                                              socket.inet_pton(socket.AF_INET, peer_map[connecting_host][0]), port)
-                            offset += 10
+                            offset += 6
                         self.sock.sendto(reply, (peer_map[peer_id][0], peer_map[peer_id][1]))
             except greenlet.GreenletExit:
                 return

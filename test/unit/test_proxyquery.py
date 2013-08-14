@@ -154,26 +154,26 @@ def setup():
             'disable_fallocate': 'true',
             'zerovm_proxy': 'http://127.0.0.1:%d/v1/' % prolis.getsockname()[1],
             'zerovm_maxoutput': 1024 * 1024 * 10 }
-    _test_sockets =\
-    (prolis, acc1lis, acc2lis, con1lis, con2lis, obj1lis, obj2lis)
+    _test_sockets = \
+        (prolis, acc1lis, acc2lis, con1lis, con2lis, obj1lis, obj2lis)
     pickle.dump(ring.RingData([[0, 1, 0, 1], [1, 0, 1, 0]],
-        [{'id': 0, 'zone': 0, 'device': 'sda1', 'ip': '127.0.0.1',
-          'port': acc1lis.getsockname()[1]},
-                {'id': 1, 'zone': 1, 'device': 'sdb1', 'ip': '127.0.0.1',
-                 'port': acc2lis.getsockname()[1]}], 30),
-        GzipFile(os.path.join(_testdir, 'account.ring.gz'), 'wb'))
+                              [{'id': 0, 'zone': 0, 'device': 'sda1', 'ip': '127.0.0.1',
+                                'port': acc1lis.getsockname()[1]},
+                               {'id': 1, 'zone': 1, 'device': 'sdb1', 'ip': '127.0.0.1',
+                                'port': acc2lis.getsockname()[1]}], 30),
+                GzipFile(os.path.join(_testdir, 'account.ring.gz'), 'wb'))
     pickle.dump(ring.RingData([[0, 1, 0, 1], [1, 0, 1, 0]],
-        [{'id': 0, 'zone': 0, 'device': 'sda1', 'ip': '127.0.0.1',
-          'port': con1lis.getsockname()[1]},
-                {'id': 1, 'zone': 1, 'device': 'sdb1', 'ip': '127.0.0.1',
-                 'port': con2lis.getsockname()[1]}], 30),
-        GzipFile(os.path.join(_testdir, 'container.ring.gz'), 'wb'))
+                              [{'id': 0, 'zone': 0, 'device': 'sda1', 'ip': '127.0.0.1',
+                                'port': con1lis.getsockname()[1]},
+                               {'id': 1, 'zone': 1, 'device': 'sdb1', 'ip': '127.0.0.1',
+                                'port': con2lis.getsockname()[1]}], 30),
+                GzipFile(os.path.join(_testdir, 'container.ring.gz'), 'wb'))
     pickle.dump(ring.RingData([[0, 1, 0, 1], [1, 0, 1, 0]],
-        [{'id': 0, 'zone': 0, 'device': 'sda1', 'ip': '127.0.0.1',
-          'port': obj1lis.getsockname()[1]},
-                {'id': 1, 'zone': 1, 'device': 'sdb1', 'ip': '127.0.0.1',
-                 'port': obj2lis.getsockname()[1]}], 30),
-        GzipFile(os.path.join(_testdir, 'object.ring.gz'), 'wb'))
+                              [{'id': 0, 'zone': 0, 'device': 'sda1', 'ip': '127.0.0.1',
+                                'port': obj1lis.getsockname()[1]},
+                               {'id': 1, 'zone': 1, 'device': 'sdb1', 'ip': '127.0.0.1',
+                                'port': obj2lis.getsockname()[1]}], 30),
+                GzipFile(os.path.join(_testdir, 'object.ring.gz'), 'wb'))
     prosrv = proxyquery.filter_factory(conf)(
         proxy_server.Application(conf, memcache=FakeMemcacheReturnsNone())
     )
@@ -440,8 +440,9 @@ class TestProxyQuery(unittest.TestCase):
         ns_server = proxyquery.NameService(peers)
         pool = GreenPool()
         ns_server.start(pool)
-        map = {}
+        connection_map = {}
         sleep(0.1)
+
         def mock_client(ns_port, conf, id):
             bind_data = ''
             connect_data = ''
@@ -452,15 +453,16 @@ class TestProxyQuery(unittest.TestCase):
                 s.bind(('', 0))
                 s.listen(1)
                 port = s.getsockname()[1]
-                bind_map[h] = {'port':port,'sock':s}
+                bind_map[h] = {'port': port, 'sock': s}
                 bind_data += struct.pack('!IH', h, int(port))
-                map['%d->%d' % (h, id)] = int(port)
+                connection_map['%d->%d' % (h, id)] = int(port)
             for h in conf[1]:
                 connect_list.append(h)
                 connect_data += struct.pack('!IH', h, 0)
-            request = struct.pack('!I', id) +\
-                      struct.pack('!I', len(conf[0])) + bind_data +\
-                      struct.pack('!I', len(conf[1])) + connect_data
+            request = struct.pack('!I', id) + \
+                struct.pack('!I', len(conf[0])) + \
+                struct.pack('!I', len(conf[1])) + \
+                bind_data + connect_data
             ns = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             ns.connect(('localhost', int(ns_port)))
             ns.sendto(request, ('localhost', int(ns_port)))
@@ -470,19 +472,28 @@ class TestProxyQuery(unittest.TestCase):
                 reply, addr = ns.recvfrom(65535)
                 if addr[0] == ns_host and addr[1] == ns_port:
                     offset = 0
-                    count = struct.unpack_from('!I', reply, offset)[0]
+                    my_id = struct.unpack_from('!I', reply, offset)[0]
+                    self.assertEqual(id, my_id)
                     offset += 4
-                    for i in range(count):
-                        host, port = struct.unpack_from('!4sH', reply, offset)[0:3]
+                    bind_count = struct.unpack_from('!I', reply, offset)[0]
+                    offset += 4
+                    self.assertEqual(bind_count, len(conf[0]))
+                    connect_count = struct.unpack_from('!I', reply, offset)[0]
+                    offset += 4
+                    self.assertEqual(connect_count, len(conf[1]))
+                    offset += len(bind_data)
+                    for i in range(connect_count):
+                        host, port = struct.unpack_from('!4sH', reply, offset)[0:2]
                         offset += 6
                         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         s.connect((socket.inet_ntop(socket.AF_INET, host), port))
-                        self.assertEqual(map['%d->%d' %(id,connect_list[i])], port)
+                        self.assertEqual(connection_map['%d->%d' % (id, connect_list[i])], port)
                     break
             sleep(0.2)
-        dev1 = [[2, 3],[2, 3]]
-        dev2 = [[1, 3],[1, 3]]
-        dev3 = [[2, 1],[2, 1]]
+
+        dev1 = [[2, 3], [2, 3]]
+        dev2 = [[1, 3], [1, 3]]
+        dev3 = [[2, 1], [2, 1]]
         th1 = pool.spawn(mock_client, ns_server.port, dev1, 1)
         th2 = pool.spawn(mock_client, ns_server.port, dev2, 2)
         th3 = pool.spawn(mock_client, ns_server.port, dev3, 3)
@@ -494,12 +505,12 @@ class TestProxyQuery(unittest.TestCase):
     def test_QUERY_sort_store_stdout(self):
         self.setup_QUERY()
         conf = [
-                {
+            {
                 'name':'sort',
                 'exec':{'path':'/c/exe'},
                 'file_list':[
-                        {'device':'stdin','path':'/c/o'},
-                        {'device':'stdout','path':'/c/o2'}
+                    {'device':'stdin','path':'/c/o'},
+                    {'device':'stdout','path':'/c/o2'}
                 ]
             }
         ]

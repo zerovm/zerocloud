@@ -129,10 +129,10 @@ for fname, device, type, tag, rd, rd_byte, wr, wr_byte in zip(*[iter(channel_lis
                 s.listen(1)
                 port = s.getsockname()[1]
                 bind_map[host] = {'name': device, 'port': port, 'proto': proto, 'sock': s}
-                bind_data += struct.pack('!IIH', host, 0, int(port))
+                bind_data += struct.pack('!IH', host, int(port))
                 bind_count += 1
             else:
-                connect_data += struct.pack('!IIH', host, 0, 0)
+                connect_data += struct.pack('!IH', host, 0)
                 connect_count += 1
                 con_list.append(device)
     mnfst.channels[device] = {
@@ -159,8 +159,8 @@ for fname, device, type, tag, rd, rd_byte, wr, wr_byte in zip(*[iter(channel_lis
 request = \
     struct.pack('!I', alias) + \
     struct.pack('!I', bind_count) + \
-    bind_data + \
     struct.pack('!I', connect_count) + \
+    bind_data + \
     connect_data
 if getattr(mnfst, 'NameServer', None):
     ns_proto, ns_host, ns_port = mnfst.NameServer.split(':')
@@ -172,12 +172,12 @@ if getattr(mnfst, 'NameServer', None):
     while 1:
         reply, addr = ns.recvfrom(65535)
         if addr[0] == ns_host and addr[1] == ns_port:
-            offset = 0
-            count = struct.unpack_from('!I', reply, offset)[0]
-            offset += 4
-            for i in range(count):
-                host, port = struct.unpack_from('!4sH', reply, offset+4)[0:2]
-                offset += 10
+            offset = 8
+            connect_count = struct.unpack_from('!I', reply, offset)[0]
+            offset += 4 + len(bind_data)
+            for i in range(connect_count):
+                host, port = struct.unpack_from('!4sH', reply, offset)[0:2]
+                offset += 6
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.connect((socket.inet_ntop(socket.AF_INET, host), port))
                 con_list[i] = [con_list[i],
