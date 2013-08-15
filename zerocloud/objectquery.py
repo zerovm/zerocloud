@@ -291,7 +291,7 @@ class ObjectQueryMiddleware(object):
     def zerovm_query(self, req):
         """Handle zerovm execution requests for the Swift Object Server."""
 
-        #print "URL: " + req.url
+        print "URL: " + req.url
         nexe_headers = {
             'x-nexe-retcode': 0,
             'x-nexe-status': 'Zerovm did not run',
