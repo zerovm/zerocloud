@@ -228,6 +228,13 @@ class FinalBody(object):
 
 class NameService(object):
 
+    INT_FMT = '!I'
+    INPUT_RECORD_FMT = '!IH'
+    OUTPUT_RECORD_FMT = '!4sH'
+    INT_SIZE = struct.calcsize(INT_FMT)
+    INPUT_RECORD_SIZE = struct.calcsize(INPUT_RECORD_FMT)
+    OUTPUT_RECORD_SIZE = struct.calcsize(OUTPUT_RECORD_FMT)
+
     def __init__(self, peers):
         self.port = None
         self.hostaddr = None
@@ -249,30 +256,33 @@ class NameService(object):
             try:
                 message, peer_address = self.sock.recvfrom(65535)
                 offset = 0
-                peer_id = struct.unpack_from('!I', message, offset)[0]
-                offset += 4
-                bind_count = struct.unpack_from('!I', message, offset)[0]
-                offset += 4
-                connect_count = struct.unpack_from('!I', message, offset)[0]
-                offset += 4
+                peer_id = struct.unpack_from(NameService.INT_FMT, message, offset)[0]
+                offset += NameService.INT_SIZE
+                bind_count = struct.unpack_from(NameService.INT_FMT, message, offset)[0]
+                offset += NameService.INT_SIZE
+                connect_count = struct.unpack_from(NameService.INT_FMT, message, offset)[0]
+                offset += NameService.INT_SIZE
                 for i in range(bind_count):
-                    connecting_host, port = struct.unpack_from('!IH', message, offset)[0:2]
+                    connecting_host, port = struct.unpack_from(NameService.INPUT_RECORD_FMT, message, offset)[0:2]
+                    offset += NameService.INPUT_RECORD_SIZE
                     bind_map.setdefault(peer_id, {})[connecting_host] = port
-                    offset += 6
                 conn_map[peer_id] = (connect_count, offset, ctypes.create_string_buffer(message))
                 peer_map.setdefault(peer_id, {})[0] = peer_address[0]
                 peer_map.setdefault(peer_id, {})[1] = peer_address[1]
 
                 if len(peer_map) == self.peers:
                     for peer_id in peer_map.iterkeys():
+                        out = ''
                         (connect_count, offset, reply) = conn_map[peer_id]
                         for i in range(connect_count):
-                            connecting_host = struct.unpack_from('!I', reply, offset)[0]
+                            connecting_host = struct.unpack_from(NameService.INT_FMT, reply, offset)[0]
                             port = bind_map[connecting_host][peer_id]
-                            struct.pack_into('!4sH', reply, offset,
+                            struct.pack_into(NameService.OUTPUT_RECORD_FMT, reply, offset,
                                              socket.inet_pton(socket.AF_INET, peer_map[connecting_host][0]), port)
-                            offset += 6
+                            offset += NameService.OUTPUT_RECORD_SIZE
+                            out += ' %d -> %d:%d\n' % (connecting_host, peer_id, port)
                         self.sock.sendto(reply, (peer_map[peer_id][0], peer_map[peer_id][1]))
+                        print out
             except greenlet.GreenletExit:
                 return
             except Exception:
