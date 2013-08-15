@@ -209,7 +209,7 @@ class ObjectQueryMiddleware(object):
         cmdline += self.zerovm_exename
         if zerovm_args:
             cmdline += zerovm_args
-        cmdline += ['-M%s' % zerovm_inputmnfst_fn]
+        cmdline += [zerovm_inputmnfst_fn]
         proc = subprocess.Popen(cmdline,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
