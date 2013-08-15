@@ -31,7 +31,7 @@ def eval_as_function(code, local_vars={}, global_vars=None):
 
 
 parser = ArgumentParser()
-parser.add_argument('-M', dest='manifest')
+parser.add_argument(dest='manifest')
 parser.add_argument('-s', action='store_true', dest='skip')
 parser.add_argument('-F', action='store_true', dest='validate')
 args = parser.parse_args()

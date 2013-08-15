@@ -477,7 +477,12 @@ class ObjectQueryMiddleware(object):
                     if ch['device'] in 'image':
                         fstab = add_to_fstab(fstab, ch['device'], 'ro')
                 elif ch['access'] & ACCESS_WRITABLE:
-                    (output_fd, output_fn) = mkstemp()
+                    writable_tmpdir = None
+                    if disk_file:
+                        writable_tmpdir = disk_file.tmpdir
+                        if not os.path.exists(writable_tmpdir):
+                            mkdirs(writable_tmpdir)
+                    (output_fd, output_fn) = mkstemp(dir=writable_tmpdir)
                     fallocate(output_fd, self.zerovm_maxoutput)
                     os.close(output_fd)
                     ch['lpath'] = output_fn
@@ -488,7 +493,7 @@ class ObjectQueryMiddleware(object):
                         response_channels.insert(0, ch)
 
             with tmpdir.mkstemp() as (zerovm_inputmnfst_fd,
-                                    zerovm_inputmnfst_fn):
+                                      zerovm_inputmnfst_fn):
                 zerovm_inputmnfst = (
                     'Version=%s\n'
                     'Program=%s\n'
