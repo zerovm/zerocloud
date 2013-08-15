@@ -21,7 +21,7 @@ from swift.common.http import HTTP_CONTINUE, is_success, \
 from swift.proxy.controllers.base import update_headers, delay_denial, \
     Controller, cors_validation
 from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
-    get_remote_client, ContextPool, cache_from_env, GreenthreadSafeIterator, normalize_timestamp
+    get_remote_client, ContextPool, cache_from_env, GreenthreadSafeIterator, normalize_timestamp, csv_append
 from swift.proxy.server import ObjectController, ContainerController, \
     AccountController
 from swift.common.bufferedhttp import http_connect
@@ -239,7 +239,7 @@ class NameService(object):
         self.port = None
         self.hostaddr = None
         self.peers = peers
-        print "NameServer got %d peers" % self.peers
+        #print "NameServer got %d peers" % self.peers
 
     def start(self, pool):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -272,7 +272,7 @@ class NameService(object):
 
                 if len(peer_map) == self.peers:
                     for peer_id in peer_map.iterkeys():
-                        out = ''
+                        #out = ''
                         (connect_count, offset, reply) = conn_map[peer_id]
                         for i in range(connect_count):
                             connecting_host = struct.unpack_from(NameService.INT_FMT, reply, offset)[0]
@@ -280,9 +280,9 @@ class NameService(object):
                             struct.pack_into(NameService.OUTPUT_RECORD_FMT, reply, offset,
                                              socket.inet_pton(socket.AF_INET, peer_map[connecting_host][0]), port)
                             offset += NameService.OUTPUT_RECORD_SIZE
-                            out += ' %d -> %d:%d\n' % (connecting_host, peer_id, port)
+                            #out += ' %d -> %d:%d\n' % (connecting_host, peer_id, port)
                         self.sock.sendto(reply, (peer_map[peer_id][0], peer_map[peer_id][1]))
-                        print out
+                        #print out
             except greenlet.GreenletExit:
                 return
             except Exception:
@@ -548,6 +548,41 @@ class ClusterController(Controller):
         self.obj_name = unquote(obj_name) if obj_name else None
         self.nodes = {}
         self.command = None
+
+    def _backend_requests(self, req, n_outgoing,
+                          container_partition, containers,
+                          delete_at_container=None, delete_at_partition=None,
+                          delete_at_nodes=None):
+        headers = [self.generate_request_headers(req, additional=req.headers)
+                   for _junk in range(n_outgoing)]
+
+        for header in headers:
+            header['Connection'] = 'close'
+
+        for i, container in enumerate(containers):
+            i = i % len(headers)
+
+            headers[i]['X-Container-Partition'] = container_partition
+            headers[i]['X-Container-Host'] = csv_append(
+                headers[i].get('X-Container-Host'),
+                '%(ip)s:%(port)s' % container)
+            headers[i]['X-Container-Device'] = csv_append(
+                headers[i].get('X-Container-Device'),
+                container['device'])
+
+        for i, node in enumerate(delete_at_nodes or []):
+            i = i % len(headers)
+
+            headers[i]['X-Delete-At-Container'] = delete_at_container
+            headers[i]['X-Delete-At-Partition'] = delete_at_partition
+            headers[i]['X-Delete-At-Host'] = csv_append(
+                headers[i].get('X-Delete-At-Host'),
+                '%(ip)s:%(port)s' % node)
+            headers[i]['X-Delete-At-Device'] = csv_append(
+                headers[i].get('X-Delete-At-Device'),
+                node['device'])
+
+        return headers
 
     def copy_request(self, request):
         env = request.environ.copy()
@@ -1281,25 +1316,39 @@ class ClusterController(Controller):
                 node_iter = GreenthreadSafeIterator(
                     self.iter_nodes(self.app.object_ring, partition))
                 exec_request.path_info = path_info
-                pile.spawn(self._connect_exec_node, node_iter, partition,
-                           exec_request, self.app.logger.thread_locals, node,
-                           nexe_headers)
-                for repl_node in node.replicas:
+                if node.replicate > 1:
+                    container_info = self.container_info(account, container)
+                    container_partition = container_info['partition']
+                    containers = container_info['nodes']
+                    exec_headers = self._backend_requests(exec_request, node.replicate,
+                                                          container_partition, containers)
+                    i = 0
                     pile.spawn(self._connect_exec_node, node_iter, partition,
-                               exec_request, self.app.logger.thread_locals, repl_node,
-                               nexe_headers)
+                               exec_request, self.app.logger.thread_locals, node,
+                               nexe_headers, exec_headers[i])
+                    #print exec_headers[i]
+                    for repl_node in node.replicas:
+                        i += 1
+                        pile.spawn(self._connect_exec_node, node_iter, partition,
+                                   exec_request, self.app.logger.thread_locals, repl_node,
+                                   nexe_headers, exec_headers[i])
+                        #print exec_headers[i]
+                else:
+                    pile.spawn(self._connect_exec_node, node_iter, partition,
+                               exec_request, self.app.logger.thread_locals, node,
+                               nexe_headers, exec_request.headers)
             except ValueError:
                 partition = self.get_random_partition()
                 node_iter = self.iter_nodes(self.app.object_ring, partition)
                 pile.spawn(self._connect_exec_node, node_iter, partition,
                            exec_request, self.app.logger.thread_locals, node,
-                           nexe_headers)
+                           nexe_headers, exec_request.headers)
                 for repl_node in node.replicas:
                     partition = self.get_random_partition()
                     node_iter = self.iter_nodes(self.app.object_ring, partition)
                     pile.spawn(self._connect_exec_node, node_iter, partition,
                                exec_request, self.app.logger.thread_locals, repl_node,
-                               nexe_headers)
+                               nexe_headers, exec_request.headers)
         if image_resp:
             data_sources.append(image_resp)
 
@@ -1542,17 +1591,17 @@ class ClusterController(Controller):
         return conn
 
     def _connect_exec_node(self, obj_nodes, part, request,
-                           logger_thread_locals, cnode, nexe_headers):
+                           logger_thread_locals, cnode, nexe_headers, request_headers):
         self.app.logger.thread_locals = logger_thread_locals
         for node in obj_nodes:
             try:
                 with ConnectionTimeout(self.app.conn_timeout):
-                    if (request.content_length > 0) or 'transfer-encoding' in request.headers:
-                        request.headers['Expect'] = '100-continue'
+                    if (request.content_length > 0) or 'transfer-encoding' in request_headers:
+                        request_headers['Expect'] = '100-continue'
                     #request.headers['Connection'] = 'close'
                     conn = http_connect(node['ip'], node['port'],
                                         node['device'], part, request.method,
-                                        request.path_info, request.headers)
+                                        request.path_info, request_headers)
                 with Timeout(self.app.node_timeout):
                     resp = conn.getexpect()
                 conn.node = node
