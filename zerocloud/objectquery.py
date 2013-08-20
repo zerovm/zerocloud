@@ -23,39 +23,15 @@ from swift.common.utils import normalize_timestamp, fallocate, \
 from swift.obj.server import DiskFile, write_metadata, read_metadata, DiskWriter
 from swift.common.constraints import check_mount, check_utf8, check_float
 from swift.common.exceptions import DiskFileError, DiskFileNotExist
+from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
+    CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env
 
-from zerocloud.proxyquery import TAR_MIMES, ACCESS_CDR, ACCESS_READABLE, \
-    ACCESS_WRITABLE, NodeEncoder
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
-
-ENV_ITEM = 'name=%s, value=%s\n'
-
-STD_DEVICES = ['stdin', 'stdout', 'stderr']
 
 try:
     import simplejson as json
 except ImportError:
     import json
-
-CHANNEL_TYPE_MAP = {
-    'stdin': 0,
-    'stdout': 0,
-    'stderr': 0,
-    'input': 3,
-    'output': 3,
-    'debug': 0,
-    'image': 1,
-    'sysimage': 3
-}
-
-
-MD5HASH_LENGTH = len(md5('').hexdigest())
-
-
-# quotes commas as \x2c for [env] stanza in nvram file
-# see ZRT docs
-def quote_for_env(val):
-    return re.sub(r',', '\\x2c', val)
 
 
 class PseudoSocket():

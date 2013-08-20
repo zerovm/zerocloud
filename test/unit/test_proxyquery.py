@@ -9,14 +9,6 @@ import random
 from urllib import urlencode
 import swift
 
-from test.unit import connect_tcp, readuntil2crlfs, FakeLogger, fake_http_connect
-
-from zerocloud.proxyquery import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
-
-try:
-    import simplejson as json
-except ImportError:
-    import json
 import unittest
 import os
 import cPickle as pickle
@@ -41,6 +33,13 @@ from swift.common.wsgi import monkey_patch_mimetools
 from swift.common import ring
 
 from zerocloud import proxyquery, objectquery
+from test.unit import connect_tcp, readuntil2crlfs, FakeLogger, fake_http_connect
+from zerocloud.common import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
+
+try:
+    import simplejson as json
+except ImportError:
+    import json
 
 ZEROVM_DEFAULT_MOCK = 'test/unit/zerovm_mock.py'
 

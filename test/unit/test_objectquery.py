@@ -2,12 +2,6 @@ from contextlib import contextmanager
 from StringIO import StringIO
 from dircache import opendir
 import traceback
-from test_proxyquery import ZEROVM_DEFAULT_MOCK
-
-try:
-    import simplejson as json
-except ImportError:
-    import json
 import logging
 from posix import rmdir, listdir
 import struct
@@ -31,8 +25,14 @@ from swift.common.utils import mkdirs, normalize_timestamp, get_logger
 from swift.obj.server import ObjectController
 from test.unit import FakeLogger
 
+from test_proxyquery import ZEROVM_DEFAULT_MOCK
+from zerocloud.common import ZvmNode, ACCESS_READABLE, ACCESS_WRITABLE, NodeEncoder, ACCESS_CDR
 from zerocloud import objectquery
-from zerocloud.proxyquery import ZvmNode, NodeEncoder, ACCESS_READABLE, ACCESS_WRITABLE, ACCESS_CDR
+
+try:
+    import simplejson as json
+except ImportError:
+    import json
 
 class FakeLoggingHandler(logging.Handler):
 
