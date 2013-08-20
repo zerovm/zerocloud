@@ -49,6 +49,9 @@ CHANNEL_TYPE_MAP = {
 }
 
 
+MD5HASH_LENGTH = len(md5('').hexdigest())
+
+
 # quotes commas as \x2c for [env] stanza in nvram file
 # see ZRT docs
 def quote_for_env(val):
@@ -691,8 +694,10 @@ class ObjectQueryMiddleware(object):
                         self._read_cgi_response(local_object, nph=True)
                     elif local_object['content_type'].startswith('message/cgi'):
                         self._read_cgi_response(local_object, nph=False)
-                    self._finalize_local_file(local_object, disk_file, nexe_etag,
-                                              account, container, obj, req, device)
+                    error = self._finalize_local_file(local_object, disk_file, nexe_etag,
+                                                      account, container, obj, req, device)
+                    if error:
+                        return error
                 sysmap_info = ''
                 sysmap_dump = ''
                 if send_config:
@@ -935,6 +940,12 @@ class ObjectQueryMiddleware(object):
             if disk_file.channel_device in dev:
                 disk_file.etag = etag
                 break
+        if not disk_file.etag:
+            return HTTPUnprocessableEntity(body='No etag found for resulting object '
+                                                'after writing channel %s data' % disk_file.channel_device)
+        if len(disk_file.etag) != MD5HASH_LENGTH:
+            return HTTPUnprocessableEntity(body='Bad etag for %s: %s'
+                                                % (disk_file.channel_device, disk_file.etag))
         old_delete_at = int(disk_file.metadata.get('X-Delete-At') or 0)
         metadata = {
             'X-Timestamp': disk_file.timestamp,

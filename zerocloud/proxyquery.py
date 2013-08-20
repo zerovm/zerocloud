@@ -536,57 +536,13 @@ class NodeEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 
-class ClusterController(Controller):
-
-    server_type = _('Object')
+class ClusterController(ObjectController):
 
     def __init__(self, app, account_name, container_name, obj_name,
                  **kwargs):
-        Controller.__init__(self, app)
-        self.account_name = unquote(account_name)
-        self.container_name = unquote(container_name) if container_name else None
-        self.obj_name = unquote(obj_name) if obj_name else None
+        ObjectController.__init__(self, app, account_name, container_name or '', obj_name or '')
         self.nodes = {}
         self.command = None
-
-    def _backend_requests(self, req, n_outgoing,
-                          container_partition, containers,
-                          delete_at_container=None, delete_at_partition=None,
-                          delete_at_nodes=None):
-        headers = [self.generate_request_headers(req, additional=req.headers)
-                   for _junk in range(n_outgoing)]
-
-        for header in headers:
-            header['Connection'] = 'close'
-
-        for i, container in enumerate(containers):
-            i = i % len(headers)
-
-            headers[i]['X-Container-Partition'] = container_partition
-            headers[i]['X-Container-Host'] = csv_append(
-                headers[i].get('X-Container-Host'),
-                '%(ip)s:%(port)s' % container)
-            headers[i]['X-Container-Device'] = csv_append(
-                headers[i].get('X-Container-Device'),
-                container['device'])
-
-        for i, node in enumerate(delete_at_nodes or []):
-            i = i % len(headers)
-
-            headers[i]['X-Delete-At-Container'] = delete_at_container
-            headers[i]['X-Delete-At-Partition'] = delete_at_partition
-            headers[i]['X-Delete-At-Host'] = csv_append(
-                headers[i].get('X-Delete-At-Host'),
-                '%(ip)s:%(port)s' % node)
-            headers[i]['X-Delete-At-Device'] = csv_append(
-                headers[i].get('X-Delete-At-Device'),
-                node['device'])
-
-        return headers
-
-    def copy_request(self, request):
-        env = request.environ.copy()
-        return Request(env)
 
     def get_local_address(self, node):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -648,7 +604,7 @@ class ClusterController(Controller):
                     ret.append(item['name'])
             marker = data[-1]['name']
             data = self.list_container(req, account, container,
-                None, marker)
+                                       None, marker)
         return ret
 
     def build_connect_string(self, node, node_count):
@@ -1154,7 +1110,7 @@ class ClusterController(Controller):
                                           body='Cannot find interpreter: %s' % command_line[0])
             params = {'exe_path': exe_path}
             req.path_info_pop()
-            if self.container_name and self.obj_name:
+            if self.container_name and self.object_name:
                 template = POST_TEXT_OBJECT_SYSTEM_MAP
             else:
                 template = POST_TEXT_ACCOUNT_SYSTEM_MAP
@@ -1625,19 +1581,6 @@ class ClusterController(Controller):
                 self.exception_occurred(node, _('Object'),
                                         _('Expect: 100-continue on %s') % request.path_info)
 
-    def _send_file(self, conn, path):
-        while True:
-            chunk = conn.queue.get()
-            if not conn.failed:
-                try:
-                    with ChunkWriteTimeout(self.app.node_timeout):
-                        conn.send(chunk)
-                except (Exception, ChunkWriteTimeout):
-                    conn.failed = True
-                    self.exception_occurred(conn.node, _('Object'),
-                        _('Trying to write to %s') % path)
-            conn.queue.task_done()
-
     def _store_accounting_data(self, request, connection=None):
         txn_id = request.environ['swift.trans_id']
         acc_object = datetime.datetime.utcnow().strftime('%Y/%m/%d.log')
@@ -1705,14 +1648,14 @@ class ClusterController(Controller):
     @delay_denial
     @cors_validation
     def GET(self, req):
-        if not self.container_name or not self.obj_name:
+        if not self.container_name or not self.object_name:
             return HTTPNotFound(request=req, headers=req.headers)
         obj_req = req.copy_get()
         obj_req.method = 'HEAD'
         if obj_req.environ.get('QUERY_STRING'):
             obj_req.environ['QUERY_STRING'] = ''
         run = False
-        if self.obj_name[-len('.nexe'):] in '.nexe':
+        if self.object_name[-len('.nexe'):] in '.nexe':
             #let's get a small speedup as it's quite possibly an executable
             obj_req.method = 'GET'
             run = True
@@ -1720,7 +1663,7 @@ class ClusterController(Controller):
             self.app,
             self.account_name,
             self.container_name,
-            self.obj_name)
+            self.object_name)
         handler = getattr(controller, obj_req.method, None)
         obj_resp = handler(obj_req)
         content = obj_resp.content_type.split(';')[0].strip()
