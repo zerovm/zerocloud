@@ -569,10 +569,20 @@ class ObjectQueryMiddleware(object):
                             env += ENV_ITEM % ('CONTENT_TYPE',
                                                quote_for_env(disk_file.metadata.get('Content-Type',
                                                                                     'application/octet-stream')))
+                            for k, v in disk_file.metadata.iteritems():
+                                meta = k.upper()
+                                if meta.startswith('X-OBJECT-META-'):
+                                    env += ENV_ITEM % ('HTTP_%s' % meta.replace('-', '_'),
+                                                       quote_for_env(v))
                         elif local_object['access'] & ACCESS_WRITABLE:
                             env += ENV_ITEM % ('CONTENT_TYPE',
                                                quote_for_env(local_object.get('content_type',
                                                                               'application/octet-stream')))
+                            meta = local_object.get('meta', None)
+                            if meta:
+                                for k, v in meta.iteritems():
+                                    env += ENV_ITEM % ('HTTP_X_OBJECT_META_%s' % k.upper().replace('-', '_'),
+                                                       quote_for_env(v))
                         env += ENV_ITEM % ('DOCUMENT_ROOT', disk_file.channel_device)
                         config['env']['REQUEST_METHOD'] = 'POST'
                         config['env']['PATH_INFO'] = disk_file.name

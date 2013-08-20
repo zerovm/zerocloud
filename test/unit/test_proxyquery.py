@@ -609,12 +609,13 @@ return 'Test Test'
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
             {
-                'name':'http',
-                'exec':{'path':'/c/exe2'},
-                'file_list':[
-                    {'device':'stdout', 'content_type': 'text/plain',
-                     'meta': {'key1': 'test1', 'key2': 'test2'},
-                     'path': '/c/o3'
+                'name': 'http',
+                'exec': {'path': '/c/exe2'},
+                'file_list': [
+                    {
+                        'device': 'stdout', 'content_type': 'text/plain',
+                        'meta': {'key1': 'test1', 'key2': 'test2'},
+                        'path': '/c/o3'
                     }
                 ]
             }
@@ -718,6 +719,76 @@ return resp + out
         self.assertNotIn('x-object-meta-key1', res.headers)
         self.assertNotIn('x-object-meta-key2', res.headers)
         self.assertEqual(res.body, '<html><body>Test this</body></html>')
+
+    def test_QUERY_cgi_environment(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe =\
+r'''
+return pickle.dumps(open(mnfst.nvram['path']).read())
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        conf = [
+            {
+                'name': 'http',
+                'exec': {'path': '/c/exe2'},
+                'file_list': [
+                    {
+                        'device': 'stdout',
+                        'content_type': 'application/x-pickle',
+                        'path': '/c/o3',
+                        'meta': {'key1': 'val1', 'key2': 'val2'}
+                    }
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        req = self.object_request('/v1/a/c/o3')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.headers['x-object-meta-key1'], 'val1')
+        self.assertEqual(res.headers['x-object-meta-key2'], 'val2')
+        self.assertEqual(res.headers['content-type'], 'application/x-pickle')
+        out = pickle.loads(res.body)
+        self.assertIn('name=CONTENT_TYPE, value=application/x-pickle', out)
+        self.assertIn('name=HTTP_X_OBJECT_META_KEY1, value=val1', out)
+        self.assertIn('name=HTTP_X_OBJECT_META_KEY2, value=val2', out)
+        self.assertIn('name=DOCUMENT_ROOT, value=/dev/stdout', out)
+        self.assertIn('name=PATH_INFO, value=/a/c/o3', out)
+        content_length = res.content_length
+        conf = [
+            {
+                'name': 'http',
+                'exec': {'path': '/c/exe2'},
+                'file_list': [
+                    {
+                        'device': 'stdout',
+                        'content_type': 'text/plain',
+                    },
+                    {
+                        'device': 'stdin',
+                        'path': '/c/o3'
+                    }
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        out = pickle.loads(res.body)
+        self.assertIn('name=CONTENT_TYPE, value=application/x-pickle', out)
+        self.assertIn('name=HTTP_X_OBJECT_META_KEY1, value=val1', out)
+        self.assertIn('name=HTTP_X_OBJECT_META_KEY2, value=val2', out)
+        self.assertIn('name=DOCUMENT_ROOT, value=/dev/stdin', out)
+        self.assertIn('name=PATH_INFO, value=/a/c/o3', out)
+        self.assertIn('name=CONTENT_LENGTH, value=%d' % content_length, out)
 
     def test_QUERY_GET_response(self):
         self.setup_QUERY()
