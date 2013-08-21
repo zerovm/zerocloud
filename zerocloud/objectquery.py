@@ -24,7 +24,7 @@ from swift.obj.server import DiskFile, write_metadata, read_metadata, DiskWriter
 from swift.common.constraints import check_mount, check_utf8, check_float
 from swift.common.exceptions import DiskFileError, DiskFileNotExist
 from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
-    CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env
+    CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env, parse_location, is_image_path, create_location
 
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 
@@ -381,14 +381,14 @@ class ObjectQueryMiddleware(object):
 
             #print json.dumps(config, cls=NodeEncoder)
             zerovm_nexe = None
-            if config['exe'][0] != '/' and 'image' in channels:
-                self._extract_boot_file(channels, config['exe'], channels['image'], zerovm_tmp)
-            if not 'boot' in channels and self.zerovm_sysimage_devices:
-                for ch in config['channels']:
-                    sysimage_path = self.zerovm_sysimage_devices.get(ch['device'], None)
+            exe_path = parse_location(config['exe'])
+            if is_image_path(exe_path):
+                if exe_path.image in channels:
+                    self._extract_boot_file(channels, exe_path.path, channels[exe_path.image], zerovm_tmp)
+                else:
+                    sysimage_path = self.zerovm_sysimage_devices.get(exe_path.image, None)
                     if sysimage_path:
-                        self._extract_boot_file(channels, config['exe'], sysimage_path, zerovm_tmp)
-                        break
+                        self._extract_boot_file(channels, exe_path.path, sysimage_path, zerovm_tmp)
             if 'boot' in channels:
                 zerovm_nexe = channels.pop('boot')
             else:
@@ -407,12 +407,13 @@ class ObjectQueryMiddleware(object):
             response_channels = []
             local_object = {}
             if not zerovm_execute_only:
-                local_object['path'] = '/'.join(('', container, obj))
+                local_object['path'] = create_location(account, container, obj).url
             for ch in config['channels']:
+                chan_path = parse_location(ch['path'])
                 if ch['device'] in channels:
                     ch['lpath'] = channels[ch['device']]
-                elif local_object and ch['path']:
-                    if ch['path'] in local_object['path']:
+                elif local_object and chan_path:
+                    if chan_path.url in local_object['path']:
                         disk_file = DiskFile(
                             self.app.devices,
                             device,
@@ -448,8 +449,7 @@ class ObjectQueryMiddleware(object):
                     fstab = add_to_fstab(fstab, ch['device'], 'ro')
                 elif ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
                     if not ch.get('lpath'):
-                        if not ch['path'] or \
-                           ch['path'][0] != '/':
+                        if not chan_path or is_image_path(chan_path):
                             return HTTPBadRequest(request=req,
                                                   body='Could not resolve channel path: %s'
                                                        % ch['path'])
@@ -466,7 +466,7 @@ class ObjectQueryMiddleware(object):
                     os.close(output_fd)
                     ch['lpath'] = output_fn
                     channels[ch['device']] = output_fn
-                    if not ch['path']:
+                    if not chan_path:
                         response_channels.append(ch)
                     elif not ch is local_object:
                         response_channels.insert(0, ch)

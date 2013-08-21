@@ -3,6 +3,7 @@ from hashlib import md5
 from swift.common.constraints import MAX_META_NAME_LENGTH, MAX_META_VALUE_LENGTH, \
     MAX_META_COUNT, MAX_META_OVERALL_SIZE
 from swift.common.swob import Response
+from swift.common.utils import split_path
 
 try:
     import simplejson as json
@@ -156,6 +157,105 @@ def quote_for_env(val):
     return re.sub(r',', '\\x2c', val)
 
 
+class ObjPath:
+
+    def __init__(self, url, path):
+        self.url = url
+        self.path = path
+
+
+class SwiftPath(ObjPath):
+
+    def __init__(self, url):
+        (_junk, path) = url.split('swift:/')
+        ObjPath.__init__(self, url, path)
+        (account, container, obj) = split_path(path, 1, 3, True)
+        self.account = account
+        self.container = container
+        self.obj = obj
+
+
+class ImagePath(ObjPath):
+
+    def __init__(self, url):
+        (_junk, path) = url.split('file://')
+        ObjPath.__init__(self, url, path)
+        parts = path.split(':', 1)
+        if len(parts) > 1:
+            self.image = parts[0]
+            self.path = parts[1]
+        else:
+            self.image = 'image'
+
+
+class ZvmPath(ObjPath):
+
+    def __init__(self, url):
+        (_junk, path) = url.split('zvm://')
+        ObjPath.__init__(self, url, path)
+        (host, device) = path.split(':', 1)
+        self.host = host
+        if device.startswith('/dev/'):
+            self.device = device
+        else:
+            self.device = '/dev/%s' % device
+
+
+class CachePath(ObjPath):
+
+    def __init__(self, url):
+        (_junk, path) = url.split('cache:/')
+        ObjPath.__init__(self, url, path)
+        (etag, account, container, obj) = split_path(path, 1, 4, True)
+        self.etag = etag
+        self.account = account
+        self.container = container
+        self.obj = obj
+        self.path = '/%s/%s/%s' % (account, container, obj)
+
+
+def parse_location(url):
+    if not url:
+        return None
+    if url.startswith('swift://'):
+        return SwiftPath(url)
+    elif url.startswith('file://'):
+        return ImagePath(url)
+    elif url.startswith('zvm://'):
+        return ZvmPath(url)
+    elif url.startswith('cache://'):
+        return CachePath(url)
+    return None
+
+
+def create_location(account, container, obj):
+    return SwiftPath('swift://%s/%s/%s' % (account, container, obj))
+
+
+def is_swift_path(location):
+    if isinstance(location, SwiftPath):
+        return True
+    return False
+
+
+def is_zvm_path(location):
+    if isinstance(location, ZvmPath):
+        return True
+    return False
+
+
+def is_image_path(location):
+    if isinstance(location, ImagePath):
+        return True
+    return False
+
+
+def is_cache_path(location):
+    if isinstance(location, CachePath):
+        return True
+    return False
+
+
 class ZvmNode(object):
     def __init__(self, nid, name, nexe_path, args=None, env=None, replicate=1):
         self.id = nid
@@ -284,4 +384,6 @@ class NodeEncoder(json.JSONEncoder):
             return o.__dict__
         elif isinstance(o, Response):
             return str(o.__dict__)
+        if isinstance(o, ObjPath):
+            return o.url
         return json.JSONEncoder.default(self, o)

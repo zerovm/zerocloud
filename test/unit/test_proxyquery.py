@@ -34,7 +34,7 @@ from swift.common import ring
 
 from zerocloud import proxyquery, objectquery
 from test.unit import connect_tcp, readuntil2crlfs, FakeLogger, fake_http_connect
-from zerocloud.common import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
+from zerocloud.common import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, NodeEncoder
 
 try:
     import simplejson as json
@@ -505,11 +505,11 @@ class TestProxyQuery(unittest.TestCase):
         self.setup_QUERY()
         conf = [
             {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                    {'device':'stdin','path':'/c/o'},
-                    {'device':'stdout','path':'/c/o2'}
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout', 'path': 'swift://a/c/o2'}
                 ]
             }
         ]
@@ -530,13 +530,13 @@ class TestProxyQuery(unittest.TestCase):
     def test_QUERY_sort_store_stdout_stderr(self):
         self.setup_QUERY()
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stdin','path':'/c/o'},
-                        {'device':'stdout','path':'/c/o2'},
-                        {'device':'stderr','path':'/c/o3'}
+            {
+                'name': 'sort',
+                'exec':{'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout', 'path': 'swift://a/c/o2'},
+                    {'device': 'stderr', 'path': 'swift://a/c/o3'}
                 ]
             }
         ]
@@ -562,12 +562,12 @@ class TestProxyQuery(unittest.TestCase):
     def test_QUERY_immediate_stdout(self):
         self.setup_QUERY()
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stdin','path':'/c/o'},
-                        {'device':'stdout'}
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'}
                 ]
             }
         ]
@@ -581,11 +581,11 @@ class TestProxyQuery(unittest.TestCase):
         self.assertEqual(res.body, self.get_sorted_numbers())
         conf = [
             {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                    {'device':'stdin','path':'/c/o'},
-                    {'device':'stdout', 'content_type': 'application/x-pickle'}
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout', 'content_type': 'application/x-pickle'}
                 ]
             }
         ]
@@ -609,12 +609,12 @@ return 'Test Test'
         conf = [
             {
                 'name': 'http',
-                'exec': {'path': '/c/exe2'},
+                'exec': {'path': 'swift://a/c/exe2'},
                 'file_list': [
                     {
                         'device': 'stdout', 'content_type': 'text/plain',
                         'meta': {'key1': 'test1', 'key2': 'test2'},
-                        'path': '/c/o3'
+                        'path': 'swift://a/c/o3'
                     }
                 ]
             }
@@ -644,7 +644,7 @@ return 'hello, world'
         conf = [
             {
                 "name": "hello",
-                "exec": {"path": "/c/hello.nexe"},
+                "exec": {"path": "swift://a/c/hello.nexe"},
                 "file_list": [
                     {"device": "stdout"}
                 ]
@@ -677,11 +677,11 @@ return resp + out
         conf = [
             {
                 'name': 'http',
-                'exec': {'path': '/c/exe2'},
+                'exec': {'path': 'swift://a/c/exe2'},
                 'file_list': [
                     {'device': 'stdout',
                      'content_type': 'message/http',
-                     'path': '/c/o3'}
+                     'path': 'swift://a/c/o3'}
                 ]
             }
         ]
@@ -700,7 +700,7 @@ return resp + out
         conf = [
             {
                 'name': 'http',
-                'exec': {'path': '/c/exe2'},
+                'exec': {'path': 'swift://a/c/exe2'},
                 'file_list': [
                     {
                         'device': 'stdout',
@@ -731,12 +731,12 @@ return pickle.dumps(open(mnfst.nvram['path']).read())
         conf = [
             {
                 'name': 'http',
-                'exec': {'path': '/c/exe2'},
+                'exec': {'path': 'swift://a/c/exe2'},
                 'file_list': [
                     {
                         'device': 'stdout',
                         'content_type': 'application/x-pickle',
-                        'path': '/c/o3',
+                        'path': 'swift://a/c/o3',
                         'meta': {'key1': 'val1', 'key2': 'val2'}
                     }
                 ]
@@ -763,7 +763,7 @@ return pickle.dumps(open(mnfst.nvram['path']).read())
         conf = [
             {
                 'name': 'http',
-                'exec': {'path': '/c/exe2'},
+                'exec': {'path': 'swift://a/c/exe2'},
                 'file_list': [
                     {
                         'device': 'stdout',
@@ -771,7 +771,7 @@ return pickle.dumps(open(mnfst.nvram['path']).read())
                     },
                     {
                         'device': 'stdin',
-                        'path': '/c/o3'
+                        'path': 'swift://a/c/o3'
                     }
                 ]
             }
@@ -816,11 +816,11 @@ return resp
         self.assertEqual(res.headers['content-type'], 'text/html')
         conf = [
             {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                    {'device':'stdin','path':'{.object_path}'},
-                    {'device':'stdout', 'content_type': 'application/x-pickle'}
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': '{.object_path}'},
+                    {'device': 'stdout', 'content_type': 'application/x-pickle'}
                 ]
             }
         ]
@@ -829,7 +829,7 @@ return resp
         self.create_object(prolis, '/v1/a/%s/%s'
                                    % (prosrv.app.zerovm_registry_path,
                                       'application/octet-stream/config'),
-            conf, content_type='application/json')
+                           conf, content_type='application/json')
         req = Request.blank('/open/a/c/o')
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
@@ -849,12 +849,12 @@ return [open(mnfst.image['path']).read(), sorted(id)]
         self.create_object(prolis, '/v1/a/c/img', image)
         conf = [
             {
-                'name':'sort',
-                'exec':{'path':'/c/exe2'},
-                'file_list':[
-                    {'device':'stdin','path':'/c/o'},
-                    {'device':'stdout'},
-                    {'device':'image','path':'/c/img'}
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe2'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'},
+                    {'device': 'image', 'path': 'swift://a/c/img'}
                 ]
             }
         ]
@@ -864,8 +864,8 @@ return [open(mnfst.image['path']).read(), sorted(id)]
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body,
-            str(['This is image file',
-                 pickle.loads(self.get_sorted_numbers())]))
+                         str(['This is image file',
+                              pickle.loads(self.get_sorted_numbers())]))
 
     def test_QUERY_use_sysimage(self):
         self.setup_QUERY()
@@ -889,10 +889,10 @@ return open(mnfst.nvram['path']).read() + \
                 {
                     'name': 'sort',
                     'exec': {
-                        'path': '/c/exe2'
+                        'path': 'swift://a/c/exe2'
                     },
                     'file_list': [
-                        {'device': 'stdin', 'path': '/c/o'},
+                        {'device': 'stdin', 'path': 'swift://a/c/o'},
                         {'device': 'stdout'},
                         {'device': 'sysimage'}
                     ]
@@ -915,7 +915,7 @@ return open(mnfst.nvram['path']).read() + \
         prosrv = _test_servers[0]
         script = \
 r'''
-#! sysimage bin/sh
+#! file://sysimage:bin/sh
 print 'Test'
 '''[1:-1]
         nexe = \
@@ -954,7 +954,7 @@ return file.read()
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         script = \
 r'''
-#! /c/exe2
+#! swift://a/c/exe2
 print 'Test'
 '''[1:-1]
         req = self.zerovm_request()
@@ -965,7 +965,7 @@ print 'Test'
         self.assertIn(script, res.body)
         script = \
 r'''
-#! /aaa/bbb
+#! swift://a/aaa/bbb
 print 'Test'
 '''[1:-1]
         req.body = script
@@ -995,10 +995,10 @@ return open(mnfst.nvram['path']).read()
             {
                 'name': 'sort',
                 'exec': {
-                    'path': '/c/exe2'
+                    'path': 'swift://a/c/exe2'
                 },
                 'file_list': [
-                    {'device': 'stdin', 'path': '/c/o'},
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
                     {'device': 'stdout'}
                 ]
             }
@@ -1014,11 +1014,11 @@ return open(mnfst.nvram['path']).read()
             {
                 'name': 'sort',
                 'exec': {
-                    'path': '/c/exe2',
+                    'path': 'swift://a/c/exe2',
                     'args': 'aa bb cc'
                 },
                 'file_list': [
-                    {'device': 'stdin', 'path': '/c/o'},
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
                     {'device': 'stdout'}
                 ]
             }
@@ -1036,12 +1036,12 @@ return open(mnfst.nvram['path']).read()
             {
                 'name': 'sort',
                 'exec': {
-                    'path': '/c/exe2'
+                    'path': 'swift://a/c/exe2'
                 },
                 'file_list': [
-                    {'device': 'stdin', 'path': '/c/o'},
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
                     {'device': 'stdout'},
-                    {'device': 'image', 'path': '/c/img'}
+                    {'device': 'image', 'path': 'swift://a/c/img'}
                 ]
             }
         ]
@@ -1057,7 +1057,7 @@ return open(mnfst.nvram['path']).read()
             {
                 'name': 'sort',
                 'exec': {
-                    'path': '/c/exe2',
+                    'path': 'swift://a/c/exe2',
                     'args': 'aa bb cc',
                     'env': {
                         'key1': 'val1',
@@ -1065,9 +1065,9 @@ return open(mnfst.nvram['path']).read()
                     }
                 },
                 'file_list': [
-                    {'device': 'stdin', 'path': '/c/o'},
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
                     {'device': 'stdout'},
-                    {'device': 'image', 'path': '/c/img'}
+                    {'device': 'image', 'path': 'swift://a/c/img'}
                 ]
             }
         ]
@@ -1089,12 +1089,12 @@ return open(mnfst.nvram['path']).read()
             {
                 'name': 'sort',
                 'exec': {
-                    'path': '/c/exe2'
+                    'path': 'swift://a/c/exe2'
                 },
                 'file_list': [
-                    {'device': 'input', 'path': '/c/o', 'mode': 'file'},
+                    {'device': 'input', 'path': 'swift://a/c/o', 'mode': 'file'},
                     {'device': 'stdout', 'mode': 'char'},
-                    {'device': 'image', 'path': '/c/img'}
+                    {'device': 'image', 'path': 'swift://a/c/img'}
                 ]
             }
         ]
@@ -1112,12 +1112,12 @@ return open(mnfst.nvram['path']).read()
     def test_QUERY_sort_immediate_stdout_stderr(self):
         self.setup_QUERY()
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stdin','path':'/c/o'},
-                        {'device':'stdout'}
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'}
                 ],
                 'count': 2
             }
@@ -1131,11 +1131,11 @@ return open(mnfst.nvram['path']).read()
         self.assertEqual(res.body, str(self.get_sorted_numbers()) * 2)
         conf = [
             {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                    {'device':'stdin','path':'/c/o'},
-                    {'device':'stderr'}
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stderr'}
                 ],
                 'count': 2
             }
@@ -1151,13 +1151,13 @@ return open(mnfst.nvram['path']).read()
     def test_QUERY_sort_store_stdout_immediate_stderr(self):
         self.setup_QUERY()
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stdin','path':'/c/o'},
-                        {'device':'stderr'},
-                        {'device':'stdout','path':'/c/o2'}
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stderr'},
+                    {'device': 'stdout', 'path': 'swift://a/c/o2'}
                 ]
             }
         ]
@@ -1178,17 +1178,17 @@ return open(mnfst.nvram['path']).read()
         conf = [
             {
                 'name': 'sort',
-                'exec': {'path': '/c/exe'},
+                'exec': {'path': 'swift://a/c/exe'},
                 'file_list': [
-                    {'device': 'stderr', 'path': '/c/o2'}
+                    {'device': 'stderr', 'path': 'swift://a/c/o2'}
                 ],
                 'connect': ['merge']
             },
             {
                 'name': 'merge',
-                'exec': {'path': '/c/exe'},
+                'exec': {'path': 'swift://a/c/exe'},
                 'file_list': [
-                    {'device': 'stderr', 'path': '/c/o3'}
+                    {'device': 'stderr', 'path': 'swift://a/c/o3'}
                 ],
                 'connect': ['sort']
             }
@@ -1223,18 +1223,18 @@ return 'ok'
         conf = [
             {
                 'name': 'sort',
-                'exec': {'path': '/c/exe2'},
-                'file_list':[
-                    {'device': 'stdout', 'path': 'merge:/dev/sort'},
-                    {'device': 'stderr', 'path': '/c/o2'}
+                'exec': {'path': 'swift://a/c/exe2'},
+                'file_list': [
+                    {'device': 'stdout', 'path': 'zvm://merge:/dev/sort'},
+                    {'device': 'stderr', 'path': 'swift://a/c/o2'}
                 ],
                 'connect': ['merge']
             },
             {
                 'name': 'merge',
-                'exec': {'path': '/c/exe2'},
+                'exec': {'path': 'swift://a/c/exe2'},
                 'file_list': [
-                    {'device': 'stderr', 'path': '/c/o3'}
+                    {'device': 'stderr', 'path': 'swift://a/c/o3'}
                 ]
             }
         ]
@@ -1262,18 +1262,18 @@ return 'ok'
         conf = [
             {
                 'name': 'sort',
-                'exec': {'path': '/c/exe'},
+                'exec': {'path': 'swift://a/c/exe'},
                 'file_list': [
-                    {'device': 'stderr', 'path': '/c_out1/*.stderr'}
+                    {'device': 'stderr', 'path': 'swift://a/c_out1/*.stderr'}
                 ],
                 'connect': ['merge', 'sort'],
                 'count':3
             },
             {
                 'name': 'merge',
-                'exec': {'path': '/c/exe'},
+                'exec': {'path': 'swift://a/c/exe'},
                 'file_list': [
-                    {'device': 'stderr', 'path': '/c_out1/*.stderr'}
+                    {'device': 'stderr', 'path': 'swift://a/c_out1/*.stderr'}
                 ],
                 'count': 2
             }
@@ -1321,16 +1321,15 @@ return 'ok'
             []
         )
 
-
     def test_QUERY_read_obj_wildcard(self):
         self.setup_QUERY()
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stdin','path':'/c_in1/in*'},
-                        {'device':'stdout'}
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c_in1/in*'},
+                    {'device': 'stdout'}
                 ]
             }
         ]
@@ -1348,12 +1347,12 @@ return 'ok'
         prosrv = _test_servers[0]
         self.create_object(prolis, '/v1/a/c/exe2', 'return sorted(id)')
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe2'},
-                'file_list':[
-                        {'device':'stdin','path':'/c_in*'},
-                        {'device':'stdout'}
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe2'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c_in*'},
+                    {'device': 'stdout'}
                 ]
             }
         ]
@@ -1376,12 +1375,12 @@ return 'ok'
         prolis = _test_sockets[0]
         self.create_object(prolis, '/v1/a/c/exe2', 'return sorted(id)')
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe2'},
-                'file_list':[
-                        {'device':'stdin','path':'/c_in*/in*'},
-                        {'device':'stdout'}
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe2'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c_in*/in*'},
+                    {'device': 'stdout'}
                 ]
             }
         ]
@@ -1401,12 +1400,12 @@ return 'ok'
     def test_QUERY_group_transform(self):
         self.setup_QUERY()
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stdin','path':'/c_in1/in*'},
-                        {'device':'stdout','path':'/c_out1/out*'}
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c_in1/in*'},
+                    {'device': 'stdout', 'path': 'swift://a/c_out1/out*'}
                 ]
             }
         ]
@@ -1431,9 +1430,9 @@ return 'ok'
         conf = [
             {
                 'name': 'sort',
-                'exec': {'path': '/c/exe'},
+                'exec': {'path': 'swift://a/c/exe'},
                 'file_list': [
-                    {'device': 'stdout', 'path': '/c_out1/out.*'}],
+                    {'device': 'stdout', 'path': 'swift://a/c_out1/out.*'}],
                 'count': 2
             }
         ]
@@ -1459,12 +1458,12 @@ return 'ok'
     def test_QUERY_group_transform_multiple(self):
         self.setup_QUERY()
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stdin','path':'/c_in*/in*'},
-                        {'device':'stdout','path':'/c_out*/out*'}
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c_in*/in*'},
+                    {'device': 'stdout', 'path': 'swift://a/c_out*/out*'}
                 ]
             }
         ]
@@ -1512,8 +1511,8 @@ return 'ok'
 
     def test_QUERY_request_client_disconnect_attr(self):
         with save_globals():
-            proxy_server.http_connect =\
-            fake_http_connect(200, 200, 201, 201, 201)
+            proxy_server.http_connect = \
+                fake_http_connect(200, 200, 201, 201, 201)
             prosrv = _test_servers[0]
             req = self.zerovm_request()
             req.body = '12345'
@@ -1529,8 +1528,8 @@ return 'ok'
                 return '1'
 
         with save_globals():
-            proxy_server.http_connect =\
-            fake_http_connect(200, 200, 201, 201, 201)
+            proxy_server.http_connect = \
+                fake_http_connect(200, 200, 201, 201, 201)
             prosrv = _test_servers[0]
             prosrv.app.max_upload_time = 1
             req = self.zerovm_request()
@@ -1540,12 +1539,12 @@ return 'ok'
 
     def test_QUERY_invalid_etag(self):
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stdin','path':'/c/o'},
-                        {'device':'stdout'}
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'}
                 ]
             }
         ]
@@ -1560,11 +1559,11 @@ return 'ok'
     def test_QUERY_invalid_nexe_name(self):
         conf = [
             {
-                'name':'sort',
-                'exec':{'path':'/c/error'},
-                'file_list':[
-                    {'device':'stdin','path':'/c/o'},
-                    {'device':'stdout', 'path':'/c/out'}
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/error'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout', 'path': 'swift://a/c/out'}
                 ]
             }
         ]
@@ -1578,11 +1577,11 @@ return 'ok'
 
     def test_QUERY_missing_required_fields(self):
         conf = [
-                {
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stdin','path':'/c/o'},
-                        {'device':'stdout'}
+            {
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'}
                 ]
             }
         ]
@@ -1594,11 +1593,11 @@ return 'ok'
         self.assertEqual(res.status_int, 400)
         self.assertEqual(res.body, 'Must specify node name')
         conf = [
-                {
-                'name':'sort',
-                'file_list':[
-                        {'device':'stdin','path':'/c/o'},
-                        {'device':'stdout'}
+            {
+                'name': 'sort',
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'}
                 ]
             }
         ]
@@ -1609,12 +1608,12 @@ return 'ok'
         self.assertEqual(res.status_int, 400)
         self.assertEqual(res.body, 'Must specify exec stanza for sort')
         conf = [
-                {
-                'name':'sort',
-                'exec':{'test':1},
-                'file_list':[
-                        {'device':'stdin','path':'/c/o'},
-                        {'device':'stdout'}
+            {
+                'name': 'sort',
+                'exec': {'test': 1},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'}
                 ]
             }
         ]
@@ -1628,12 +1627,12 @@ return 'ok'
     def test_QUERY_invalid_device_config(self):
         prosrv = _test_servers[0]
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'path':'/c/o'},
-                        {'device':'stdout'}
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'path': 'swift://a/c/o'},
+                    {'device': 'stdout'}
                 ]
             }
         ]
@@ -1644,11 +1643,11 @@ return 'ok'
         self.assertEqual(res.status_int, 400)
         self.assertEqual(res.body, 'Must specify device for file in sort')
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stdtest'}
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdtest'}
                 ]
             }
         ]
@@ -1659,11 +1658,11 @@ return 'ok'
         self.assertEqual(res.status_int, 400)
         self.assertEqual(res.body, 'Unknown device stdtest in sort')
         conf = [
-                {
-                'name':'sort',
-                'exec':{'path':'/c/exe'},
-                'file_list':[
-                        {'device':'stdin', 'path':'*'},
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://*'}
                 ]
             }
         ]
@@ -1672,27 +1671,27 @@ return 'ok'
         req.body = conf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 400)
-        self.assertEqual(res.body, 'Invalid path * in sort')
+        self.assertEqual(res.body, 'Invalid path swift://* in sort')
 
     def test_QUERY_account_server_error(self):
         with save_globals():
-            swift.proxy.controllers.account.http_connect =\
-            fake_http_connect(500, 500, 500, 500, 500)
-            swift.proxy.controllers.base.http_connect =\
-            fake_http_connect(500, 500, 500, 500, 500)
-            swift.proxy.controllers.container.http_connect =\
-            fake_http_connect(500, 500, 500, 500, 500)
-            swift.proxy.controllers.obj.http_connect =\
-            fake_http_connect(500, 500, 500, 500, 500)
+            swift.proxy.controllers.account.http_connect = \
+                fake_http_connect(500, 500, 500, 500, 500)
+            swift.proxy.controllers.base.http_connect = \
+                fake_http_connect(500, 500, 500, 500, 500)
+            swift.proxy.controllers.container.http_connect = \
+                fake_http_connect(500, 500, 500, 500, 500)
+            swift.proxy.controllers.obj.http_connect = \
+                fake_http_connect(500, 500, 500, 500, 500)
             proxyquery.http_connect = \
-            fake_http_connect(500, 500, 500, 500, 500)
+                fake_http_connect(500, 500, 500, 500, 500)
             prosrv = _test_servers[0]
             conf = [
-                    {
-                    'name':'sort',
-                    'exec':{'path':'/c/exe'},
-                    'file_list':[
-                            {'device':'stdin', 'path':'/c*'}
+                {
+                    'name': 'sort',
+                    'exec': {'path': 'swift://a/c/exe'},
+                    'file_list': [
+                        {'device': 'stdin', 'path': 'swift://a/c*'}
                     ]
                 }
             ]
@@ -1711,17 +1710,17 @@ return 'ok'
             {
                 'name': 'script',
                 'exec': {
-                    'path': 'boot/lua',
+                    'path': 'file://boot/lua',
                     'args': 'my_script.lua'
                 },
                 'file_list': [
                     {
                         'device': 'image',
-                        'path': '/images/lua.img'
+                        'path': 'swift://a/images/lua.img'
                     },
                     {
                         'device': 'stdin',
-                        'path': '/c/input'
+                        'path': 'swift://a/c/input'
                     },
                     {
                         'device': 'sysimage1'
@@ -1755,7 +1754,7 @@ return open(mnfst.nvram['path']).read()
             {
                 "name": "map",
                 "exec": {
-                    "path": "/terasort/bin/map",
+                    "path": "swift://a/terasort/bin/map",
                     "env": {
                         "MAP_NAME": "map",
                         "REDUCE_NAME": "red",
@@ -1766,11 +1765,11 @@ return open(mnfst.nvram['path']).read()
                 "file_list": [
                     {
                         "device": "stdin",
-                        "path": "/terasort/input/*.txt"
+                        "path": "swift://a/terasort/input/*.txt"
                     },
                     {
                         "device": "stderr",
-                        "path": "/terasort/log/*.log",
+                        "path": "swift://a/terasort/log/*.log",
                         "content_type": "text/plain"
                     }
                 ]
@@ -1778,22 +1777,21 @@ return open(mnfst.nvram['path']).read()
             {
                 "name": "red",
                 "exec": {
-                    "path": "/terasort/bin/reduce",
+                    "path": "swift://a/terasort/bin/reduce",
                     "env": {
                         "MAP_NAME": "map",
                         "REDUCE_NAME": "red"
                     }
                 },
-                "connect": ["map"],
                 "file_list": [
                     {
                         "device": "stdout",
-                        "path": "/terasort/output/*.txt",
+                        "path": "swift://a/terasort/output/*.txt",
                         "content_type": "text/plain"
                     },
                     {
                         "device": "stderr",
-                        "path": "/terasort/log/*.log",
+                        "path": "swift://a/terasort/log/*.log",
                         "content_type": "text/plain"
                     }
                 ],

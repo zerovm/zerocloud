@@ -26,13 +26,14 @@ from swift.obj.server import ObjectController
 from test.unit import FakeLogger
 
 from test_proxyquery import ZEROVM_DEFAULT_MOCK
-from zerocloud.common import ZvmNode, ACCESS_READABLE, ACCESS_WRITABLE, NodeEncoder, ACCESS_CDR
+from zerocloud.common import ZvmNode, ACCESS_READABLE, ACCESS_WRITABLE, NodeEncoder, ACCESS_CDR, parse_location
 from zerocloud import objectquery
 
 try:
     import simplejson as json
 except ImportError:
     import json
+
 
 class FakeLoggingHandler(logging.Handler):
 
@@ -64,6 +65,7 @@ class FakeApp(ObjectController):
             raise Exception
         ObjectController.__call__(self, env, start_response)
 
+
 class OsMock():
     def __init__(self):
         self.closed = False
@@ -87,6 +89,7 @@ class OsMock():
 
     def lseek(self, fd, pos, how):
         return os.lseek(fd, pos, how)
+
 
 class TestObjectQuery(unittest.TestCase):
 
@@ -261,8 +264,8 @@ class TestObjectQuery(unittest.TestCase):
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -298,8 +301,8 @@ class TestObjectQuery(unittest.TestCase):
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
         nexefile = StringIO('return str(sorted(id))')
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -334,8 +337,8 @@ class TestObjectQuery(unittest.TestCase):
     def test_QUERY_http_message(self):
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE, content_type='message/http')
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -382,13 +385,13 @@ return resp + out
                 'application/json')
             self.assertEqual(
                 config['channels'][1]['meta'],
-                { 'key1': 'value1', 'key2': 'value2' })
+                {'key1': 'value1', 'key2': 'value2'})
 
     def test_QUERY_cgi_message(self):
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE, content_type='message/cgi')
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -439,8 +442,8 @@ return resp + out
     def test_QUERY_invalid_http_message(self):
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE, content_type='message/http')
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -465,9 +468,9 @@ return resp + out
             self.assertEqual(names[-1], 'stdout')
             file = tar.extractfile(members[-1])
             self.assertEqual(file.read(),
-                'Status: 200 OK\n'
-                'Content-Type: application/json\n\n'
-                '[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]')
+                             'Status: 200 OK\n'
+                             'Content-Type: application/json\n\n'
+                             '[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]')
             self.assertEqual(resp.headers['x-nexe-retcode'], '0')
             self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
             self.assertEqual(resp.headers['x-nexe-validation'], '1')
@@ -485,8 +488,8 @@ return resp + out
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
         nexefile = StringIO('INVALID')
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -524,7 +527,7 @@ return resp + out
         rmdir(os.path.join(self.testdir, 'sda1', 'tmp'))
         req = self.zerovm_free_request()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -560,11 +563,11 @@ return resp + out
         # running the executable creates a new object in-place
         self.setup_zerovm_query()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
         meta = {'key1': 'value1',
                 'key2': 'value2'}
         content_type = 'application/x-pickle'
-        conf.add_channel('stdout', ACCESS_WRITABLE, '/c/out',
+        conf.add_channel('stdout', ACCESS_WRITABLE, parse_location('swift://a/c/out'),
                          meta_data=meta,
                          content_type=content_type)
         conf = json.dumps(conf, cls=NodeEncoder)
@@ -601,11 +604,11 @@ return resp + out
         # and sends stderr output to the user
         self.setup_zerovm_query()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
         meta = {'key1': 'value1',
                 'key2': 'value2'}
         content_type = 'application/x-pickle'
-        conf.add_channel('stdout', ACCESS_WRITABLE, '/c/out',
+        conf.add_channel('stdout', ACCESS_WRITABLE, parse_location('swift://a/c/out'),
                          meta_data=meta,
                          content_type=content_type)
         conf.add_channel('stderr', ACCESS_WRITABLE)
@@ -656,7 +659,7 @@ return resp + out
         self.setup_zerovm_query()
         req = self.zerovm_free_request()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -682,7 +685,7 @@ return resp + out
         self.setup_zerovm_query()
         req = self.zerovm_free_request()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -715,8 +718,8 @@ return resp + out
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf.args = 'aaa bbb'
         conf.env = {'KEY_A': 'value_a', 'KEY_B': 'value_b'}
@@ -731,9 +734,9 @@ return resp + out
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('input', ACCESS_READABLE, '/c/o')
-        conf.add_channel('output', ACCESS_WRITABLE, '/c/o2')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('input', ACCESS_READABLE, parse_location('swift://a/c/o'))
+        conf.add_channel('output', ACCESS_WRITABLE, parse_location('swift://a/c/o2'))
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
         with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
@@ -745,9 +748,9 @@ return resp + out
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
-        conf.add_channel('stdout', ACCESS_WRITABLE, '/c/o2')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
+        conf.add_channel('stdout', ACCESS_WRITABLE, parse_location('swift://a/c/o2'))
         conf.add_channel('stderr', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -784,8 +787,8 @@ return resp + out
         # check if querying non existent object
         req = self.zerovm_object_request()
         nexefile = StringIO('SCRIPT')
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -797,8 +800,8 @@ return resp + out
     def test_QUERY_invalid_path(self):
         # check if just querying container fails
         req = Request.blank('/sda1/p/a/c',
-            environ={'REQUEST_METHOD': 'POST'},
-            headers={'x-zerovm-execute': '1.0', 'x-account-name': 'a' })
+                            environ={'REQUEST_METHOD': 'POST'},
+                            headers={'x-zerovm-execute': '1.0', 'x-account-name': 'a'})
         resp = req.get_response(self.app)
         self.assertEquals(resp.status_int, 400)
 
@@ -813,8 +816,8 @@ return resp + out
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -849,7 +852,7 @@ return resp + out
     def test_QUERY_no_content_type(self):
         req = self.zerovm_object_request()
         del req.headers['Content-Type']
-        req.body = ('SCRIPT')
+        req.body = 'SCRIPT'
         resp = req.get_response(self.app)
         self.assertEquals(resp.status_int, 400)
         self.assert_('No content type' in resp.body)
@@ -857,17 +860,17 @@ return resp + out
     def test_QUERY_invalid_content_type(self):
         req = self.zerovm_object_request()
         req.headers['Content-Type'] = 'application/blah-blah-blah'
-        req.body = ('SCRIPT')
+        req.body = 'SCRIPT'
         resp = req.get_response(self.app)
         self.assertEquals(resp.status_int, 400)
         self.assert_('Invalid Content-Type' in resp.body)
 
     def test_QUERY_invalid_path_encoding(self):
         req = Request.blank('/sda1/p/a/c/o'.encode('utf-16'),
-            environ={'REQUEST_METHOD': 'POST'},
-            headers={'Content-Type': 'application/x-gtar',
-                     'x-zerovm-execute': '1.0', 'x-account-name': 'a' })
-        req.body = ('SCRIPT')
+                            environ={'REQUEST_METHOD': 'POST'},
+                            headers={'Content-Type': 'application/x-gtar',
+                                     'x-zerovm-execute': '1.0', 'x-account-name': 'a'})
+        req.body = 'SCRIPT'
         resp = req.get_response(self.app)
         self.assertEquals(resp.status_int, 412)
         self.assert_('Invalid UTF8' in resp.body)
@@ -875,8 +878,8 @@ return resp + out
     def test_QUERY_error_upstream(self):
         self.obj_controller.fault = True
         req = Request.blank('/sda1/p/a/c/o',
-            environ={'REQUEST_METHOD': 'GET'},
-            headers={'Content-Type': 'application/x-gtar'})
+                            environ={'REQUEST_METHOD': 'GET'},
+                            headers={'Content-Type': 'application/x-gtar'})
         resp = req.get_response(self.app)
         self.assertEquals(resp.status_int, 500)
         self.assert_('Traceback' in resp.body)
@@ -920,12 +923,12 @@ return resp + out
 
         self.setup_zerovm_query()
         req = Request.blank('/sda1/p/a/c/o',
-            environ={'REQUEST_METHOD': 'POST', 'wsgi.input': ShortBody()},
-            headers={'X-Timestamp': normalize_timestamp(time()),
-                     'x-zerovm-execute': '1.0',
-                     'x-account-name': 'a',
-                     'Content-Length': '4',
-                     'Content-Type': 'application/x-gtar'})
+                            environ={'REQUEST_METHOD': 'POST', 'wsgi.input': ShortBody()},
+                            headers={'X-Timestamp': normalize_timestamp(time()),
+                                     'x-zerovm-execute': '1.0',
+                                     'x-account-name': 'a',
+                                     'Content-Length': '4',
+                                     'Content-Type': 'application/x-gtar'})
         resp = req.get_response(self.app)
         self.assertEquals(resp.status_int, 499)
 
@@ -942,12 +945,12 @@ return resp + out
 
         self.setup_zerovm_query()
         req = Request.blank('/sda1/p/a/c/o',
-            environ={'REQUEST_METHOD': 'POST', 'wsgi.input': LongBody()},
-            headers={'X-Timestamp': normalize_timestamp(time()),
-                     'x-zerovm-execute': '1.0',
-                     'x-account-name': 'a',
-                     'Content-Length': '2',
-                     'Content-Type': 'application/x-gtar'})
+                            environ={'REQUEST_METHOD': 'POST', 'wsgi.input': LongBody()},
+                            headers={'X-Timestamp': normalize_timestamp(time()),
+                                     'x-zerovm-execute': '1.0',
+                                     'x-account-name': 'a',
+                                     'Content-Length': '2',
+                                     'Content-Type': 'application/x-gtar'})
         resp = req.get_response(self.app)
         self.assertEquals(resp.status_int, 499)
 
@@ -960,8 +963,8 @@ sys.stderr.write('some shit happened\n')
         req = self.zerovm_object_request()
 
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -981,8 +984,8 @@ for i in range(20):
     sys.stderr.write(''.zfill(4096))
 ''')
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -1001,8 +1004,8 @@ sys.stdout.write('0\n\nok.\n')
 sys.stderr.write(''.zfill(4096*20))
 ''')
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -1025,8 +1028,8 @@ sleep(10)
 ''')
         req = self.zerovm_object_request()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -1052,8 +1055,8 @@ time.sleep(10)
 ''')
         req = self.zerovm_object_request()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -1074,7 +1077,7 @@ time.sleep(10)
     def test_QUERY_simulteneous_running_zerovm_limits(self):
         self.setup_zerovm_query()
         nexefile = StringIO('return sleep(.2)')
-        conf = ZvmNode(1, 'sleep', '/c/exe')
+        conf = ZvmNode(1, 'sleep', parse_location('swift://a/c/exe'))
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
         maxreq_factor = 2
@@ -1136,8 +1139,8 @@ time.sleep(10)
             self.assertEqual(resp.body, 'RPC request too large')
 
             nexefile = StringIO(self._nexescript)
-            conf = ZvmNode(1, 'sort', '/c/exe')
-            conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+            conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+            conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
             conf.add_channel('stdout', ACCESS_WRITABLE)
             conf = json.dumps(conf, cls=NodeEncoder)
             sysmap = StringIO(conf)
@@ -1160,8 +1163,8 @@ time.sleep(10)
             setattr(self.app, 'zerovm_maxnexe', 0)
             req = self.zerovm_object_request()
             nexefile = StringIO(self._nexescript)
-            conf = ZvmNode(1, 'sort', '/c/exe')
-            conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+            conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+            conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
             conf.add_channel('stdout', ACCESS_WRITABLE)
             conf = json.dumps(conf, cls=NodeEncoder)
             sysmap = StringIO(conf)
@@ -1202,7 +1205,7 @@ time.sleep(10)
                      'open(mnfst.channels["/dev/nvram"]["path"]).read()' \
                      % dev
             nexefile = StringIO(script)
-            conf = ZvmNode(1, 'sysimage-test', '/c/exe')
+            conf = ZvmNode(1, 'sysimage-test', parse_location('swift://a/c/exe'))
             conf.add_channel(dev, ACCESS_CDR)
             conf.add_channel('stdout', ACCESS_WRITABLE)
             conf = json.dumps(conf, cls=NodeEncoder)
@@ -1236,8 +1239,8 @@ time.sleep(10)
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', 'usr/bin/sort')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', 'file://usr/bin/sort')
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf.add_channel('image', ACCESS_CDR)
         conf = json.dumps(conf, cls=NodeEncoder)
@@ -1275,8 +1278,8 @@ time.sleep(10)
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
-        conf.add_channel('stdin', ACCESS_READABLE, '/c/o')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_channel('stdout', ACCESS_WRITABLE)
         conf.add_channel('image', ACCESS_CDR)
         conf = json.dumps(conf, cls=NodeEncoder)
@@ -1314,7 +1317,7 @@ time.sleep(10)
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
         nexefile = StringIO(self._nexescript)
-        conf = ZvmNode(1, 'sort', '/c/exe')
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
         conf.add_channel('stdin', ACCESS_READABLE, 'bla-bla')
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
@@ -1427,7 +1430,7 @@ exit(255)
             self.app.zerovm_exename = ['python', zerovm]
             req = self.zerovm_object_request()
             nexefile = StringIO(self._nexescript)
-            conf = ZvmNode(1, 'exit', '/c/exe')
+            conf = ZvmNode(1, 'exit', parse_location('swift://a/c/exe'))
             conf = json.dumps(conf, cls=NodeEncoder)
             sysmap = StringIO(conf)
             with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:

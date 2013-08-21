@@ -7,7 +7,7 @@ JSON format describing a servlet configuration
         {
         <b>"name"</b>:"node name/alias, alphanumeric only", <b>required</b>
         <b>"exec"</b>:{    <b>required</b>
-            <b>"path"</b>:"executable path, relative url", <b>required</b>
+            <b>"path"</b>:"executable path, URL (see Url.md)", <b>required</b>
             "args":"executable command line", <i>optional</i>
             "env":{    <i>executable environment, optional</i>
                 "key1":"value1",
@@ -17,7 +17,7 @@ JSON format describing a servlet configuration
         "file_list":[ <i>list of devices/files, optional</i>
             {
             <b>"device"</b>:"device name", <b>required</b>
-            "path":"device file path, relative url", <i>optional</i>
+            "path":"device file path, URL (see Url.md)", <i>optional</i>
             "content_type": "MIME type of the content", <i>optional, ignored for read-only devices</i>
             "meta": {   <i>metadata for the object, optional, ignored for read-only devices</i>
                 "metakey1":"value1",
@@ -61,11 +61,13 @@ JSON format describing a servlet configuration
 
 2. `file_list[i].path` is optional
 Only the following devices can be supplied without `path` property set
+
     <pre>
     stdout
     stderr
     output
     </pre>
+
     All other devices must have a path attribute
 
     If the device is a 'system image' it also does not have a path,
@@ -83,17 +85,21 @@ or there are 0 devices in `file_list` a `count` should be supplied
 If `count` is not supplied `count: 1` is assumed
 
 5. If the following devices have wild-cards in path
+
     <pre>
     stdin
     input
     image
     </pre>
+
     Then the following devices (connected to the same mode) also must have wild-cards in path:
+
     <pre>
     stdout
     stderr
     output
     </pre>
+
     Or they can have no path attribute (if it's allowed for this device)
 
 6. `connect` list represents one way directed connection from this node to the nodes in `connect`
@@ -109,6 +115,7 @@ Keys and values should be supplied by user
 Keys must be alphanumeric, cannot contain whitespace characters
 
 9. There are the following device types
+
     <pre>
     <i>READABLE</i>
     <i>WRITABLE</i>
@@ -119,6 +126,7 @@ Keys must be alphanumeric, cannot contain whitespace characters
     </pre>
 
     Each device has the following type rules
+
     <pre>
     stdin: <i>SEQUENTIAL + READABLE</i>
     stdout: <i>SEQUENTIAL + WRITABLE</i>
@@ -136,20 +144,24 @@ It must have `path` property set
 Its path has the following semantics:
 `proto://hostname:port`
 Where proto must be one of:
+
     <pre>
     tcp
     udp
     </pre>
+
 Port must be numeric
 `hostname` must be a valid hostname, allowed characters: `alphanumeric`, `.`, `-`
 
 11. Each `path` must start with `/` character
 The following devices _must_ have existing, readable path:
+
     <pre>
     stdin
     input
     image
     </pre>
+
     `exec` property _must_ have existing, readable `path`
     `exec` property can have a relative path (not starting with `/`).
     If the `path` is relative it is assumed that executable file
@@ -206,10 +218,10 @@ Other combinations are supported but make little sense.
     [
         {
             "name":"sort",
-            "exec":{"path":"/exec/sort.nexe"},
+            "exec":{"path":"swift://my_account/exec/sort.nexe"},
             "file_list":[
-                {"device":"stdin","path":"/data/binary*.data"},
-                {"device":"stdout","path":"/data/sorted*.data"},
+                {"device":"stdin","path":"swift://my_account/data/binary*.data"},
+                {"device":"stdout","path":"swift://my_account/data/sorted*.data"},
                 {"device":"stderr"}
             ],
             "args":"1048576"
@@ -217,11 +229,11 @@ Other combinations are supported but make little sense.
     ]
 </pre>
 
-- This job will look into `/data/binary*.data` path and match objects by wild-card.
-- For each object it will create zerovm instance running `/exec/sort.nexe` object as nexe.
-It will create `/data/sorted*.data` output objects, exactly the same count as input objects.
+- This job will look into `swift://my_account/data/binary*.data` path and match objects by wild-card.
+- For each object it will create zerovm instance running `swift://my_account/exec/sort.nexe` object as nexe.
+It will create `swift://my_account/data/sorted*.data` output objects, exactly the same count as input objects.
 - Each output object will contain same characters instead of `*` that were matched in the original object.
-    <pre>/data/binary<b>\_log_345</b>.data -> /data/sorted<b>\_log_345</b>.data</pre>
+    <pre>.../data/binary<b>\_log_345</b>.data -> .../data/sorted<b>\_log_345</b>.data</pre>
 - Errors will be written to `/dev/stderr`, it does not have a path, therefore errors will be sent in HTTP response.
 - Each nexe will be run as `sort.nexe 1048576` because `args` property was set, in case of sort it is a sort chunk size (specific to nexe, as it should be).
 
@@ -233,24 +245,24 @@ It will create `/data/sorted*.data` output objects, exactly the same count as in
     [
         {
             "name":"mapper",
-            "exec":{"path":"/exec/maper.nexe"},
+            "exec":{"path":"swift://my_account/exec/maper.nexe"},
             "file_list":[
-                {"device":"stdin","path":"/data/binary*.data"},
+                {"device":"stdin","path":"swift://my_account/data/binary*.data"},
                 {"device":"stderr"}
             ],
             "connect":["mapper","reducer"]
     },
         {
             "name":"reducer",
-            "exec":{"path":"/exec/reducer.nexe"},
+            "exec":{"path":"swift://my_account/exec/reducer.nexe"},
             "connect":["manager"],
             "count":5
     },
         {
             "name":"manager",
-            "exec":{"path":"/exec/manager.nexe"},
+            "exec":{"path":"swift://my_account/exec/manager.nexe"},
             "file_list":[
-                {"device":"stdout","path":"/data/mapred_result.data"},
+                {"device":"stdout","path":"swift://my_account/data/mapred_result.data"},
                 {"device":"stderr"}
             ]
     }
@@ -263,7 +275,7 @@ It will create `/data/sorted*.data` output objects, exactly the same count as in
 - Each reducer can send only to manager node.
 - Manager node has no `count` and its `file_list` has no wild-cards, means there is exactly _one_ manager node.
 - There are 5 reducers: `count: 5`.
-- There are N mappers, it depends how many objects match the `/data/binary*.data` wildcard.
+- There are N mappers, it depends how many objects match the `swift://my_account/data/binary*.data` wildcard.
 If there are 10 matching objects, there will be 10 mappers, each mapper will have 9 connections to 9 other mappers and 5 connections to each reducer.
 - Each mapper will see something like this in its /dev/in/ directory:
     <pre>
