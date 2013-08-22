@@ -293,7 +293,7 @@ class ClusterController(ObjectController):
         self.nodes = {}
         self.command = None
 
-    def get_local_address(self, node):
+    def _get_local_address(self, node):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect((node['ip'], node['port']))
         result = s.getsockname()[0]
@@ -356,7 +356,7 @@ class ClusterController(ObjectController):
                                        None, marker)
         return ret
 
-    def build_connect_string(self, node, node_count):
+    def _build_connect_string(self, node, node_count):
         tmp = []
         for (dst, dst_dev) in node.bind:
             dst_id = self.nodes.get(dst).id
@@ -485,9 +485,7 @@ class ClusterController(ObjectController):
                             read_group = 1
                             temp_list = []
                             if '*' in path.container:
-                                container = re.escape(path.container).replace(
-                                    '\\*', '.*'
-                                )
+                                container = re.escape(path.container).replace('\\*', '.*')
                                 mask = re.compile(container)
                                 try:
                                     containers = self.list_account(req, path.account, mask)
@@ -528,7 +526,7 @@ class ClusterController(ObjectController):
                             read_mask = re.escape(path.path).replace('\\*', '(.*)')
                             read_mask = re.compile(read_mask)
                             for i in range(len(temp_list)):
-                                new_name = self.create_name(node_name, i+1)
+                                new_name = self._create_node_name(node_name, i+1)
                                 new_path = temp_list[i]
                                 new_node = self.nodes.get(new_name)
                                 if not new_node:
@@ -545,7 +543,7 @@ class ClusterController(ObjectController):
                         else:
                             if node_count > 1:
                                 for i in range(1, node_count + 1):
-                                    new_name = self.create_name(node_name, i)
+                                    new_name = self._create_node_name(node_name, i)
                                     new_path = create_location(path.account, path.container, path.obj)
                                     new_node = self.nodes.get(new_name)
                                     if not new_node:
@@ -575,7 +573,7 @@ class ClusterController(ObjectController):
                         if path and '*' in path.url:
                             if read_group:
                                 for i in range(1, node_count + 1):
-                                    new_name = self.create_name(node_name, i)
+                                    new_name = self._create_node_name(node_name, i)
                                     new_url = path.url
                                     new_node = self.nodes.get(new_name)
                                     for wc in new_node.wildcards:
@@ -591,7 +589,7 @@ class ClusterController(ObjectController):
                                                          meta_data=meta, mode=mode)
                             else:
                                 for i in range(1, node_count + 1):
-                                    new_name = self.create_name(node_name, i)
+                                    new_name = self._create_node_name(node_name, i)
                                     new_url = path.url
                                     new_url = new_url.replace('*', new_name)
                                     new_node = self.nodes.get(new_name)
@@ -628,7 +626,7 @@ class ClusterController(ObjectController):
                                                            'for device %s' % device)
                             if node_count > 1:
                                 for i in range(1, node_count + 1):
-                                    new_name = self.create_name(node_name, i)
+                                    new_name = self._create_node_name(node_name, i)
                                     new_node = self.nodes.get(new_name)
                                     new_node.add_channel(device, access,
                                                          content_type=f.get('content_type', 'text/html'),
@@ -657,7 +655,7 @@ class ClusterController(ObjectController):
                                                       body='Path required for device %s' % device)
                         if node_count > 1:
                             for i in range(1, node_count + 1):
-                                new_name = self.create_name(node_name, i)
+                                new_name = self._create_node_name(node_name, i)
                                 new_node = self.nodes.get(new_name)
                                 if not new_node:
                                     new_node = ZvmNode(nid, new_name,
@@ -700,7 +698,7 @@ class ClusterController(ObjectController):
                                           body='Invalid connect string for node %s' % node_name)
             elif self.nodes.get(node_name + '-1'):
                 j = 1
-                connect_node = self.nodes.get(self.create_name(node_name, j))
+                connect_node = self.nodes.get(self._create_node_name(node_name, j))
                 while connect_node:
                     try:
                         for bind_name in connect:
@@ -717,7 +715,7 @@ class ClusterController(ObjectController):
                                                    % (connect_node.name, e))
                     j += 1
                     connect_node = self.nodes.get(
-                        self.create_name(node_name, j))
+                        self._create_node_name(node_name, j))
             else:
                 return HTTPBadRequest(request=req,
                                       body='Non existing node in connect string for node %s'
@@ -740,7 +738,7 @@ class ClusterController(ObjectController):
             part = randrange(0, partition_count)
             nodes = self.app.object_ring.get_part_nodes(part)
             for n in nodes:
-                addr = self.get_local_address(n)
+                addr = self._get_local_address(n)
                 if addr:
                     break
         return addr
@@ -912,7 +910,7 @@ class ClusterController(ObjectController):
         if not addr:
             return HTTPServiceUnavailable(
                 body='Cannot find own address, check zerovm_ns_hostname')
-        node_count = self.get_total_node_count(node_list)
+        node_count = self._total_node_count(node_list)
         pile = GreenPile(node_count)
         ns_server = None
         if node_count > 1:
@@ -949,7 +947,7 @@ class ClusterController(ObjectController):
                     return aresp
             if ns_server:
                 node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
-                self.build_connect_string(node, len(node_list))
+                self._build_connect_string(node, len(node_list))
                 if node.replicate > 1:
                     for i in range(0, node.replicate - 1):
                         node.replicas.append(deepcopy(node))
@@ -1202,7 +1200,7 @@ class ClusterController(ObjectController):
         final_response.headers['Etag'] = etag.hexdigest()
         return final_response
 
-    def create_name(self, node_name, i):
+    def _create_node_name(self, node_name, i):
         return node_name + '-' + str(i)
 
     def _process_response(self, conn, request):
@@ -1484,7 +1482,7 @@ class ClusterController(ObjectController):
             memcache_client.set(memcache_key, req.template,
                                 time=float(self.app.zerovm_cache_config_timeout))
 
-    def get_total_node_count(self, node_list):
+    def _total_node_count(self, node_list):
         count = 0
         for n in node_list:
             count += n.replicate

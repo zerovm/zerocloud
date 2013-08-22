@@ -778,21 +778,30 @@ class ObjectQueryMiddleware(object):
                 if 'x-zerovm-execute' in req.headers and req.method == 'POST':
                     res = self.zerovm_query(req)
                 elif req.method in ['PUT', 'POST'] \
-                and ('x-zerovm-validate' in req.headers
-                     or req.headers.get('content-type', '')
-                     in 'application/x-nexe'):
+                    and ('x-zerovm-validate' in req.headers
+                         or req.headers.get('content-type', '') in 'application/x-nexe'):
+                    self.logger.info('%s Started pre-validation due to: content-type: %s, x-zerovm-validate: %s'
+                                     % (req.url,
+                                        req.headers.get('content-type', ''),
+                                        str('x-zerovm-validate' in req.headers)))
+
                     def validate_resp(status, response_headers, exc_info=None):
                         if 200 <= int(status.split(' ')[0]) < 300:
                             if self.validate(req):
-                                response_headers.append(('X-Zerovm-Valid','true'))
+                                response_headers.append(('X-Zerovm-Valid', 'true'))
                         return start_response(status, response_headers, exc_info)
+
                     return self.app(env, validate_resp)
                 elif 'x-zerovm-valid' in req.headers and req.method == 'GET':
+                    self.logger.info('%s Started validity check due to: x-zerovm-valid: %s'
+                                     % (req.url, str('x-zerovm-valid' in req.headers)))
+
                     def validate_resp(status, response_headers, exc_info=None):
                         if 200 <= int(status.split(' ')[0]) < 300:
                             if self.is_validated(req):
                                 response_headers.append(('X-Zerovm-Valid', 'true'))
                         return start_response(status, response_headers, exc_info)
+
                     return self.app(env, validate_resp)
                 else:
                     return self.app(env, start_response)
@@ -806,8 +815,7 @@ class ObjectQueryMiddleware(object):
         if self.app.log_requests:
             log_line = '%s - - [%s] "%s %s" %s %s "%s" "%s" "%s" %.4f' % (
                 req.remote_addr,
-                time.strftime('%d/%b/%Y:%H:%M:%S +0000',
-                    time.gmtime()),
+                time.strftime('%d/%b/%Y:%H:%M:%S +0000', time.gmtime()),
                 req.method, req.path, res.status.split()[0],
                 res.content_length or '-', req.referer or '-',
                 req.headers.get('x-trans-id', '-'),
