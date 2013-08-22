@@ -36,9 +36,9 @@ parser.add_argument('-s', action='store_true', dest='skip')
 parser.add_argument('-F', action='store_true', dest='validate')
 args = parser.parse_args()
 
-valid = 1
+valid = 0
 if args.skip:
-    valid = 0
+    valid = 2
 accounting = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 manifest = args.manifest
 if not manifest:
@@ -94,7 +94,7 @@ retrieve_mnfst_field('Node', optional=True, isint=True)
 retrieve_mnfst_field('NameServer', optional=True)
 exe = file(mnfst.Program, 'r').read()
 if 'INVALID' == exe:
-    valid = 2
+    valid = 1
     retcode = 0
     errdump(8, valid, retcode, '', accounting, 'nexe is invalid')
 if args.validate:

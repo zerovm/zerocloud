@@ -863,22 +863,16 @@ class ObjectQueryMiddleware(object):
                 'Version=%s\n'
                 'Program=%s\n'
                 'Timeout=%s\n'
-                'Memory=%s\n'
+                'Memory=%s,0\n'
+                'Channel=/dev/null,/dev/stdin, 0,0,1,1,0,0\n'
+                'Channel=/dev/null,/dev/stdout,0,0,0,0,1,1\n'
+                'Channel=/dev/null,/dev/stderr,0,0,0,0,1,1\n'
                 % (
                     self.zerovm_manifest_ver,
                     file.data_file,
                     self.zerovm_timeout,
                     self.zerovm_maxnexemem
                 ))
-            zerovm_inputmnfst += \
-                'Channel=/dev/null,/dev/stdin,0,%s,%s,0,0\n' % \
-                (self.zerovm_maxiops, self.zerovm_maxinput)
-            zerovm_inputmnfst += \
-                'Channel=/dev/null,/dev/stdout,0,0,0,%s,%s\n' % \
-                (self.zerovm_maxiops, self.zerovm_maxoutput)
-            zerovm_inputmnfst += \
-                'Channel=/dev/null,/dev/stderr,0,0,0,%s,%s\n' % \
-                (self.zerovm_maxiops, self.zerovm_maxoutput)
             while zerovm_inputmnfst:
                 written = self.os_interface.write(zerovm_inputmnfst_fd,
                                                   zerovm_inputmnfst)
@@ -889,10 +883,17 @@ class ObjectQueryMiddleware(object):
             if zerovm_stderr:
                 self.logger.warning('zerovm stderr: ' + zerovm_stderr)
             if zerovm_retcode == 0:
-                metadata = file.metadata
-                metadata['Validated'] = metadata['ETag']
-                write_metadata(file.data_file, metadata)
-                return True
+                report = zerovm_stdout.split('\n', 2)
+                print report
+                try:
+                    validated = int(report[0])
+                except ValueError:
+                    return False
+                if validated == 0:
+                    metadata = file.metadata
+                    metadata['Validated'] = metadata['ETag']
+                    write_metadata(file.data_file, metadata)
+                    return True
             return False
 
     def is_validated(self, req):
@@ -913,6 +914,8 @@ class ObjectQueryMiddleware(object):
             self.logger,
             disk_chunk_size=self.app.disk_chunk_size,
         )
+        if file.is_deleted():
+            return False
         metadata = read_metadata(file.data_file)
         status = metadata.get('Validated', None)
         etag = metadata.get('ETag', None)
