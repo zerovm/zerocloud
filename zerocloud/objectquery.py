@@ -600,8 +600,11 @@ class ObjectQueryMiddleware(object):
                                                       zerovm_inputmnfst)
                     zerovm_inputmnfst = zerovm_inputmnfst[written:]
 
+                zerovm_args = None
+                if req.headers.get('x-zerovm-valid', 'false').lower() in TRUE_VALUES:
+                    zerovm_args = ['-s']
                 start = time.time()
-                thrd = self.zerovm_thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn)
+                thrd = self.zerovm_thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, zerovm_args)
                 (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
                 perf = "%.3f" % (time.time() - start)
                 self.logger.info("PERF SPAWN: %s" % perf)
@@ -884,7 +887,6 @@ class ObjectQueryMiddleware(object):
                 self.logger.warning('zerovm stderr: ' + zerovm_stderr)
             if zerovm_retcode == 0:
                 report = zerovm_stdout.split('\n', 2)
-                print report
                 try:
                     validated = int(report[0])
                 except ValueError:

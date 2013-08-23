@@ -205,6 +205,8 @@ class ProxyQueryMiddleware(object):
         self.app.network_chunk_size = int(conf.get('network_chunk_size', 65536))
         # use newest files when running zerovm executables, default - False
         self.app.zerovm_uses_newest = conf.get('zerovm_uses_newest', 'f').lower() in TRUE_VALUES
+        # use executable validation info, stored on PUT or POST, to shave some time on zerovm startup
+        self.app.zerovm_prevalidate = conf.get('zerovm_prevalidate', 'f').lower() in TRUE_VALUES
         # use CORS workaround to POST execute commands, default - False
         self.app.zerovm_use_cors = conf.get('zerovm_use_cors', 'f').lower() in TRUE_VALUES
         # Accounting: enable or disabe execution accounting data, default - disabled
@@ -941,6 +943,7 @@ class ClusterController(ObjectController):
             exec_request.headers['transfer-encoding'] = 'chunked'
             exec_request.headers['x-account-name'] = self.account_name
             exec_request.headers['x-timestamp'] = normalize_timestamp(time.time())
+            exec_request.headers['x-zerovm-valid'] = 'false'
             if 'swift.authorize' in exec_request.environ:
                 aresp = exec_request.environ['swift.authorize'](exec_request)
                 if aresp:
@@ -985,6 +988,8 @@ class ClusterController(ObjectController):
                         source_req.path_info = load_from
                         if self.app.zerovm_uses_newest:
                             source_req.headers['X-Newest'] = 'true'
+                        if self.app.zerovm_prevalidate and 'boot' in ch.device:
+                            source_req.headers['X-Zerovm-Valid'] = 'true'
                         acct, src_container_name, src_obj_name =\
                             split_path(load_from, 1, 3, True)
                         container_info = self.container_info(acct, src_container_name)
@@ -1005,6 +1010,8 @@ class ClusterController(ObjectController):
                     data_sources.append(source_resp)
                 node.last_data = source_resp
                 source_resp.nodes.append({'node': node, 'dev': ch.device})
+                if source_resp.headers.get('x-zerovm-valid', None) and 'boot' in ch.device:
+                    node.skip_validation = True
                 for repl_node in node.replicas:
                     repl_node.last_data = source_resp
                     source_resp.nodes.append({'node': repl_node, 'dev': ch.device})
@@ -1029,6 +1036,9 @@ class ClusterController(ObjectController):
                     containers = container_info['nodes']
                     exec_headers = self._backend_requests(exec_request, node.replicate,
                                                           container_partition, containers)
+                    if node.skip_validation:
+                        for hdr in exec_headers:
+                            hdr['x-zerovm-valid'] = 'true'
                     i = 0
                     pile.spawn(self._connect_exec_node, node_iter, partition,
                                exec_request, self.app.logger.thread_locals, node,
@@ -1041,12 +1051,16 @@ class ClusterController(ObjectController):
                                    nexe_headers, exec_headers[i])
                         #print exec_headers[i]
                 else:
+                    if node.skip_validation:
+                        exec_request.headers['x-zerovm-valid'] = 'true'
                     pile.spawn(self._connect_exec_node, node_iter, partition,
                                exec_request, self.app.logger.thread_locals, node,
                                nexe_headers, exec_request.headers)
             except ValueError:
                 partition = self.get_random_partition()
                 node_iter = self.iter_nodes(self.app.object_ring, partition)
+                if node.skip_validation:
+                    exec_request.headers['x-zerovm-valid'] = 'true'
                 pile.spawn(self._connect_exec_node, node_iter, partition,
                            exec_request, self.app.logger.thread_locals, node,
                            nexe_headers, exec_request.headers)
@@ -1077,7 +1091,7 @@ class ClusterController(ObjectController):
                 for conn in conns:
                     if conn.cnode is node['node']:
                         conn.last_data = node['node'].last_data
-                        data_src.conns.append({'conn':conn, 'dev':node['dev']})
+                        data_src.conns.append({'conn': conn, 'dev': node['dev']})
 
         #chunked = req.headers.get('transfer-encoding')
         chunked = True
@@ -1121,8 +1135,7 @@ class ClusterController(ObjectController):
                                             data = conn['conn'].tar_stream.data
                                             if not conn['conn'].failed:
                                                 conn['conn'].queue.put('%x\r\n%s\r\n'
-                                                                       % (len(data),data)
-                                                if chunked else data)
+                                                                       % (len(data), data) if chunked else data)
                                             else:
                                                 return HTTPServiceUnavailable(request=req)
                                         if chunked:
@@ -1134,8 +1147,8 @@ class ClusterController(ObjectController):
                         for conn in data_src.conns:
                             for chunk in conn['conn'].tar_stream._serve_chunk(data):
                                 if not conn['conn'].failed:
-                                    conn['conn'].queue.put('%x\r\n%s\r\n' % (len(chunk), chunk)
-                                    if chunked else chunk)
+                                    conn['conn'].queue.put('%x\r\n%s\r\n'
+                                                           % (len(chunk), chunk) if chunked else chunk)
                                 else:
                                     return HTTPServiceUnavailable(request=req)
                     if data_src.bytes_transferred < data_src.content_length:

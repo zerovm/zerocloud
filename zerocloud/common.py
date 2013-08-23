@@ -268,6 +268,7 @@ class ZvmNode(object):
         self.bind = []
         self.replicate = replicate
         self.replicas = []
+        self.skip_validation = False
 
     def add_channel(self, device, access, path=None,
                     content_type='application/octet-stream',

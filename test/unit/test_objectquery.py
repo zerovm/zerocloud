@@ -1407,6 +1407,66 @@ time.sleep(10)
         self.assertEquals(resp.status_int, 201)
         self.assertNotIn('x-zerovm-valid', resp.headers)
 
+    def test_QUERY_execute_prevalidated(self):
+        self.setup_zerovm_query()
+        req = self.zerovm_object_request()
+        nexefile = StringIO(self._nexescript)
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
+        conf.add_channel('stdout', ACCESS_WRITABLE)
+        conf = json.dumps(conf, cls=NodeEncoder)
+        sysmap = StringIO(conf)
+        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+            req.headers['x-zerovm-valid'] = 'true'
+            req.body_file = open(tar, 'rb')
+            resp = self.app.zerovm_query(req)
+            fd, name = mkstemp()
+            for chunk in resp.app_iter:
+                os.write(fd, chunk)
+            os.close(fd)
+            self.assertEqual(os.path.getsize(name), resp.content_length)
+            tar_result = tarfile.open(name)
+            names = tar_result.getnames()
+            members = tar_result.getmembers()
+            self.assertIn('stdout', names)
+            self.assertEqual(names[-1], 'stdout')
+            self.assertEqual(members[-1].size, len(self._sortednumbers))
+            file = tar_result.extractfile(members[-1])
+            self.assertEqual(file.read(), self._sortednumbers)
+            self.assertEqual(resp.headers['x-nexe-retcode'], '0')
+            self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
+            self.assertEqual(resp.headers['x-nexe-validation'], '2')
+            self.assertEqual(resp.headers['x-nexe-system'], 'sort')
+            timestamp = normalize_timestamp(time())
+            self.assertEqual(math.floor(float(resp.headers['X-Timestamp'])),
+                             math.floor(float(timestamp)))
+            self.assertEquals(resp.headers['content-type'], 'application/x-gtar')
+
+            req.headers['x-zerovm-valid'] = 'false'
+            req.body_file = open(tar, 'rb')
+            resp = self.app.zerovm_query(req)
+            fd, name = mkstemp()
+            for chunk in resp.app_iter:
+                os.write(fd, chunk)
+            os.close(fd)
+            self.assertEqual(os.path.getsize(name), resp.content_length)
+            tar_result = tarfile.open(name)
+            names = tar_result.getnames()
+            members = tar_result.getmembers()
+            self.assertIn('stdout', names)
+            self.assertEqual(names[-1], 'stdout')
+            self.assertEqual(members[-1].size, len(self._sortednumbers))
+            file = tar_result.extractfile(members[-1])
+            self.assertEqual(file.read(), self._sortednumbers)
+            self.assertEqual(resp.headers['x-nexe-retcode'], '0')
+            self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
+            self.assertEqual(resp.headers['x-nexe-validation'], '0')
+            self.assertEqual(resp.headers['x-nexe-system'], 'sort')
+            timestamp = normalize_timestamp(time())
+            self.assertEqual(math.floor(float(resp.headers['X-Timestamp'])),
+                             math.floor(float(timestamp)))
+            self.assertEquals(resp.headers['content-type'], 'application/x-gtar')
+
     def test_zerovm_bad_exit_code(self):
 
         @contextmanager
