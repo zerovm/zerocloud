@@ -637,12 +637,14 @@ class ObjectQueryMiddleware(object):
                 perf = "%.3f" % (time.time() - start)
                 self.logger.info("PERF SPAWN: %s" % perf)
                 if self.zerovm_debug:
-                    std = open(os.path.join(debug_dir, 'zerovm.stdout.%s'
-                                                       % normalize_timestamp(time.time())), mode='wb')
+                    std = open(os.path.join(debug_dir, '%s.zerovm.stdout.%s'
+                                                       % (nexe_headers['x-nexe-system'],
+                                                          normalize_timestamp(time.time()))), mode='wb')
                     std.write(zerovm_stdout)
                     std.close()
-                    std = open(os.path.join(debug_dir, 'zerovm.stderr.%s'
-                                                       % normalize_timestamp(time.time())), mode='wb')
+                    std = open(os.path.join(debug_dir, '%s.zerovm.stderr.%s'
+                                                       % (nexe_headers['x-nexe-system'],
+                                                          normalize_timestamp(time.time()))), mode='wb')
                     std.write('swift retcode = %d\n' % zerovm_retcode)
                     std.write(zerovm_stderr)
                     std.close()
@@ -668,8 +670,8 @@ class ObjectQueryMiddleware(object):
                              zerovm_stdout)
                     self.logger.exception(err)
                     resp = HTTPInternalServerError(body=err)
-                    #nexe_headers['x-nexe-status'] = 'ZeroVM runtime error'
-                    #resp.headers = nexe_headers
+                    nexe_headers['x-nexe-status'] = 'ZeroVM runtime error'
+                    resp.headers = nexe_headers
                     return req.get_response(resp)
                 else:
                     try:
