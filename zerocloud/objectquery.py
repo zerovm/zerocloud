@@ -13,6 +13,7 @@ from eventlet import GreenPool, sleep, spawn
 from eventlet.green import select, subprocess, os
 from eventlet.timeout import Timeout
 from eventlet.green.httplib import HTTPResponse
+import errno
 
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
@@ -154,6 +155,8 @@ class ObjectQueryMiddleware(object):
         # max nexe memory size
         self.zerovm_maxnexemem = int(conf.get('zerovm_maxnexemem', 4 * 1024 * 1048576))
 
+        self.zerovm_debug = conf.get('zerovm_debug', 'no').lower() in TRUE_VALUES
+
         # name-path pairs for sysimage devices on this node
         self.zerovm_sysimage_devices = {}
         sysimage_list = [i.strip() for i in conf.get('zerovm_sysimage_devices', '').split() if i.strip()]
@@ -270,6 +273,17 @@ class ObjectQueryMiddleware(object):
     def zerovm_query(self, req):
         """Handle zerovm execution requests for the Swift Object Server."""
 
+        trans_id = req.headers.get('x-trans-id', '-')
+        debug_dir = os.path.join("/tmp/zvm_debug", trans_id)
+        if self.zerovm_debug:
+                try:
+                    os.makedirs(debug_dir)
+                except OSError as exc:
+                    if exc.errno == errno.EEXIST \
+                            and os.path.isdir(debug_dir):
+                        pass
+                    else:
+                        raise
         #print "URL: " + req.url
         nexe_headers = {
             'x-nexe-retcode': 0,
@@ -595,6 +609,20 @@ class ObjectQueryMiddleware(object):
                                          % config['name_service']
                 #print json.dumps(config, sort_keys=True, indent=2)
                 #print zerovm_inputmnfst
+                if self.zerovm_debug:
+                    shutil.copy(nvram_file, os.path.join(debug_dir, '%s.nvram.%s'
+                                                                    % (nexe_headers['x-nexe-system'],
+                                                                       normalize_timestamp(time.time()))))
+                    mnfst = open(os.path.join(debug_dir, '%s.manifest.%s' % (nexe_headers['x-nexe-system'],
+                                                                             normalize_timestamp(time.time()))),
+                                 mode='wb')
+                    mnfst.write(zerovm_inputmnfst)
+                    mnfst.close()
+                    sysfile = open(os.path.join(debug_dir, '%s.json.%s' % (nexe_headers['x-nexe-system'],
+                                                                           normalize_timestamp(time.time()))),
+                                   mode='wb')
+                    json.dump(config, sysfile, sort_keys=True, indent=2)
+                    sysfile.close()
                 while zerovm_inputmnfst:
                     written = self.os_interface.write(zerovm_inputmnfst_fd,
                                                       zerovm_inputmnfst)
@@ -608,6 +636,16 @@ class ObjectQueryMiddleware(object):
                 (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
                 perf = "%.3f" % (time.time() - start)
                 self.logger.info("PERF SPAWN: %s" % perf)
+                if self.zerovm_debug:
+                    std = open(os.path.join(debug_dir, 'zerovm.stdout.%s'
+                                                       % normalize_timestamp(time.time())), mode='wb')
+                    std.write(zerovm_stdout)
+                    std.close()
+                    std = open(os.path.join(debug_dir, 'zerovm.stderr.%s'
+                                                       % normalize_timestamp(time.time())), mode='wb')
+                    std.write('swift retcode = %d\n' % zerovm_retcode)
+                    std.write(zerovm_stderr)
+                    std.close()
                 if nvram_file:
                     try:
                         os.unlink(nvram_file)
