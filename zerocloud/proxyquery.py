@@ -891,9 +891,11 @@ class ClusterController(ObjectController):
             if top_channel and is_swift_path(top_channel.path):
                 if top_channel.access & (ACCESS_READABLE | ACCESS_CDR):
                     node.path_info = top_channel.path.path
-                elif top_channel.access & ACCESS_WRITABLE:
+                elif top_channel.access & ACCESS_WRITABLE and node.replicate > 0:
                     node.path_info = top_channel.path.path
                     node.replicate = self.app.object_ring.replica_count
+            if node.replicate < 1:
+                node.replicate = 1
             node_list.append(node)
 
         # for n in node_list:
