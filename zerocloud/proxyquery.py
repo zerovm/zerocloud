@@ -21,7 +21,7 @@ from swift.common.http import HTTP_CONTINUE, is_success, \
 from swift.proxy.controllers.base import update_headers, delay_denial, \
     Controller, cors_validation
 from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
-    get_remote_client, ContextPool, cache_from_env, GreenthreadSafeIterator, normalize_timestamp, csv_append
+    get_remote_client, ContextPool, cache_from_env, normalize_timestamp
 from swift.proxy.server import ObjectController, ContainerController, \
     AccountController
 from swift.common.bufferedhttp import http_connect
@@ -1029,8 +1029,7 @@ class ClusterController(ObjectController):
             try:
                 account, container, obj = split_path(path_info, 3, 3, True)
                 partition = self.app.object_ring.get_part(account, container, obj)
-                node_iter = GreenthreadSafeIterator(
-                    self.iter_nodes(self.app.object_ring, partition))
+                node_iter = self.iter_nodes(self.app.object_ring, partition)
                 exec_request.path_info = path_info
                 if node.replicate > 1:
                     container_info = self.container_info(account, container)
