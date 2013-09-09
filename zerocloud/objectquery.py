@@ -21,7 +21,7 @@ from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict
 from swift.common.utils import normalize_timestamp, fallocate, \
     split_path, get_logger, mkdirs, disable_fallocate, TRUE_VALUES
-from swift.obj.server import DiskFile, write_metadata, read_metadata, DiskWriter
+from swift.obj.server import DiskFile, write_metadata, read_metadata
 from swift.common.constraints import check_mount, check_utf8, check_float
 from swift.common.exceptions import DiskFileError, DiskFileNotExist
 from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
@@ -1009,15 +1009,19 @@ class ObjectQueryMiddleware(object):
             os.unlink(local_object['lpath'])
             local_object['lpath'] = new_name
             fd = os.open(local_object['lpath'], os.O_RDONLY)
-        writer = DiskWriter(disk_file, fd, local_object['lpath'], disk_file.threadpool)
-        writer.put(metadata)
+        disk_file.tmppath = local_object['lpath']
+        disk_file.put(fd, metadata)
         disk_file.unlinkold(metadata['X-Timestamp'])
         if old_delete_at > 0:
             self.app.delete_at_update(
                 'DELETE', old_delete_at, account, container, obj,
                 request, device)
         self.app.container_update(
-            'PUT', account, container, obj, request,
+            'PUT',
+            account,
+            container,
+            obj,
+            request.headers,
             HeaderKeyDict({
                 'x-size': disk_file.metadata['Content-Length'],
                 'x-content-type': disk_file.metadata['Content-Type'],

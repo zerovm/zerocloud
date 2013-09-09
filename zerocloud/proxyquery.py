@@ -1028,8 +1028,8 @@ class ClusterController(ObjectController):
                 path_info = node_path_info
             try:
                 account, container, obj = split_path(path_info, 3, 3, True)
-                partition = self.app.object_ring.get_part(account, container, obj)
-                node_iter = self.iter_nodes(self.app.object_ring, partition)
+                partition, nodes = self.app.object_ring.get_nodes(account, container, obj)
+                node_iter = self.iter_nodes(partition, nodes, self.app.object_ring)
                 exec_request.path_info = path_info
                 if node.replicate > 1:
                     container_info = self.container_info(account, container)
@@ -1059,7 +1059,8 @@ class ClusterController(ObjectController):
                                nexe_headers, exec_request.headers)
             except ValueError:
                 partition = self.get_random_partition()
-                node_iter = self.iter_nodes(self.app.object_ring, partition)
+                nodes = self.app.object_ring.get_part_nodes(partition)
+                node_iter = self.iter_nodes(partition, nodes, self.app.object_ring)
                 if node.skip_validation:
                     exec_request.headers['x-zerovm-valid'] = 'true'
                 pile.spawn(self._connect_exec_node, node_iter, partition,
@@ -1067,7 +1068,8 @@ class ClusterController(ObjectController):
                            nexe_headers, exec_request.headers)
                 for repl_node in node.replicas:
                     partition = self.get_random_partition()
-                    node_iter = self.iter_nodes(self.app.object_ring, partition)
+                    nodes = self.app.object_ring.get_part_nodes(partition)
+                    node_iter = self.iter_nodes(partition, nodes, self.app.object_ring)
                     pile.spawn(self._connect_exec_node, node_iter, partition,
                                exec_request, self.app.logger.thread_locals, repl_node,
                                nexe_headers, exec_request.headers)
@@ -1317,9 +1319,10 @@ class ClusterController(ObjectController):
         for node in obj_nodes:
             try:
                 with ConnectionTimeout(self.app.conn_timeout):
-                    if (request.content_length > 0) or 'transfer-encoding' in request_headers:
-                        request_headers['Expect'] = '100-continue'
+                    #if (request.content_length > 0) or 'transfer-encoding' in request_headers:
+                    #    request_headers['Expect'] = '100-continue'
                     #request.headers['Connection'] = 'close'
+                    request_headers['Expect'] = '100-continue'
                     conn = http_connect(node['ip'], node['port'],
                                         node['device'], part, request.method,
                                         request.path_info, request_headers)

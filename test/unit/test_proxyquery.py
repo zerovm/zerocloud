@@ -434,6 +434,12 @@ class TestProxyQuery(unittest.TestCase):
             except IOError:
                 pass
 
+    def executed_successfully(self, response):
+        self.assertEqual(response.status_int, 200)
+        for status in response.headers['x-nexe-status'].split(','):
+            self.assertEqual(status, 'ok.')
+        self.assertNotIn('x-nexe-error', response.headers)
+
     def test_QUERY_name_service(self):
         peers = 3
         ns_server = proxyquery.NameService(peers)
@@ -521,7 +527,7 @@ class TestProxyQuery(unittest.TestCase):
             req.body_file = open(tar, 'rb')
             req.content_length = os.path.getsize(tar)
             res = req.get_response(prosrv)
-            self.assertEqual(res.status_int, 200)
+            self.executed_successfully(res)
             req = self.object_request('/v1/a/c/o2')
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 200)
@@ -689,7 +695,7 @@ return resp + out
         req = self.zerovm_request()
         req.body = conf
         res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
+        self.executed_successfully(res)
         req = self.object_request('/v1/a/c/o3')
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
