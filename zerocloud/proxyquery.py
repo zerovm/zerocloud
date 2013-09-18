@@ -1265,6 +1265,7 @@ class ClusterController(ObjectController):
             untar_stream.update_buffer(data)
             info = untar_stream.get_next_tarinfo()
             while info:
+                print [info.name, info.size, info.offset, info.offset_data]
                 if 'sysmap' in info.name:
                     untar_stream.to_write = info.size
                     untar_stream.offset_data = info.offset_data
@@ -1308,7 +1309,6 @@ class ClusterController(ObjectController):
                                      chan.path.account,
                                      chan.path.container,
                                      chan.path.obj).PUT(dest_req)
-                print info.__dict__
                 if dest_resp.status_int >= 300:
                     conn.error = 'Status %s when putting %s' \
                                  % (dest_resp.status, chan.path.path)
