@@ -351,7 +351,7 @@ class ZvmNode(object):
 
     def _create_sysmap_resp(self):
         sysmap = json.dumps(self, cls=NodeEncoder)
-        #print sysmap
+        #print json.dumps(self, cls=NodeEncoder, indent=2)
         sysmap_iter = iter([sysmap])
         return Response(app_iter=sysmap_iter,
                         headers={'Content-Length': str(len(sysmap))})

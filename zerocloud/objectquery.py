@@ -418,6 +418,9 @@ class ObjectQueryMiddleware(object):
                          % (device, access)
                 return fstab
 
+            is_master = True
+            if config.get('replicate', 1) > 1 and len(config.get('replicas', [])) == 0:
+                is_master = False
             response_channels = []
             local_object = {}
             if not zerovm_execute_only:
@@ -482,7 +485,7 @@ class ObjectQueryMiddleware(object):
                     channels[ch['device']] = output_fn
                     if not chan_path:
                         response_channels.append(ch)
-                    elif not ch is local_object:
+                    elif not ch is local_object and is_master:
                         response_channels.insert(0, ch)
 
             with tmpdir.mkstemp() as (zerovm_inputmnfst_fd,
@@ -564,6 +567,12 @@ class ObjectQueryMiddleware(object):
                                 if meta.startswith('X-OBJECT-META-'):
                                     env += ENV_ITEM % ('HTTP_%s' % meta.replace('-', '_'),
                                                        quote_for_env(v))
+                                    continue
+                                for hdr in ['X-TIMESTAMP', 'ETAG', 'CONTENT-ENCODING']:
+                                    if hdr in meta:
+                                        env += ENV_ITEM % ('HTTP_%s' % meta.replace('-', '_'),
+                                                           quote_for_env(v))
+                                        break
                         elif local_object['access'] & ACCESS_WRITABLE:
                             env += ENV_ITEM % ('CONTENT_TYPE',
                                                quote_for_env(local_object.get('content_type',

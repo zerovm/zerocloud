@@ -38,7 +38,7 @@ from zerocloud.common import has_control_chars, DEVICE_MAP, \
     CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
     merge_headers, update_metadata, DEFAULT_EXE_SYSTEM_MAP, STREAM_CACHE_SIZE, \
-    ZvmNode, ZvmChannel, parse_location, is_zvm_path, is_swift_path, is_cache_path, create_location
+    ZvmNode, ZvmChannel, parse_location, is_zvm_path, is_swift_path, is_cache_path, create_location, NodeEncoder
 
 from zerocloud.tarstream import StringBuffer, UntarStream, \
     TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile, Path
@@ -630,6 +630,11 @@ class ClusterController(ObjectController):
                                 for i in range(1, node_count + 1):
                                     new_name = self._create_node_name(node_name, i)
                                     new_node = self.nodes.get(new_name)
+                                    if not new_node:
+                                        new_node = ZvmNode(nid, new_name,
+                                                           nexe_path, nexe_args, nexe_env, node_replicate)
+                                        nid += 1
+                                        self.nodes[new_name] = new_node
                                     new_node.add_channel(device, access,
                                                          content_type=f.get('content_type', 'text/html'),
                                                          mode=mode)
@@ -894,7 +899,7 @@ class ClusterController(ObjectController):
                 elif top_channel.access & ACCESS_WRITABLE and node.replicate > 0:
                     node.path_info = top_channel.path.path
                     node.replicate = self.app.object_ring.replica_count
-            if node.replicate < 1:
+            if node.replicate == 0:
                 node.replicate = 1
             node_list.append(node)
 

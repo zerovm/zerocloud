@@ -440,6 +440,27 @@ class TestProxyQuery(unittest.TestCase):
             self.assertEqual(status, 'ok.')
         self.assertNotIn('x-nexe-error', response.headers)
 
+    def check_container_integrity(self, srv, url, objdict):
+        req = Request.blank('%s?format=json' % url)
+        res = req.get_response(srv)
+        filelist = json.loads(res.body)
+        for f in filelist:
+            req = self.object_request('%s/%s' % (url, f['name']))
+            res = req.get_response(srv)
+            self.assertEqual(res.status_int, 200)
+            obj = objdict.get(f['name'])
+            if obj:
+                self.assertEqual(res.body, obj)
+                del objdict[f['name']]
+            file_ts = float(res.headers['x-timestamp'])
+            file_ts = datetime.datetime.utcfromtimestamp(file_ts)
+            file_ts = file_ts.strftime('%Y-%m-%dT%H:%M:%S.%f')
+            cont_ts = f['last_modified']
+            self.assertEqual(file_ts, cont_ts)
+            self.assertEqual(str(f['bytes']), res.headers['content-length'])
+            self.assertEqual(f['hash'], res.headers['etag'])
+        self.assertEqual(len(objdict), 0)
+
     def test_QUERY_name_service(self):
         peers = 3
         ns_server = proxyquery.NameService(peers)
@@ -528,10 +549,11 @@ class TestProxyQuery(unittest.TestCase):
             req.content_length = os.path.getsize(tar)
             res = req.get_response(prosrv)
             self.executed_successfully(res)
-            req = self.object_request('/v1/a/c/o2')
-            res = req.get_response(prosrv)
-            self.assertEqual(res.status_int, 200)
-            self.assertEqual(res.body, self.get_sorted_numbers())
+            self.check_container_integrity(prosrv,
+                                           '/v1/a/c',
+                                           {
+                                               'o2': self.get_sorted_numbers()
+                                           })
 
     def test_QUERY_sort_store_stdout_stderr(self):
         self.setup_QUERY()
@@ -555,15 +577,12 @@ class TestProxyQuery(unittest.TestCase):
         self.assertEqual(res.headers['x-nexe-status'], 'ok.')
         self.assertEqual(res.headers['x-nexe-system'], 'sort')
         self.assertEqual(res.headers['x-nexe-retcode'], '0')
-        req = self.object_request('/v1/a/c/o2')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, self.get_sorted_numbers())
-
-        req = self.object_request('/v1/a/c/o3')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, '\nfinished\n')
+        self.check_container_integrity(prosrv,
+                                       '/v1/a/c',
+                                       {
+                                           'o2': self.get_sorted_numbers(),
+                                           'o3': '\nfinished\n'
+                                       })
 
     def test_QUERY_immediate_stdout(self):
         self.setup_QUERY()
@@ -602,6 +621,7 @@ class TestProxyQuery(unittest.TestCase):
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.content_type, 'application/x-pickle')
         self.assertEqual(res.body, self.get_sorted_numbers())
+        self.check_container_integrity(prosrv, '/v1/a/c', {})
 
     def test_QUERY_store_meta(self):
         self.setup_QUERY()
@@ -637,6 +657,7 @@ return 'Test Test'
         self.assertEqual(res.headers['x-object-meta-key1'], 'test1')
         self.assertEqual(res.headers['x-object-meta-key2'], 'test2')
         self.assertEqual(res.body, 'Test Test')
+        self.check_container_integrity(prosrv, '/v1/a/c', {})
 
     def test_QUERY_hello(self):
         self.setup_QUERY()
@@ -662,6 +683,7 @@ return 'hello, world'
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, 'hello, world')
+        self.check_container_integrity(prosrv, '/v1/a/c', {})
 
     def test_QUERY_cgi_response(self):
         self.setup_QUERY()
@@ -724,6 +746,7 @@ return resp + out
         self.assertNotIn('x-object-meta-key1', res.headers)
         self.assertNotIn('x-object-meta-key2', res.headers)
         self.assertEqual(res.body, '<html><body>Test this</body></html>')
+        self.check_container_integrity(prosrv, '/v1/a/c', {})
 
     def test_QUERY_cgi_environment(self):
         self.setup_QUERY()
@@ -794,6 +817,7 @@ return pickle.dumps(open(mnfst.nvram['path']).read())
         self.assertIn('name=DOCUMENT_ROOT, value=/dev/stdin', out)
         self.assertIn('name=PATH_INFO, value=/a/c/o3', out)
         self.assertIn('name=CONTENT_LENGTH, value=%d' % content_length, out)
+        self.check_container_integrity(prosrv, '/v1/a/c', {})
 
     def test_QUERY_GET_response(self):
         self.setup_QUERY()
@@ -841,6 +865,7 @@ return resp
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.headers['content-type'], 'application/x-pickle')
         self.assertEqual(res.body, self.get_sorted_numbers())
+        self.check_container_integrity(prosrv, '/v1/a/c', {})
 
     def test_QUERY_use_image(self):
         self.setup_QUERY()
@@ -1265,23 +1290,32 @@ return 'ok'
 
     def test_QUERY_network_resolve_multiple(self):
         self.setup_QUERY()
+        nexe =\
+r'''
+con_list.insert(0, re.sub(r'(?s).*args = ([^\n]+).*', r'\1', open(mnfst.nvram['path']).read()))
+return json.dumps(con_list)
+'''[1:-1]
+        prolis = _test_sockets[0]
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
             {
                 'name': 'sort',
-                'exec': {'path': 'swift://a/c/exe'},
+                'exec': {'path': 'swift://a/c/exe2'},
                 'file_list': [
-                    {'device': 'stderr', 'path': 'swift://a/c_out1/*.stderr'}
+                    {'device': 'stdout'}
                 ],
                 'connect': ['merge', 'sort'],
-                'count':3
+                'count':3,
+                'replicate': 2
             },
             {
                 'name': 'merge',
-                'exec': {'path': 'swift://a/c/exe'},
+                'exec': {'path': 'swift://a/c/exe2'},
                 'file_list': [
-                    {'device': 'stderr', 'path': 'swift://a/c_out1/*.stderr'}
+                    {'device': 'stdout'}
                 ],
-                'count': 2
+                'count': 2,
+                'replicate': 2
             }
         ]
         jconf = json.dumps(conf)
@@ -1291,41 +1325,40 @@ return 'ok'
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
 
-        req = self.object_request('/v1/a/c_out1/sort-1.stderr')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(
-            sorted(re.findall('tcp://127.0.0.1:\d+, /dev/out/([^\s]+)', res.body)),
-            ['merge-1', 'merge-1', 'merge-2', 'merge-2', 'sort-2', 'sort-2', 'sort-3', 'sort-3']
-        )
-        req = self.object_request('/v1/a/c_out1/sort-2.stderr')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(
-            sorted(re.findall('tcp://127.0.0.1:\d+, /dev/out/([^\s]+)', res.body)),
-            ['merge-1', 'merge-1', 'merge-2', 'merge-2', 'sort-1', 'sort-1', 'sort-3', 'sort-3']
-        )
-        req = self.object_request('/v1/a/c_out1/sort-3.stderr')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(
-            sorted(re.findall('tcp://127.0.0.1:\d+, /dev/out/([^\s]+)', res.body)),
-            ['merge-1', 'merge-1', 'merge-2', 'merge-2', 'sort-1', 'sort-1', 'sort-2', 'sort-2']
-        )
-        req = self.object_request('/v1/a/c_out1/merge-1.stderr')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(
-            sorted(re.findall('tcp://127.0.0.1:\d+, /dev/out/([^\s]+)', res.body)),
-            []
-        )
-        req = self.object_request('/v1/a/c_out1/merge-2.stderr')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(
-            sorted(re.findall('tcp://127.0.0.1:\d+, /dev/out/([^\s]+)', res.body)),
-            []
-        )
+        results = [json.loads(r) for r in re.findall(r'(?s)(\[.*?\](?=\[|$))', res.body)]
+        pattern = '/dev/out/([^\s]+)\', \'tcp://127.0.0.1:\d+'
+        for r in results:
+            if 'sort-1' in r[0]:
+                self.assertEqual(
+                    sorted(re.findall(pattern, str(r[1:]))),
+                    ['merge-1', 'merge-1', 'merge-2', 'merge-2',
+                     'sort-2', 'sort-2', 'sort-3', 'sort-3']
+                )
+            elif 'sort-2' in r[0]:
+                self.assertEqual(
+                    sorted(re.findall(pattern, str(r[1:]))),
+                    ['merge-1', 'merge-1', 'merge-2', 'merge-2',
+                     'sort-1', 'sort-1', 'sort-3', 'sort-3']
+                )
+            elif 'sort-3' in r[0]:
+                self.assertEqual(
+                    sorted(re.findall(pattern, str(r[1:]))),
+                    ['merge-1', 'merge-1', 'merge-2', 'merge-2',
+                     'sort-1', 'sort-1', 'sort-2', 'sort-2']
+                )
+            elif 'merge-1' in r[0]:
+                self.assertEqual(
+                    sorted(re.findall(pattern, str(r[1:]))),
+                    []
+                )
+            elif 'merge-2' in r[0]:
+                self.assertEqual(
+                    sorted(re.findall(pattern, str(r[1:]))),
+                    []
+                )
+            else:
+                self.assertTrue(False)
+        self.check_container_integrity(prosrv, '/v1/a/c_out1', {})
 
     def test_QUERY_read_obj_wildcard(self):
         self.setup_QUERY()
@@ -1430,6 +1463,7 @@ return 'ok'
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(str(res.body), self.get_sorted_numbers(10, 20))
+        self.check_container_integrity(prosrv, '/v1/a/c_out1', {})
 
     def test_QUERY_write_wildcard(self):
         self.setup_QUERY()
@@ -1438,7 +1472,7 @@ return 'ok'
                 'name': 'sort',
                 'exec': {'path': 'swift://a/c/exe'},
                 'file_list': [
-                    {'device': 'stdout', 'path': 'swift://a/c_out1/out.*'}],
+                    {'device': 'stdout', 'path': 'swift://a/c_out1/wout.*'}],
                 'count': 2
             }
         ]
@@ -1448,18 +1482,43 @@ return 'ok'
         req.body = jconf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
+        time_dict = {}
         # each header is duplicated because we have replication level set to 2
         self.assertEqual(res.headers['x-nexe-system'], 'sort-1,sort-1,sort-2,sort-2')
         self.assertEqual(res.headers['x-nexe-status'], 'ok.,ok.,ok.,ok.')
         self.assertEqual(res.headers['x-nexe-retcode'], '0,0,0,0')
-        req = self.object_request('/v1/a/c_out1/out.sort-1')
+        self.check_container_integrity(prosrv,
+                                       '/v1/a/c_out1',
+                                       {
+                                           'wout.sort-1': '(l.',
+                                           'wout.sort-2': '(l.'
+                                       })
+        # now we remove auto-replication and should get the same result
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout', 'path': 'swift://a/c_out1/wout.*'}],
+                'count': 2,
+                'replicate': 0
+            }
+        ]
+        jconf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        req = self.zerovm_request()
+        req.body = jconf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, '(l.')
-        req = self.object_request('/v1/a/c_out1/out.sort-2')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, '(l.')
+        self.assertEqual(res.headers['x-nexe-system'], 'sort-1,sort-2')
+        self.assertEqual(res.headers['x-nexe-status'], 'ok.,ok.')
+        self.assertEqual(res.headers['x-nexe-retcode'], '0,0')
+        self.check_container_integrity(prosrv,
+                                       '/v1/a/c_out1',
+                                       {
+                                           'wout.sort-1': '(l.',
+                                           'wout.sort-2': '(l.'
+                                       })
 
     def test_QUERY_group_transform_multiple(self):
         self.setup_QUERY()
@@ -1482,22 +1541,18 @@ return 'ok'
         self.assertEqual(res.headers['x-nexe-system'], 'sort-1,sort-2,sort-3,sort-4')
         self.assertEqual(res.headers['x-nexe-status'], 'ok.,ok.,ok.,ok.')
         self.assertEqual(res.headers['x-nexe-retcode'], '0,0,0,0')
-        req = self.object_request('/v1/a/c_out1/output1')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, self.get_sorted_numbers(0, 10))
-        req = self.object_request('/v1/a/c_out1/output2')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, self.get_sorted_numbers(10, 20))
-        req = self.object_request('/v1/a/c_out2/output1')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, self.get_sorted_numbers(20, 30))
-        req = self.object_request('/v1/a/c_out2/output2')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, self.get_sorted_numbers(30, 40))
+        self.check_container_integrity(prosrv,
+                                       '/v1/a/c_out1',
+                                       {
+                                           'output1': self.get_sorted_numbers(0, 10),
+                                           'output2': self.get_sorted_numbers(10, 20)
+                                       })
+        self.check_container_integrity(prosrv,
+                                       '/v1/a/c_out2',
+                                       {
+                                           'output1': self.get_sorted_numbers(20, 30),
+                                           'output2': self.get_sorted_numbers(30, 40)
+                                       })
 
     def test_QUERY_calls_authorize(self):
         raise SkipTest # there is no pre-authorization right now, maybe we do not need it at all
