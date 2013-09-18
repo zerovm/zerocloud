@@ -723,7 +723,7 @@ class ObjectQueryMiddleware(object):
                         ch['size'] = self.os_interface.path.getsize(ch['lpath'])
                     info = tar_stream.create_tarinfo(ftype=REGTYPE, name=ch['device'],
                                                      size=ch['size'])
-                    print [info.name, info.size, info.offset, info.offset_data]
+                    print [ch['device'], ch['size'], info]
                     resp_size += len(info) + tar_stream.get_archive_size(ch['size'])
                     ch['info'] = info
                     immediate_responses.append(ch)
