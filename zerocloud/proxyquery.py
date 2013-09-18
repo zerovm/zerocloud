@@ -1308,6 +1308,9 @@ class ClusterController(ObjectController):
                                      chan.path.account,
                                      chan.path.container,
                                      chan.path.obj).PUT(dest_req)
+                print dest_req.headers
+                print dest_resp.status
+                print dest_resp.headers
                 if dest_resp.status_int >= 300:
                     conn.error = 'Status %s when putting %s' \
                                  % (dest_resp.status, chan.path.path)
