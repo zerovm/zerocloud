@@ -473,11 +473,9 @@ class ObjectQueryMiddleware(object):
                     if ch['device'] in 'image':
                         fstab = add_to_fstab(fstab, ch['device'], 'ro')
                 elif ch['access'] & ACCESS_WRITABLE:
-                    writable_tmpdir = None
-                    if disk_file:
-                        writable_tmpdir = disk_file.tmpdir
-                        if not os.path.exists(writable_tmpdir):
-                            mkdirs(writable_tmpdir)
+                    writable_tmpdir = os.path.join(self.app.devices, device, 'tmp')
+                    if not os.path.exists(writable_tmpdir):
+                        mkdirs(writable_tmpdir)
                     (output_fd, output_fn) = mkstemp(dir=writable_tmpdir)
                     fallocate(output_fd, self.zerovm_maxoutput)
                     os.close(output_fd)
@@ -723,7 +721,7 @@ class ObjectQueryMiddleware(object):
                         ch['size'] = self.os_interface.path.getsize(ch['lpath'])
                     info = tar_stream.create_tarinfo(ftype=REGTYPE, name=ch['device'],
                                                      size=ch['size'])
-                    print [ch['device'], ch['size'], info]
+                    print [ch['device'], ch['size'], ch['lpath']]
                     resp_size += len(info) + tar_stream.get_archive_size(ch['size'])
                     ch['info'] = info
                     immediate_responses.append(ch)
