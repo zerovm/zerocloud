@@ -1265,7 +1265,7 @@ class ClusterController(ObjectController):
             untar_stream.update_buffer(data)
             info = untar_stream.get_next_tarinfo()
             while info:
-                print [info.name, info.size, info.offset, info.offset_data]
+                #print [info.name, info.size, info.offset, info.offset_data]
                 if 'sysmap' in info.name:
                     untar_stream.to_write = info.size
                     untar_stream.offset_data = info.offset_data

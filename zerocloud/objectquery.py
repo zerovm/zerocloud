@@ -551,6 +551,9 @@ class ObjectQueryMiddleware(object):
                             zerovm_inputmnfst += \
                                 'Channel=/dev/null,/dev/%s,0,0,0,0,%s,%s\n' % \
                                 (dev, self.zerovm_maxiops, self.zerovm_maxoutput)
+                zerovm_inputmnfst += \
+                    'Channel=%s,/dev/self,3,0,%s,%s,0,0\n' % \
+                    (zerovm_nexe, self.zerovm_maxiops, self.zerovm_maxinput)
                 env = None
                 if config.get('env'):
                     env = '[env]\n'
@@ -721,7 +724,7 @@ class ObjectQueryMiddleware(object):
                         ch['size'] = self.os_interface.path.getsize(ch['lpath'])
                     info = tar_stream.create_tarinfo(ftype=REGTYPE, name=ch['device'],
                                                      size=ch['size'])
-                    print [ch['device'], ch['size'], ch['lpath']]
+                    #print [ch['device'], ch['size'], ch['lpath']]
                     resp_size += len(info) + tar_stream.get_archive_size(ch['size'])
                     ch['info'] = info
                     immediate_responses.append(ch)
