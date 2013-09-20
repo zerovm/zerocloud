@@ -214,6 +214,13 @@ class CachePath(ObjPath):
         self.path = '/%s/%s/%s' % (account, container, obj)
 
 
+class NetPath(ObjPath):
+
+    def __init__(self, url):
+        (proto, path) = url.split('://')
+        ObjPath.__init__(self, url, '%s:%s' % (proto, path))
+
+
 def parse_location(url):
     if not url:
         return None
@@ -225,6 +232,8 @@ def parse_location(url):
         return ZvmPath(url)
     elif url.startswith('cache://'):
         return CachePath(url)
+    elif url.startswith('tcp://') or url.startswith('udp://'):
+        return NetPath(url)
     return None
 
 
