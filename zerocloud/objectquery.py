@@ -25,7 +25,7 @@ from swift.obj.server import DiskFile, write_metadata, read_metadata
 from swift.common.constraints import check_mount, check_utf8, check_float
 from swift.common.exceptions import DiskFileError, DiskFileNotExist
 from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
-    CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env, parse_location, is_image_path, create_location
+    CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env, parse_location, is_image_path, create_location, ACCESS_NETWORK
 
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 
@@ -485,6 +485,8 @@ class ObjectQueryMiddleware(object):
                         response_channels.append(ch)
                     elif not ch is local_object and is_master:
                         response_channels.insert(0, ch)
+                elif ch['access'] & ACCESS_NETWORK:
+                    ch['lpath'] = chan_path.path
 
             with tmpdir.mkstemp() as (zerovm_inputmnfst_fd,
                                       zerovm_inputmnfst_fn):
@@ -529,6 +531,11 @@ class ObjectQueryMiddleware(object):
                         zerovm_inputmnfst += \
                             'Channel=%s,/dev/%s,%s,%s,0,0,%s,%s\n' % \
                             (ch['lpath'], ch['device'], type, tag,
+                             self.zerovm_maxiops, self.zerovm_maxoutput)
+                    elif access & ACCESS_NETWORK:
+                        zerovm_inputmnfst += \
+                            'Channel=%s,/dev/%s,%s,0,0,0,%s,%s\n' % \
+                            (ch['lpath'], ch['device'], type,
                              self.zerovm_maxiops, self.zerovm_maxoutput)
                     mode = ch.get('mode', None)
                     if mode:
