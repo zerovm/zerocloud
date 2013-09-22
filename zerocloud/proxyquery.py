@@ -310,6 +310,7 @@ class ClusterController(ObjectController):
 
     def list_account(self, req, account, mask=None, marker=None):
         new_req = req.copy_get()
+        new_req.path_info = '/' + quote(account)
         new_req.query_string = 'format=json'
         if marker:
             new_req.query_string += '&marker=' + marker
@@ -333,7 +334,7 @@ class ClusterController(ObjectController):
 
     def list_container(self, req, account, container, mask=None, marker=None):
         new_req = req.copy_get()
-        new_req.path_info += '/' + quote(container)
+        new_req.path_info = '/' + quote(account) + '/' + quote(container)
         new_req.query_string = 'format=json'
         if marker:
             new_req.query_string += '&marker=' + marker
