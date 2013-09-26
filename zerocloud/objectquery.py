@@ -261,14 +261,21 @@ class ObjectQueryMiddleware(object):
             nexe = tar.extractfile(boot_file)
         except KeyError:
             pass
-        if nexe:
+        if not nexe:
+            return False
+        try:
             channels['boot'] = os.path.join(zerovm_tmp, 'boot')
             fp = open(channels['boot'], 'wb')
             reader = iter(lambda: nexe.read(self.app.disk_chunk_size), '')
             for chunk in reader:
                 fp.write(chunk)
             fp.close()
-        tar.close()
+            return True
+        except IOError:
+            pass
+        finally:
+            tar.close()
+        return False
 
     def zerovm_query(self, req):
         """Handle zerovm execution requests for the Swift Object Server."""
@@ -333,6 +340,9 @@ class ObjectQueryMiddleware(object):
                                   body='Invalid Content-Type',
                                   content_type='text/plain', headers=nexe_headers)
 
+        zerovm_valid = False
+        if req.headers.get('x-zerovm-valid', 'false').lower() in TRUE_VALUES:
+            zerovm_valid = True
         tmpdir = TmpDir(
             self.app.devices,
             device,
@@ -402,7 +412,8 @@ class ObjectQueryMiddleware(object):
                 else:
                     sysimage_path = self.zerovm_sysimage_devices.get(exe_path.image, None)
                     if sysimage_path:
-                        self._extract_boot_file(channels, exe_path.path, sysimage_path, zerovm_tmp)
+                        if self._extract_boot_file(channels, exe_path.path, sysimage_path, zerovm_tmp):
+                            zerovm_valid = True
             if 'boot' in channels:
                 zerovm_nexe = channels.pop('boot')
             else:
@@ -646,7 +657,7 @@ class ObjectQueryMiddleware(object):
                     zerovm_inputmnfst = zerovm_inputmnfst[written:]
 
                 zerovm_args = None
-                if req.headers.get('x-zerovm-valid', 'false').lower() in TRUE_VALUES:
+                if zerovm_valid:
                     zerovm_args = ['-s']
                 start = time.time()
                 thrd = self.zerovm_thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, zerovm_args)
