@@ -129,10 +129,13 @@ class ObjectQueryMiddleware(object):
         self.zerovm_exename = [i.strip() for i in conf.get('zerovm_exename', 'zerovm').split() if i.strip()]
 
         # maximum number of simultaneous running zerovms, others are queued
-        self.zerovm_maxpool = int(conf.get('zerovm_maxpool', 10))
+        #self.zerovm_maxpool = int(conf.get('zerovm_maxpool', 10))
+
+        # maximum number of simultaneous running zerovms with dependent nodes, no queue
+        #self.zerovm_max_cluster_pool = int(conf.get('zerovm_maxpool', 10))
 
         # maximum length of queue for requests awaiting zerovm execution
-        self.zerovm_maxqueue = int(conf.get('zerovm_maxqueue', 3))
+        #self.zerovm_maxqueue = int(conf.get('zerovm_maxqueue', 3))
 
         # timeout for zerovm to finish execution
         self.zerovm_timeout = int(conf.get('zerovm_timeout', 5))
@@ -163,6 +166,19 @@ class ObjectQueryMiddleware(object):
         for k, v in zip(*[iter(sysimage_list)]*2):
             self.zerovm_sysimage_devices[k] = v
 
+        # threadpolls for advanced scheduling in proxy middleware
+        self.zerovm_threadpools = {}
+        threadpool_list = [i.strip()
+                           for i in conf.get('zerovm_threadpools', 'default 10 3 cluster 10 0').split()
+                           if i.strip()]
+        try:
+            for name, size, queue in zip(*[iter(threadpool_list)]*3):
+                self.zerovm_threadpools[name] = (GreenPool(int(size)), int(queue))
+        except ValueError:
+            raise ValueError('Cannot parse "zerovm_threadpools" configuration variable')
+        if len(self.zerovm_threadpools) < 1 or not self.zerovm_threadpools.get('default', None):
+            raise ValueError('Invalid "zerovm_threadpools" configuration variable')
+
         # hardcoded, we don't want to crush the server
         self.zerovm_stderr_size = 65536
         self.zerovm_stdout_size = 65536
@@ -173,7 +189,7 @@ class ObjectQueryMiddleware(object):
         self.os_interface = os  # for unit-tests
 
         # green thread pool for zerovm execution
-        self.zerovm_thrdpool = GreenPool(self.zerovm_maxpool)
+        #self.zerovm_thrdpool = GreenPool(self.zerovm_maxpool)
 
         # obey `disable_fallocate` configuration directive
         if conf.get('disable_fallocate', 'no').lower() in TRUE_VALUES:
@@ -317,12 +333,6 @@ class ObjectQueryMiddleware(object):
             except ValueError, err:
                 return HTTPBadRequest(body=str(err), request=req,
                                       content_type='text/plain')
-
-        if self.zerovm_thrdpool.free() <= 0 \
-                and self.zerovm_thrdpool.waiting() >= self.zerovm_maxqueue:
-            return HTTPServiceUnavailable(body='Slot not available',
-                                          request=req, content_type='text/plain',
-                                          headers=nexe_headers)
         if self.app.mount_check and not check_mount(self.app.devices, device):
             return Response(status='507 %s is not mounted' % device,
                             headers=nexe_headers)
@@ -656,11 +666,21 @@ class ObjectQueryMiddleware(object):
                                                       zerovm_inputmnfst)
                     zerovm_inputmnfst = zerovm_inputmnfst[written:]
 
+                pool = req.headers.get('x-zerovm-pool', 'default').lower()
+                (thrdpool, queue) = self.zerovm_threadpools.get(pool, None)
+                if not thrdpool:
+                    return HTTPBadRequest(body='Cannot find pool %s' % pool,
+                                          request=req, content_type='text/plain',
+                                          headers=nexe_headers)
+                if thrdpool.free() <= 0 and thrdpool.waiting() >= queue:
+                    return HTTPServiceUnavailable(body='Slot not available',
+                                                  request=req, content_type='text/plain',
+                                                  headers=nexe_headers)
                 zerovm_args = None
                 if zerovm_valid:
                     zerovm_args = ['-s']
                 start = time.time()
-                thrd = self.zerovm_thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, zerovm_args)
+                thrd = thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, zerovm_args)
                 (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
                 perf = "%.3f" % (time.time() - start)
                 self.logger.info("PERF SPAWN: %s" % perf)
@@ -950,7 +970,8 @@ class ObjectQueryMiddleware(object):
                                                   zerovm_inputmnfst)
                 zerovm_inputmnfst = zerovm_inputmnfst[written:]
 
-            thrd = self.zerovm_thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, ['-F'])
+            (thrdpool, queue) = self.zerovm_threadpools['default']
+            thrd = thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, ['-F'])
             (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
             if zerovm_stderr:
                 self.logger.warning('zerovm stderr: ' + zerovm_stderr)

@@ -935,7 +935,7 @@ class ClusterController(ObjectController):
             nexe_headers = {
                 'x-nexe-system': node.name,
                 'x-nexe-status': 'ZeroVM did not run',
-                'x-nexe-retcode' : 0,
+                'x-nexe-retcode': 0,
                 'x-nexe-etag': '',
                 'x-nexe-validation': 0,
                 'x-nexe-cdr-line': '0 0 0 0 0 0 0 0 0 0 0 0'
@@ -952,6 +952,10 @@ class ClusterController(ObjectController):
             exec_request.headers['x-account-name'] = self.account_name
             exec_request.headers['x-timestamp'] = normalize_timestamp(time.time())
             exec_request.headers['x-zerovm-valid'] = 'false'
+            exec_request.headers['x-zerovm-pool'] = 'default'
+            if len(node.connect) > 0 or len(node.bind) > 0:
+                # node operation depends on connection to other nodes
+                exec_request.headers['x-zerovm-pool'] = 'cluster'
             if 'swift.authorize' in exec_request.environ:
                 aresp = exec_request.environ['swift.authorize'](exec_request)
                 if aresp:
@@ -1360,29 +1364,12 @@ class ClusterController(ObjectController):
         txn_id = request.environ['swift.trans_id']
         acc_object = datetime.datetime.utcnow().strftime('%Y/%m/%d.log')
         if connection:
-#            cdr = []
-#            for n in connection.nexe_headers['x-nexe-cdr-line'].split():
-#                try:
-#                    cdr.append(int(float(n) * 1000))
-#                except ValueError:
-#                    cdr.append(int(n))
-#            try:
-#                request.cdr_summary = [x + y for (x, y) in zip(request.cdr_summary, cdr)]
-#            except AttributeError:
-#                request.cdr_summary = cdr
             body = '%s %s %s (%s) [%s]\n' % (datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
                                              txn_id, connection.nexe_headers['x-nexe-system'],
                                              connection.nexe_headers['x-nexe-cdr-line'],
                                              connection.nexe_headers['x-nexe-status'])
             request.cdr_log.append(body)
         else:
-#            try:
-#                summary = ' '.join([str(n) for n in request.cdr_summary])
-#            except AttributeError:
-#                return
-#            body = '%s %s === (%s) [Done]\n' % (datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
-#                                   txn_id, summary)
-#            request.cdr_log.append(body)
             body = ''.join(request.cdr_log)
             append_req = Request.blank('/%s/%s/%s/%s' % (self.app.version,
                                                          self.app.cdr_account,
@@ -1391,8 +1378,7 @@ class ClusterController(ObjectController):
                                        headers={'X-Append-To': '-1',
                                                 'Content-Length': len(body),
                                                 'Content-Type': 'text/plain'},
-                                       body=body
-            )
+                                       body=body)
             append_req.method = 'POST'
             resp = append_req.get_response(self.app)
             if resp.status_int >= 300:

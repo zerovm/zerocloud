@@ -1084,8 +1084,7 @@ time.sleep(10)
         r = range(0, maxreq_factor * 5)
         req = copy(r)
         with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
-            orig_zerovm_maxqueue = self.app.zerovm_maxqueue
-            orig_zerovm_maxpool = self.app.zerovm_maxpool
+            orig_zerovm_threadpools = self.app.zerovm_threadpools
             orig_timeout = self.app.zerovm_timeout
             try:
                 self.app.zerovm_timeout = 5
@@ -1096,13 +1095,10 @@ time.sleep(10)
                     for i in r:
                         req[i] = self.zerovm_free_request()
                         req[i].body_file = open(tar, 'rb')
-                    self.app.zerovm_maxqueue =\
-                        int(maxreq_factor * queue_factor * 5)
-                    self.app.zerovm_maxpool =\
-                        int(maxreq_factor * pool_factor * 5)
-                    self.app.zerovm_thrdpool = GreenPool(self.app.zerovm_maxpool)
-                    spil_over = self.app.zerovm_maxqueue\
-                        + self.app.zerovm_maxpool
+                    size = int(maxreq_factor * pool_factor * 5)
+                    queue = int(maxreq_factor * queue_factor * 5)
+                    self.app.zerovm_threadpools['default'] = (GreenPool(size), queue)
+                    spil_over = size + queue
                     for i in r:
                         t[i] = pool.spawn(self.app.zerovm_query, req[i])
                     pool.waitall()
@@ -1124,8 +1120,7 @@ time.sleep(10)
 
             finally:
                 self.app.zerovm_timeout = orig_timeout
-                self.app.zerovm_maxqueue = orig_zerovm_maxqueue
-                self.app.zerovm_maxpool = orig_zerovm_maxpool
+                self.app.zerovm_threadpools = orig_zerovm_threadpools
 
     def test_QUERY_max_input_size(self):
         self.setup_zerovm_query()
