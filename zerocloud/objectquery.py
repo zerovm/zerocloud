@@ -1,4 +1,5 @@
 from StringIO import StringIO
+from greenlet import GreenletExit
 import re
 import shutil
 import time
@@ -293,6 +294,12 @@ class ObjectQueryMiddleware(object):
             tar.close()
         return False
 
+    def _placeholder(self):
+        try:
+            sleep(self.zerovm_timeout)
+        except GreenletExit:
+            return
+
     def zerovm_query(self, req):
         """Handle zerovm execution requests for the Swift Object Server."""
 
@@ -350,6 +357,17 @@ class ObjectQueryMiddleware(object):
                                   body='Invalid Content-Type',
                                   content_type='text/plain', headers=nexe_headers)
 
+        pool = req.headers.get('x-zerovm-pool', 'default').lower()
+        (thrdpool, queue) = self.zerovm_threadpools.get(pool, None)
+        if not thrdpool:
+            return HTTPBadRequest(body='Cannot find pool %s' % pool,
+                                  request=req, content_type='text/plain',
+                                  headers=nexe_headers)
+        if thrdpool.free() <= 0 and thrdpool.waiting() >= queue:
+            return HTTPServiceUnavailable(body='Slot not available',
+                                          request=req, content_type='text/plain',
+                                          headers=nexe_headers)
+        holder = thrdpool.spawn(self._placeholder)
         zerovm_valid = False
         if req.headers.get('x-zerovm-valid', 'false').lower() in TRUE_VALUES:
             zerovm_valid = True
@@ -666,12 +684,7 @@ class ObjectQueryMiddleware(object):
                                                       zerovm_inputmnfst)
                     zerovm_inputmnfst = zerovm_inputmnfst[written:]
 
-                pool = req.headers.get('x-zerovm-pool', 'default').lower()
-                (thrdpool, queue) = self.zerovm_threadpools.get(pool, None)
-                if not thrdpool:
-                    return HTTPBadRequest(body='Cannot find pool %s' % pool,
-                                          request=req, content_type='text/plain',
-                                          headers=nexe_headers)
+                holder.kill()
                 if thrdpool.free() <= 0 and thrdpool.waiting() >= queue:
                     return HTTPServiceUnavailable(body='Slot not available',
                                                   request=req, content_type='text/plain',
