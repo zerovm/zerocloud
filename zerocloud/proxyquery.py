@@ -157,8 +157,11 @@ class NameService(object):
                         for i in range(connect_count):
                             connecting_host = struct.unpack_from(NameService.INT_FMT, reply, offset)[0]
                             port = bind_map[connecting_host][peer_id]
+                            connect_to = peer_map[connecting_host][0]
+                            if connect_to == peer_map[peer_id][0]:  # both on the same host
+                                connect_to = '127.0.0.1'
                             struct.pack_into(NameService.OUTPUT_RECORD_FMT, reply, offset,
-                                             socket.inet_pton(socket.AF_INET, peer_map[connecting_host][0]), port)
+                                             socket.inet_pton(socket.AF_INET, connect_to), port)
                             offset += NameService.OUTPUT_RECORD_SIZE
                             #out += ' %d -> %d:%d\n' % (connecting_host, peer_id, port)
                         self.sock.sendto(reply, (peer_map[peer_id][0], peer_map[peer_id][1]))
@@ -307,6 +310,32 @@ class ClusterController(ObjectController):
         partition_count = self.app.object_ring.partition_count
         part = randrange(0, partition_count)
         return part
+
+    def iter_nodes(self, partition, nodes, ring, handoff=True):
+        """
+        Node iterator that will first iterate over the normal nodes for a
+        partition and then the handoff partitions for the node.
+
+        :param partition: partition to iterate nodes for
+        :param nodes: list of node dicts from the ring
+        :param ring: ring to get handoff nodes from
+        :param handoff: disable handoff for free-standing executors
+        """
+        for node in nodes:
+            if not self.error_limited(node):
+                yield node
+        handoffs = 0
+        for node in ring.get_more_nodes(partition):
+            if not self.error_limited(node):
+                if handoff:
+                    handoffs += 1
+                    if self.app.log_handoffs:
+                        self.app.logger.increment('handoff_count')
+                        self.app.logger.warning(
+                            'Handoff requested (%d)' % handoffs)
+                        if handoffs == len(nodes):
+                            self.app.logger.increment('handoff_all_count')
+                yield node
 
     def list_account(self, req, account, mask=None, marker=None):
         new_req = req.copy_get()
@@ -754,6 +783,58 @@ class ClusterController(ObjectController):
                     break
         return addr
 
+    def _make_exec_requests(self, pile, exec_requests):
+        for exec_request in exec_requests:
+            node = exec_request.node
+            try:
+                account, container, obj = split_path(node.path_info, 3, 3, True)
+                partition, nodes = self.app.object_ring.get_nodes(account, container, obj)
+                node_iter = self.iter_nodes(partition, nodes, self.app.object_ring)
+                exec_request.path_info = node.path_info
+                if node.replicate > 1:
+                    container_info = self.container_info(account, container)
+                    container_partition = container_info['partition']
+                    containers = container_info['nodes']
+                    exec_headers = self._backend_requests(exec_request, node.replicate,
+                                                          container_partition, containers)
+                    if node.skip_validation:
+                        for hdr in exec_headers:
+                            hdr['x-zerovm-valid'] = 'true'
+                    i = 0
+                    pile.spawn(self._connect_exec_node, node_iter, partition,
+                               exec_request, self.app.logger.thread_locals, node,
+                               exec_headers[i])
+                    #print exec_headers[i]
+                    for repl_node in node.replicas:
+                        i += 1
+                        pile.spawn(self._connect_exec_node, node_iter, partition,
+                                   exec_request, self.app.logger.thread_locals, repl_node,
+                                   exec_headers[i])
+                        #print exec_headers[i]
+                else:
+                    if node.skip_validation:
+                        exec_request.headers['x-zerovm-valid'] = 'true'
+                    pile.spawn(self._connect_exec_node, node_iter, partition,
+                               exec_request, self.app.logger.thread_locals, node,
+                               exec_request.headers)
+            except ValueError:
+                partition = self.get_random_partition()
+                nodes = self.app.object_ring.get_part_nodes(partition)
+                node_iter = self.iter_nodes(partition, nodes, self.app.object_ring, handoff=False)
+                if node.skip_validation:
+                    exec_request.headers['x-zerovm-valid'] = 'true'
+                pile.spawn(self._connect_exec_node, node_iter, partition,
+                           exec_request, self.app.logger.thread_locals, node,
+                           exec_request.headers)
+                for repl_node in node.replicas:
+                    partition = self.get_random_partition()
+                    nodes = self.app.object_ring.get_part_nodes(partition)
+                    node_iter = self.iter_nodes(partition, nodes, self.app.object_ring, handoff=False)
+                    pile.spawn(self._connect_exec_node, node_iter, partition,
+                               exec_request, self.app.logger.thread_locals, repl_node,
+                               exec_request.headers)
+        return [conn for conn in pile if conn]
+
     @delay_denial
     @cors_validation
     def POST(self, req, exe_resp=None, cluster_config=''):
@@ -924,7 +1005,6 @@ class ClusterController(ObjectController):
             return HTTPServiceUnavailable(
                 body='Cannot find own address, check zerovm_ns_hostname')
         node_count = self._total_node_count(node_list)
-        pile = GreenPile(node_count)
         ns_server = None
         if node_count > 1:
             ns_server = NameService(node_count)
@@ -934,6 +1014,7 @@ class ClusterController(ObjectController):
             ns_server.start(self.app.zerovm_ns_thrdpool)
             if not ns_server.port:
                 return HTTPServiceUnavailable(body='Cannot bind name service')
+        exec_requests = []
         for node in node_list:
             nexe_headers = {
                 'x-nexe-system': node.name,
@@ -1036,60 +1117,16 @@ class ClusterController(ObjectController):
                 for repl_node in node.replicas:
                     repl_node.last_data = image_resp
                     image_resp.nodes.append({'node': repl_node, 'dev': 'image'})
-            node_path_info = getattr(node, 'path_info', '')
-            if node_path_info:
-                path_info = node_path_info
-            try:
-                account, container, obj = split_path(path_info, 3, 3, True)
-                partition, nodes = self.app.object_ring.get_nodes(account, container, obj)
-                node_iter = self.iter_nodes(partition, nodes, self.app.object_ring)
-                exec_request.path_info = path_info
-                if node.replicate > 1:
-                    container_info = self.container_info(account, container)
-                    container_partition = container_info['partition']
-                    containers = container_info['nodes']
-                    exec_headers = self._backend_requests(exec_request, node.replicate,
-                                                          container_partition, containers)
-                    if node.skip_validation:
-                        for hdr in exec_headers:
-                            hdr['x-zerovm-valid'] = 'true'
-                    i = 0
-                    pile.spawn(self._connect_exec_node, node_iter, partition,
-                               exec_request, self.app.logger.thread_locals, node,
-                               nexe_headers, exec_headers[i])
-                    #print exec_headers[i]
-                    for repl_node in node.replicas:
-                        i += 1
-                        pile.spawn(self._connect_exec_node, node_iter, partition,
-                                   exec_request, self.app.logger.thread_locals, repl_node,
-                                   nexe_headers, exec_headers[i])
-                        #print exec_headers[i]
-                else:
-                    if node.skip_validation:
-                        exec_request.headers['x-zerovm-valid'] = 'true'
-                    pile.spawn(self._connect_exec_node, node_iter, partition,
-                               exec_request, self.app.logger.thread_locals, node,
-                               nexe_headers, exec_request.headers)
-            except ValueError:
-                partition = self.get_random_partition()
-                nodes = self.app.object_ring.get_part_nodes(partition)
-                node_iter = self.iter_nodes(partition, nodes, self.app.object_ring)
-                if node.skip_validation:
-                    exec_request.headers['x-zerovm-valid'] = 'true'
-                pile.spawn(self._connect_exec_node, node_iter, partition,
-                           exec_request, self.app.logger.thread_locals, node,
-                           nexe_headers, exec_request.headers)
-                for repl_node in node.replicas:
-                    partition = self.get_random_partition()
-                    nodes = self.app.object_ring.get_part_nodes(partition)
-                    node_iter = self.iter_nodes(partition, nodes, self.app.object_ring)
-                    pile.spawn(self._connect_exec_node, node_iter, partition,
-                               exec_request, self.app.logger.thread_locals, repl_node,
-                               nexe_headers, exec_request.headers)
+            if not getattr(node, 'path_info', None):
+                node.path_info = path_info
+            exec_request.node = node
+            exec_request.resp_headers = nexe_headers
+            exec_requests.append(exec_request)
+
         if image_resp:
             data_sources.append(image_resp)
-
-        conns = [conn for conn in pile if conn]
+        pile = GreenPile(node_count)
+        conns = self._make_exec_requests(pile, exec_requests)
         if len(conns) < node_count:
             self.app.logger.exception(
                 _('ERROR Cannot find suitable node to execute code on'))
@@ -1328,7 +1365,7 @@ class ClusterController(ObjectController):
         return conn
 
     def _connect_exec_node(self, obj_nodes, part, request,
-                           logger_thread_locals, cnode, nexe_headers, request_headers):
+                           logger_thread_locals, cnode, request_headers):
         self.app.logger.thread_locals = logger_thread_locals
         for node in obj_nodes:
             try:
@@ -1344,7 +1381,7 @@ class ClusterController(ObjectController):
                     resp = conn.getexpect()
                 conn.node = node
                 conn.cnode = cnode
-                conn.nexe_headers = nexe_headers
+                conn.nexe_headers = request.resp_headers
                 if resp.status == HTTP_CONTINUE:
                     conn.resp = None
                     return conn
