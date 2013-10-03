@@ -1258,8 +1258,7 @@ return 'ok'
                 'file_list': [
                     {'device': 'stdout', 'path': 'zvm://merge:/dev/sort'},
                     {'device': 'stderr', 'path': 'swift://a/c/o2'}
-                ],
-                'connect': ['merge']
+                ]
             },
             {
                 'name': 'merge',

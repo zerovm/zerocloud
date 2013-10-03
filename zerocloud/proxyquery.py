@@ -686,10 +686,13 @@ class ClusterController(ObjectController):
 
         for node in cluster_config:
             connect = node.get('connect')
-            if not connect:
-                continue
             node_name = node.get('name')
             src = connect_devices.get(node_name, None)
+            if not connect:
+                if src:
+                    connect = [connected_node for connected_node in src.iterkeys()]
+                else:
+                    continue
             if self.nodes.get(node_name):
                 connect_node = self.nodes.get(node_name)
                 try:
@@ -1356,7 +1359,7 @@ class ClusterController(ObjectController):
                     return conn
                 else:
                     self.app.logger.warn('Obj server failed with: %d %s' % (resp.status, resp.reason))
-            except:
+            except Exception:
                 self.exception_occurred(node, _('Object'),
                                         _('Expect: 100-continue on %s') % request.path_info)
 
