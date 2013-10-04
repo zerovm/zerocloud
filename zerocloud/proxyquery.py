@@ -221,7 +221,8 @@ class ProxyQueryMiddleware(object):
         # default content-type for unknown files
         self.app.zerovm_content_type = conf.get('zerovm_default_content_type', 'application/octet-stream')
         # names of sysimage devices, no sysimage devices exist by default
-        self.app.zerovm_sysimage_devices = [i.strip() for i in conf.get('zerovm_sysimage_devices', '').split() if i.strip()]
+        self.app.zerovm_sysimage_devices = [i.strip() for i in conf.get('zerovm_sysimage_devices', '').split()
+                                            if i.strip()]
         # GET support: container for content-type association storage
         self.app.zerovm_registry_path = '.zvm'
         # GET support: API version for "open" command
@@ -1239,8 +1240,7 @@ class ClusterController(ObjectController):
                     conn.error.replace('\n', '')
 
             #print [final_response.headers, conn.nexe_headers]
-            if self.app.zerovm_accounting_enabled:
-                self._store_accounting_data(req, conn)
+            self._store_accounting_data(req, conn)
             merge_headers(final_response.headers, conn.nexe_headers)
             if resp and resp.content_length > 0:
                 if final_body:
@@ -1254,7 +1254,7 @@ class ClusterController(ObjectController):
         if ns_server:
             ns_server.stop()
         if self.app.zerovm_accounting_enabled:
-            self._store_accounting_data(req)
+            self.app.zerovm_ns_thrdpool.spawn_n(self._store_accounting_data, req)
         if self.app.zerovm_use_cors and self.container_name:
             container_info = self.container_info(self.account_name, self.container_name)
             if container_info.get('cors', None):
@@ -1405,10 +1405,15 @@ class ClusterController(ObjectController):
         acc_object = datetime.datetime.utcnow().strftime('%Y/%m/%d.log')
         if connection:
             body = '%s %s %s (%s) [%s]\n' % (datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
-                                             txn_id, connection.nexe_headers['x-nexe-system'],
+                                             txn_id,
+                                             connection.nexe_headers['x-nexe-system'],
                                              connection.nexe_headers['x-nexe-cdr-line'],
                                              connection.nexe_headers['x-nexe-status'])
             request.cdr_log.append(body)
+            self.app.logger.info('%s %s (%s) [%s]' % (txn_id,
+                                                      connection.nexe_headers['x-nexe-system'],
+                                                      connection.nexe_headers['x-nexe-cdr-line'],
+                                                      connection.nexe_headers['x-nexe-status']))
         else:
             body = ''.join(request.cdr_log)
             append_req = Request.blank('/%s/%s/%s/%s' % (self.app.version,
