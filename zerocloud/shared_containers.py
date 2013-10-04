@@ -8,7 +8,7 @@ Implemented features are:
 
 """
 
-from liteauth.liteauth import retrieve_metadata, store_metadata
+from liteauth.liteauth import retrieve_metadata, store_metadata, get_account_from_whitelist
 from swift.common.swob import wsgify, HTTPNotFound, HTTPBadRequest, HTTPUnauthorized, Response
 
 
@@ -18,6 +18,9 @@ class SharedContainersMiddleware(object):
         self.shared_container_add = 'load-share'
         self.shared_container_remove = 'drop-share'
         self.version = 'v1'
+        # url for whitelist objects
+        # Example: /v1/liteauth/whitelist
+        self.whitelist_url = conf.get('whitelist_url', '').lower().rstrip('/')
 
     @wsgify
     def __call__(self, request):
@@ -36,11 +39,17 @@ class SharedContainersMiddleware(object):
     def handle_shared(self, version, account, shared_account, shared_container):
         if not account:
             return HTTPUnauthorized()
+        email = 'shared'
+        if self.whitelist_url:
+            acc_id = get_account_from_whitelist(self.whitelist_url, self.app, shared_account)
+            if acc_id:
+                email = shared_account
+                shared_account = acc_id
         shared = retrieve_metadata(self.app, self.version, account, 'shared')
         if not shared:
             shared = {}
         if version in self.shared_container_add:
-            shared['%s/%s' % (shared_account, shared_container)] = 'shared'
+            shared['%s/%s' % (shared_account, shared_container)] = email
         elif version in self.shared_container_remove:
             try:
                 del shared['%s/%s' % (shared_account, shared_container)]
