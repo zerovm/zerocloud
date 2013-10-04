@@ -18,6 +18,7 @@ class SharedContainersMiddleware(object):
         self.shared_container_add = 'load-share'
         self.shared_container_remove = 'drop-share'
         self.version = 'v1'
+        self.google_prefix = 'g_'
         # url for whitelist objects
         # Example: /v1/liteauth/whitelist
         self.whitelist_url = conf.get('whitelist_url', '').lower().rstrip('/')
@@ -41,8 +42,8 @@ class SharedContainersMiddleware(object):
             return HTTPUnauthorized()
         email = 'shared'
         if self.whitelist_url:
-            acc_id = get_account_from_whitelist(self.whitelist_url, self.app, shared_account)
-            if acc_id:
+            acc_id = get_account_from_whitelist(self.whitelist_url, self.app, shared_account, None)
+            if acc_id and acc_id.startswith(self.google_prefix):
                 email = shared_account
                 shared_account = acc_id
         shared = retrieve_metadata(self.app, self.version, account, 'shared')
