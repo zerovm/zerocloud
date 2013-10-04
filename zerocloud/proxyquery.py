@@ -1410,10 +1410,10 @@ class ClusterController(ObjectController):
                                              connection.nexe_headers['x-nexe-cdr-line'],
                                              connection.nexe_headers['x-nexe-status'])
             request.cdr_log.append(body)
-            self.app.logger.info('%s %s (%s) [%s]' % (txn_id,
-                                                      connection.nexe_headers['x-nexe-system'],
-                                                      connection.nexe_headers['x-nexe-cdr-line'],
-                                                      connection.nexe_headers['x-nexe-status']))
+            self.app.logger.info('zerovm-cdr %s %s (%s) [%s]' % (txn_id,
+                                                                 connection.nexe_headers['x-nexe-system'],
+                                                                 connection.nexe_headers['x-nexe-cdr-line'],
+                                                                 connection.nexe_headers['x-nexe-status']))
         else:
             body = ''.join(request.cdr_log)
             append_req = Request.blank('/%s/%s/%s/%s' % (self.app.version,
