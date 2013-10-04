@@ -7,6 +7,7 @@ Implemented features are:
 - shared folder remove, drops shared folder from account metadata
 
 """
+from urllib import unquote
 
 from liteauth.liteauth import retrieve_metadata, store_metadata, get_account_from_whitelist
 from swift.common.swob import wsgify, HTTPNotFound, HTTPBadRequest, HTTPUnauthorized, Response
@@ -42,9 +43,9 @@ class SharedContainersMiddleware(object):
             return HTTPUnauthorized()
         email = 'shared'
         if self.whitelist_url:
-            acc_id = get_account_from_whitelist(self.whitelist_url, self.app, shared_account, None)
+            acc_id = get_account_from_whitelist(self.whitelist_url, self.app, unquote(shared_account), None)
             if acc_id and acc_id.startswith(self.google_prefix):
-                email = shared_account
+                email = unquote(shared_account)
                 shared_account = acc_id
         shared = retrieve_metadata(self.app, self.version, account, 'shared')
         if not shared:
