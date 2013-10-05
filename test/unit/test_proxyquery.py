@@ -1594,6 +1594,7 @@ return json.dumps(con_list)
             prosrv.app.max_upload_time = 1
             req = self.zerovm_request()
             req.body_file = SlowFile()
+            req.content_length = 100
             res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 408)
 

@@ -882,6 +882,11 @@ class ClusterController(ObjectController):
                 return error
         elif req.headers['content-type'].split(';')[0].strip() in 'application/json':
         # System map was sent as a POST body
+            if 'chunked' not in req.headers.get('transfer-encoding', '') \
+                    and not 'content-length' in req.headers:
+                return HTTPBadRequest(request=req,
+                                      body='Must specify "Content-Length" or '
+                                           '"Transfer-Encoding: chunked"')
             if not cluster_config:
                 for chunk in read_iter:
                     req.bytes_transferred += len(chunk)
@@ -1239,7 +1244,8 @@ class ClusterController(ObjectController):
                 conn.nexe_headers['x-nexe-error'] = \
                     conn.error.replace('\n', '')
 
-            #print [final_response.headers, conn.nexe_headers]
+            del conn.cnode.last_data
+            #print json.dumps(conn.cnode, cls=NodeEncoder, indent=2)
             self._store_accounting_data(req, conn)
             merge_headers(final_response.headers, conn.nexe_headers)
             if resp and resp.content_length > 0:

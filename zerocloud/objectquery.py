@@ -26,7 +26,8 @@ from swift.obj.server import DiskFile, write_metadata, read_metadata, DiskWriter
 from swift.common.constraints import check_mount, check_utf8, check_float
 from swift.common.exceptions import DiskFileError, DiskFileNotExist, DiskFileNoSpace
 from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
-    CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env, parse_location, is_image_path, create_location, ACCESS_NETWORK, ACCESS_RANDOM
+    CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env, parse_location, \
+    is_image_path, create_location, ACCESS_NETWORK, ACCESS_RANDOM, NodeEncoder
 
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 
@@ -473,7 +474,7 @@ class ObjectQueryMiddleware(object):
                 return HTTPBadRequest(request=req,
                                       body='No system map found in request')
 
-            #print json.dumps(config, cls=NodeEncoder)
+            #print json.dumps(config, cls=NodeEncoder, indent=2)
             zerovm_nexe = None
             exe_path = parse_location(config['exe'])
             if is_image_path(exe_path):
