@@ -234,6 +234,19 @@ class ProxyQueryMiddleware(object):
         # GET support: cache config files for this amount of seconds
         self.app.zerovm_cache_config_timeout = 60
 
+        self.app.zerovm_daemons = []
+        daemons = [i.strip()
+                   for i in conf.get('zerovm_daemons', '').split()
+                   if i.strip()]
+        try:
+            for socket, config in zip(*[iter(daemons)]*2):
+                config = json.loads(open(config).read())
+                flist = config.get('channels', [])
+                config['channels'] = sorted(flist, key=lambda f: f['device'])
+                self.app.zerovm_daemons.append((socket, config))
+        except ValueError:
+            raise ValueError('Cannot parse "zerovm_daemons" configuration variable')
+
     @wsgify
     def __call__(self, req):
         try:
@@ -289,6 +302,24 @@ class ProxyQueryMiddleware(object):
 
     def get_controller(self, account, container, obj):
         return ClusterController(self.app, account, container, obj)
+
+
+def can_run_as_daemon(node_conf, daemon_conf):
+    if not node_conf.get('exe', '') in daemon_conf['exe']:
+        return False
+    if not node_conf.get('channels', None):
+        return False
+    if len(node_conf['channels']) != len(daemon_conf['channels']):
+        return False
+    if node_conf.get('connect', []) or node_conf.get('bind', []):
+        return False
+    if node_conf.get('replicate') > 0:
+        return False
+    channels = sorted(node_conf['channels'], key=lambda f: f['device'])
+    for n, d in zip(channels, daemon_conf['channels']):
+        if n.get('device', '') not in d['device']:
+            return False
+    return True
 
 
 class ClusterController(ObjectController):
@@ -1065,14 +1096,21 @@ class ClusterController(ObjectController):
                 resp = repl_node._create_sysmap_resp()
                 repl_node._add_data_source(data_sources, resp, 'sysmap')
             #print json.dumps(node, sort_keys=True, indent=2, cls=NodeEncoder)
+            node.daemon = None
+            if self.app.zerovm_daemons and len(node_list) == 1:
+                for sock, conf in self.app.zerovm_daemons:
+                    if can_run_as_daemon(node, conf):
+                        node.daemon = sock
+                        break
             channels = []
-            if is_swift_path(node.exe):
+            if is_swift_path(node.exe) and not node.daemon:
                 channels.append(ZvmChannel('boot', None, node.exe))
             if len(node.channels) > 1:
                 for ch in node.channels[1:]:
                     if is_swift_path(ch.path) \
                         and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
-                            and ch.device not in self.app.zerovm_sysimage_devices:
+                            and ch.device not in self.app.zerovm_sysimage_devices\
+                            and not node.daemon:
                         channels.append(ch)
 
             for ch in channels:
