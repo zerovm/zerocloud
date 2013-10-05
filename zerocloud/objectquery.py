@@ -22,9 +22,9 @@ from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict
 from swift.common.utils import normalize_timestamp, fallocate, \
     split_path, get_logger, mkdirs, disable_fallocate, TRUE_VALUES
-from swift.obj.server import DiskFile, write_metadata, read_metadata
+from swift.obj.server import DiskFile, write_metadata, read_metadata, DiskWriter
 from swift.common.constraints import check_mount, check_utf8, check_float
-from swift.common.exceptions import DiskFileError, DiskFileNotExist
+from swift.common.exceptions import DiskFileError, DiskFileNotExist, DiskFileNoSpace
 from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
     CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env, parse_location, is_image_path, create_location, ACCESS_NETWORK
 
@@ -34,6 +34,45 @@ try:
     import simplejson as json
 except ImportError:
     import json
+
+
+class ZDiskFile(DiskFile):
+
+    def __init__(self, path, device, partition, account, container, obj, logger,
+                 keep_data_fp=False, disk_chunk_size=65536,
+                 bytes_per_sync=(512 * 1024 * 1024), iter_hook=None,
+                 threadpool=None):
+        super(ZDiskFile, self).__init__(path, device, partition, account, container, obj, logger,
+                                        keep_data_fp=keep_data_fp, disk_chunk_size=disk_chunk_size,
+                                        bytes_per_sync=bytes_per_sync, iter_hook=iter_hook,
+                                        threadpool=threadpool)
+        self.tmppath = None
+        self.channel_device = None
+        self.timestamp = None
+
+    @contextmanager
+    def writer(self, size=None, fd=None):
+        if not os.path.exists(self.tmpdir):
+            mkdirs(self.tmpdir)
+        tmppath = self.tmppath
+        if not fd:
+            fd, tmppath = mkstemp(dir=self.tmpdir)
+        try:
+            if size is not None and size > 0:
+                try:
+                    fallocate(fd, size)
+                except OSError:
+                    raise DiskFileNoSpace()
+            yield DiskWriter(self, fd, tmppath, self.threadpool)
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                os.unlink(tmppath)
+            except OSError:
+                pass
 
 
 class PseudoSocket():
@@ -473,7 +512,7 @@ class ObjectQueryMiddleware(object):
                     ch['lpath'] = channels[ch['device']]
                 elif local_object and chan_path:
                     if chan_path.url in local_object['path']:
-                        disk_file = DiskFile(
+                        disk_file = ZDiskFile(
                             self.app.devices,
                             device,
                             partition,
@@ -1041,22 +1080,22 @@ class ObjectQueryMiddleware(object):
         else:
             mem_etag = data[0]
             channel_etag = data[1:]
-        disk_file.etag = None
+        reported_etag = None
         for dev, etag in zip(*[iter(channel_etag)]*2):
             if disk_file.channel_device in dev:
-                disk_file.etag = etag
+                reported_etag = etag
                 break
-        if not disk_file.etag:
+        if not reported_etag:
             return HTTPUnprocessableEntity(body='No etag found for resulting object '
                                                 'after writing channel %s data' % disk_file.channel_device)
-        if len(disk_file.etag) != MD5HASH_LENGTH:
+        if len(reported_etag) != MD5HASH_LENGTH:
             return HTTPUnprocessableEntity(body='Bad etag for %s: %s'
-                                                % (disk_file.channel_device, disk_file.etag))
+                                                % (disk_file.channel_device, reported_etag))
         old_delete_at = int(disk_file.metadata.get('X-Delete-At') or 0)
         metadata = {
             'X-Timestamp': disk_file.timestamp,
             'Content-Type': local_object['content_type'],
-            'ETag': disk_file.etag,
+            'ETag': reported_etag,
             'Content-Length': str(local_object['size'])}
         metadata.update(('x-object-meta-' + val[0], val[1]) for val in local_object['meta'].iteritems())
         fd = os.open(local_object['lpath'], os.O_RDONLY)
@@ -1077,7 +1116,8 @@ class ObjectQueryMiddleware(object):
             local_object['lpath'] = new_name
             fd = os.open(local_object['lpath'], os.O_RDONLY)
         disk_file.tmppath = local_object['lpath']
-        disk_file.put(fd, metadata)
+        with disk_file.writer(fd=fd) as writer:
+            writer.put(metadata)
         disk_file.unlinkold(metadata['X-Timestamp'])
         if old_delete_at > 0:
             self.app.delete_at_update(
@@ -1088,7 +1128,7 @@ class ObjectQueryMiddleware(object):
             account,
             container,
             obj,
-            request.headers,
+            request,
             HeaderKeyDict({
                 'x-size': disk_file.metadata['Content-Length'],
                 'x-content-type': disk_file.metadata['Content-Type'],
