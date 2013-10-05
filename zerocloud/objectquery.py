@@ -26,7 +26,7 @@ from swift.obj.server import DiskFile, write_metadata, read_metadata
 from swift.common.constraints import check_mount, check_utf8, check_float
 from swift.common.exceptions import DiskFileError, DiskFileNotExist
 from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
-    CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env, parse_location, is_image_path, create_location, ACCESS_NETWORK
+    CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env, parse_location, is_image_path, create_location, ACCESS_NETWORK, ACCESS_RANDOM
 
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 
@@ -1069,13 +1069,23 @@ class ObjectQueryMiddleware(object):
                 for chunk in os.read(fd, self.app.disk_chunk_size):
                     os.write(newfd, chunk)
                     new_etag.update(chunk)
-            except:
+            except IOError:
                 pass
             os.close(newfd)
             metadata['ETag'] = new_etag.hexdigest()
             os.unlink(local_object['lpath'])
             local_object['lpath'] = new_name
             fd = os.open(local_object['lpath'], os.O_RDONLY)
+        elif local_object['access'] & ACCESS_RANDOM:
+            # need to re-read the file to get correct md5
+            new_etag = md5()
+            try:
+                for chunk in os.read(fd, self.app.disk_chunk_size):
+                    new_etag.update(chunk)
+            except IOError:
+                return HTTPInternalServerError(body='Cannot read resulting file for device %s'
+                                                    % disk_file.channel_device)
+            metadata['ETag'] = new_etag.hexdigest()
         disk_file.tmppath = local_object['lpath']
         disk_file.put(fd, metadata)
         disk_file.unlinkold(metadata['X-Timestamp'])
