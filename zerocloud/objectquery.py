@@ -160,6 +160,7 @@ class ObjectQueryMiddleware(object):
         self.zerovm_maxnexemem = int(conf.get('zerovm_maxnexemem', 4 * 1024 * 1048576))
 
         self.zerovm_debug = conf.get('zerovm_debug', 'no').lower() in TRUE_VALUES
+        self.zerovm_perf = conf.get('zerovm_perf', 'no').lower() in TRUE_VALUES
 
         # name-path pairs for sysimage devices on this node
         self.zerovm_sysimage_devices = {}
@@ -254,7 +255,8 @@ class ObjectQueryMiddleware(object):
                     perf = "%s %.3f" % (perf, time.time() - start)
                     start = time.time()
                 perf = "%s %.3f" % (perf, time.time() - start)
-                self.logger.info("PERF EXEC: %s" % perf)
+                if self.zerovm_perf:
+                    self.logger.info("PERF EXEC: %s" % perf)
                 return get_final_status(stdout_data, stderr_data)
         except (Exception, Timeout):
             proc.terminate()
@@ -415,7 +417,8 @@ class ObjectQueryMiddleware(object):
                 return HTTPClientDisconnect(request=req,
                                             headers=nexe_headers)
             perf = "%s %.3f" % (perf, time.time() - start)
-            self.logger.info("PERF UNTAR: %s" % perf)
+            if self.zerovm_perf:
+                self.logger.info("PERF UNTAR: %s" % perf)
             config = None
             if 'sysmap' in channels:
                 config_file = channels.pop('sysmap')
@@ -696,7 +699,8 @@ class ObjectQueryMiddleware(object):
                 thrd = thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, zerovm_args)
                 (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
                 perf = "%.3f" % (time.time() - start)
-                self.logger.info("PERF SPAWN: %s" % perf)
+                if self.zerovm_perf:
+                    self.logger.info("PERF SPAWN: %s" % perf)
                 if self.zerovm_debug:
                     std = open(os.path.join(debug_dir, '%s.zerovm.stdout.%s'
                                                        % (nexe_headers['x-nexe-system'],
