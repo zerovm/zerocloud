@@ -291,6 +291,24 @@ class ProxyQueryMiddleware(object):
         return ClusterController(self.app, account, container, obj)
 
 
+def can_run_as_daemon(node_conf, daemon_conf):
+    if not node_conf.get('exe', '') in daemon_conf['exe']:
+        return False
+    if not node_conf.get('channels', None):
+        return False
+    if len(node_conf['channels']) != len(daemon_conf['channels']):
+        return False
+    if node_conf.get('connect', []) or node_conf.get('bind', []):
+        return False
+    if node_conf.get('replicate') > 0:
+        return False
+    channels = sorted(node_conf['channels'], key=lambda f: f['device'])
+    for n, d in zip(channels, daemon_conf['channels']):
+        if n.get('device', '') not in d['device']:
+            return False
+    return True
+
+
 class ClusterController(ObjectController):
 
     def __init__(self, app, account_name, container_name, obj_name,
