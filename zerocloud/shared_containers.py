@@ -11,6 +11,7 @@ from urllib import unquote
 
 from liteauth.liteauth import retrieve_metadata, store_metadata, get_account_from_whitelist
 from swift.common.swob import wsgify, HTTPNotFound, HTTPBadRequest, HTTPUnauthorized, Response
+from swift.common.utils import get_logger
 
 
 class SharedContainersMiddleware(object):
@@ -23,6 +24,7 @@ class SharedContainersMiddleware(object):
         # url for whitelist objects
         # Example: /v1/liteauth/whitelist
         self.whitelist_url = conf.get('whitelist_url', '').lower().rstrip('/')
+        self.logger = get_logger(conf, log_route='lite-auth')
 
     @wsgify
     def __call__(self, request):
@@ -43,7 +45,7 @@ class SharedContainersMiddleware(object):
             return HTTPUnauthorized()
         email = 'shared'
         if self.whitelist_url:
-            acc_id = get_account_from_whitelist(self.whitelist_url, self.app, unquote(shared_account), None)
+            acc_id = get_account_from_whitelist(self.whitelist_url, self.app, unquote(shared_account), self.logger)
             if acc_id and acc_id.startswith(self.google_prefix):
                 email = unquote(shared_account)
                 shared_account = acc_id
