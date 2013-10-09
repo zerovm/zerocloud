@@ -1086,7 +1086,7 @@ class ObjectQueryMiddleware(object):
                 return HTTPInternalServerError(body='Cannot read resulting file for device %s'
                                                     % disk_file.channel_device)
             metadata['ETag'] = new_etag.hexdigest()
-            self.logger.info('Etag re-read yeilded %s instead of %s, filesize is %d'
+            self.logger.info('Etag re-read yeilded %s instead of %s, filesize is %s'
                              % (metadata['ETag'], disk_file.etag, metadata['Content-Length']))
         disk_file.tmppath = local_object['lpath']
         disk_file.put(fd, metadata)
