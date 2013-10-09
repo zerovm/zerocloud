@@ -1066,7 +1066,7 @@ class ObjectQueryMiddleware(object):
             new_etag = md5()
             try:
                 os.lseek(fd, local_object['offset'], os.SEEK_SET)
-                for chunk in os.read(fd, self.app.disk_chunk_size):
+                for chunk in iter(lambda: os.read(fd, self.app.disk_chunk_size), ''):
                     os.write(newfd, chunk)
                     new_etag.update(chunk)
             except IOError:
@@ -1079,15 +1079,17 @@ class ObjectQueryMiddleware(object):
         elif local_object['access'] & ACCESS_RANDOM:
             # need to re-read the file to get correct md5
             new_etag = md5()
+            size = 0
             try:
-                for chunk in os.read(fd, self.app.disk_chunk_size):
+                for chunk in iter(lambda: os.read(fd, self.app.disk_chunk_size), ''):
                     new_etag.update(chunk)
+                    size += len(chunk)
             except IOError:
                 return HTTPInternalServerError(body='Cannot read resulting file for device %s'
                                                     % disk_file.channel_device)
             metadata['ETag'] = new_etag.hexdigest()
             self.logger.info('Etag re-read yeilded %s instead of %s, filesize is %s'
-                             % (metadata['ETag'], disk_file.etag, metadata['Content-Length']))
+                             % (metadata['ETag'], disk_file.etag, str(size)))
         disk_file.tmppath = local_object['lpath']
         disk_file.put(fd, metadata)
         disk_file.unlinkold(metadata['X-Timestamp'])
