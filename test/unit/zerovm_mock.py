@@ -1,3 +1,4 @@
+from eventlet.green import os
 from hashlib import md5
 import socket
 import struct
@@ -7,6 +8,8 @@ import logging
 import cPickle as pickle
 from time import sleep
 from argparse import ArgumentParser
+from eventlet import GreenPool, listen
+
 try:
     import simplejson as json
 except ImportError:
@@ -14,8 +17,8 @@ except ImportError:
 
 
 def errdump(zvm_errcode, nexe_validity, nexe_errcode, nexe_etag, nexe_accounting, status_line):
-    print '%d\n%d\n%s\n%s\n%s' % (nexe_validity, nexe_errcode, nexe_etag,
-                                  ' '.join([str(val) for val in nexe_accounting]), status_line)
+    print '%d\n0\n%d\n%s\n%s\n%s' % (nexe_validity, nexe_errcode, nexe_etag,
+                                     ' '.join([str(val) for val in nexe_accounting]), status_line)
     exit(zvm_errcode)
 
 
@@ -39,7 +42,7 @@ args = parser.parse_args()
 valid = 0
 if args.skip:
     valid = 2
-accounting = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+accounting = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 manifest = args.manifest
 if not manifest:
     errdump(1, valid, 0, '', accounting, 'Manifest file required')
@@ -47,14 +50,67 @@ try:
     inputmnfst = file(manifest, 'r').read().splitlines()
 except IOError:
     errdump(1, valid, 0, '', accounting, 'Cannot open manifest file: %s' % manifest)
-dl = re.compile("\s*=\s*")
-mnfst_dict = dict()
-for line in inputmnfst:
-    (attr, val) = re.split(dl, line, 1)
-    if attr and attr in mnfst_dict:
-        mnfst_dict[attr] += ',' + val
-    else:
-        mnfst_dict[attr] = val
+
+
+def parse_manifest(inputmnfst):
+    dl = re.compile("\s*=\s*")
+    result = dict()
+    for line in inputmnfst:
+        (attr, val) = re.split(dl, line, 1)
+        if attr and attr in result:
+            result[attr] += ',' + val
+        else:
+            result[attr] = val
+    return result
+
+mnfst_dict = parse_manifest(inputmnfst)
+
+
+class ZerovmDaemon:
+
+    def __init__(self, socket_name):
+        self.server_address = socket_name
+        self.zerovm_exename = ['zerovm']
+        self.pool = GreenPool()
+        self.jobs = set()
+        self.stats_dir = '/tmp'
+
+    def parse_command(self, fd):
+        try:
+            size = int(fd.read(8), 0)
+            data = fd.read(size)
+            return data
+        except IOError:
+            return None
+
+    def handle(self, fd):
+        data = self.parse_command(fd)
+        manifest = data
+        report = self.execute(manifest)
+        self.send_response(fd, report)
+
+    def serve(self):
+        try:
+            os.remove(self.server_address)
+        except OSError:
+            pass
+        server = listen(self.server_address, family=socket.AF_UNIX)
+        while True:
+            try:
+                new_sock, address = server.accept()
+                self.pool.spawn_n(self.handle, new_sock.makefile('rw'))
+            except (SystemExit, KeyboardInterrupt):
+                break
+
+    def send_response(self, fd, report):
+        data = '0x%06x%s' % (len(report), report)
+        try:
+            fd.write(data)
+        except IOError:
+            pass
+
+    def execute(self, manifest):
+        pass
 
 
 class Mnfst:
@@ -92,6 +148,7 @@ retrieve_mnfst_field('Memory')
 retrieve_mnfst_field('Channel')
 retrieve_mnfst_field('Node', optional=True, isint=True)
 retrieve_mnfst_field('NameServer', optional=True)
+retrieve_mnfst_field('Job', optional=True)
 exe = file(mnfst.Program, 'r').read()
 if 'INVALID' == exe:
     valid = 1
@@ -196,8 +253,8 @@ try:
     if mnfst.err['etag']:
         mnfst.err['etag'] = md5()
     in_str = inf.read()
-    accounting[4] += 1
-    accounting[5] += len(in_str)
+    accounting[2] += 1
+    accounting[3] += len(in_str)
     id = pickle.loads(in_str)
 except EOFError:
     id = []
@@ -212,20 +269,20 @@ except Exception, e:
     err.write(msg)
     if mnfst.err['etag']:
         mnfst.err['etag'].update(msg)
-    accounting[6] += 1
-    accounting[7] += len(msg)
+    accounting[4] += 1
+    accounting[5] += len(msg)
 ouf.write(od)
 if mnfst.output['etag']:
     mnfst.output['etag'].update(od)
-accounting[6] += 1
-accounting[7] += len(od)
+accounting[4] += 1
+accounting[5] += len(od)
 for t in con_list:
     msg = '%s, %s\n' % (t[1], t[0])
     err.write(msg)
     if mnfst.err['etag']:
         mnfst.err['etag'].update(msg)
-    accounting[6] += 1
-    accounting[7] += len(msg)
+    accounting[4] += 1
+    accounting[5] += len(msg)
 inf.close()
 ouf.close()
 if mnfst.output['etag']:
@@ -235,8 +292,8 @@ msg = '\nfinished\n'
 err.write(msg)
 if mnfst.err['etag']:
     mnfst.err['etag'].update(msg)
-accounting[6] += 1
-accounting[7] += len(msg)
+accounting[4] += 1
+accounting[5] += len(msg)
 err.close()
 if mnfst.err['etag']:
     mnfst.err['etag'] = mnfst.err['etag'].hexdigest()
