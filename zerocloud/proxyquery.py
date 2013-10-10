@@ -38,7 +38,8 @@ from zerocloud.common import has_control_chars, DEVICE_MAP, \
     CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
     merge_headers, update_metadata, DEFAULT_EXE_SYSTEM_MAP, STREAM_CACHE_SIZE, \
-    ZvmNode, ZvmChannel, parse_location, is_zvm_path, is_swift_path, is_cache_path, create_location, NodeEncoder
+    ZvmNode, ZvmChannel, parse_location, is_zvm_path, is_swift_path, is_cache_path, \
+    NodeEncoder, is_image_path, can_run_as_daemon, SwiftPath
 
 from zerocloud.tarstream import StringBuffer, UntarStream, \
     TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile, Path
@@ -179,6 +180,48 @@ class NameService(object):
 
 class ProxyQueryMiddleware(object):
 
+    def parse_daemon_config(self, daemon_list):
+        result = []
+        request = Request.blank('/daemon', environ={'REQUEST_METHOD': 'POST'},
+                                headers={'Content-Type': 'application/json'})
+        fake_controller = self.get_controller('daemon', None, None)
+        socks = {}
+        for sock, conf_file in zip(*[iter(daemon_list)] * 2):
+            if socks.get(sock, None):
+                self.logger.warning('Duplicate daemon config for uuid %s' % sock)
+                continue
+            socks[sock] = 1
+            try:
+                json_config = open(conf_file).read()
+            except IOError:
+                self.logger.warning('Cannot load daemon config file: %s' % conf_file)
+                continue
+            fake_controller.nodes = {}
+            error = fake_controller.parse_cluster_config(request, json_config)
+            if error:
+                self.logger.warning('Daemon config %s error: %s' % (conf_file, error.body))
+                continue
+            if len(fake_controller.nodes) != 1:
+                self.logger.warning('Bad daemon config %s: too many nodes' % conf_file)
+            for node in fake_controller.nodes.itervalues():
+                if node.bind or node.connect:
+                    self.logger.warning('Bad daemon config %s: network channels are present' % conf_file)
+                    continue
+                if not is_image_path(node.exe):
+                    self.logger.warning('Bad daemon config %s: exe path must be in image file' % conf_file)
+                    continue
+                image = None
+                for sysimage in self.app.zerovm_sysimage_devices:
+                    if node.exe.image in sysimage:
+                        image = sysimage
+                        break
+                if not image:
+                    self.logger.warning('Bad daemon config %s: exe is not in sysimage device' % conf_file)
+                    continue
+                node.channels = sorted(node.channels, key=lambda ch: ch.device)
+                result.append((sock, node))
+        return result
+
     def __init__(self, app, conf, logger=None):
         self.app = app
         if logger:
@@ -233,6 +276,9 @@ class ProxyQueryMiddleware(object):
         self.app.zerovm_allowed_commands = [self.app.zerovm_open_version, self.app.zerovm_openwith_version]
         # GET support: cache config files for this amount of seconds
         self.app.zerovm_cache_config_timeout = 60
+        # list of daemons we need to lazy load (first request will start the daemon)
+        daemon_list = [i.strip() for i in conf.get('zerovm_daemons', '').split() if i.strip()]
+        self.app.zerovm_daemons = self.parse_daemon_config(daemon_list)
 
     @wsgify
     def __call__(self, req):
@@ -291,24 +337,6 @@ class ProxyQueryMiddleware(object):
         return ClusterController(self.app, account, container, obj)
 
 
-def can_run_as_daemon(node_conf, daemon_conf):
-    if not node_conf.get('exe', '') in daemon_conf['exe']:
-        return False
-    if not node_conf.get('channels', None):
-        return False
-    if len(node_conf['channels']) != len(daemon_conf['channels']):
-        return False
-    if node_conf.get('connect', []) or node_conf.get('bind', []):
-        return False
-    if node_conf.get('replicate') > 0:
-        return False
-    channels = sorted(node_conf['channels'], key=lambda f: f['device'])
-    for n, d in zip(channels, daemon_conf['channels']):
-        if n.get('device', '') not in d['device']:
-            return False
-    return True
-
-
 class ClusterController(ObjectController):
 
     def __init__(self, app, account_name, container_name, obj_name,
@@ -316,6 +344,12 @@ class ClusterController(ObjectController):
         ObjectController.__init__(self, app, account_name, container_name or '', obj_name or '')
         self.nodes = {}
         self.command = None
+
+    def get_daemon_socket(self, config):
+        for daemon_sock, daemon_conf in self.app.zerovm_daemons:
+            if can_run_as_daemon(config, daemon_conf):
+                return daemon_sock
+        return None
 
     def _get_local_address(self, node):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -560,13 +594,13 @@ class ClusterController(ObjectController):
                                                               body='Error querying object server '
                                                                    'for container %s' % c)
                                     for obj in obj_list:
-                                        temp_list.append(create_location(path.account, c, obj))
+                                        temp_list.append(SwiftPath.init(path.account, c, obj))
                             else:
                                 obj = re.escape(path.obj).replace('\\*', '.*')
                                 mask = re.compile(obj)
                                 try:
                                     for obj in self.list_container(req, path.account, path.container, mask):
-                                        temp_list.append(create_location(path.account, path.container, obj))
+                                        temp_list.append(SwiftPath.init(path.account, path.container, obj))
                                 except Exception:
                                     return HTTPBadRequest(request=req,
                                                           body='Error querying object server '
@@ -595,7 +629,7 @@ class ClusterController(ObjectController):
                             if node_count > 1:
                                 for i in range(1, node_count + 1):
                                     new_name = self._create_node_name(node_name, i)
-                                    new_path = create_location(path.account, path.container, path.obj)
+                                    new_path = SwiftPath.init(path.account, path.container, path.obj)
                                     new_node = self.nodes.get(new_name)
                                     if not new_node:
                                         new_node = ZvmNode(nid, new_name,
@@ -606,7 +640,7 @@ class ClusterController(ObjectController):
                                                          path=new_path, mode=mode)
                             else:
                                 new_node = self.nodes.get(node_name)
-                                path = create_location(path.account, path.container, path.obj)
+                                path = SwiftPath.init(path.account, path.container, path.obj)
                                 if not new_node:
                                     new_node = ZvmNode(nid, node_name, nexe_path,
                                                        nexe_args, nexe_env, node_replicate)
@@ -854,6 +888,123 @@ class ClusterController(ObjectController):
                                exec_request.headers)
         return [conn for conn in pile if conn]
 
+    def _attach_connections_to_data_sources(self, conns, data_sources):
+        for data_src in data_sources:
+            data_src.conns = []
+            for node in data_src.nodes:
+                for conn in conns:
+                    if conn.cnode is node['node']:
+                        conn.last_data = node['node'].last_data
+                        data_src.conns.append({'conn': conn, 'dev': node['dev']})
+
+    def _spawn_file_senders(self, conns, pool, req):
+        for conn in conns:
+            conn.failed = False
+            conn.queue = Queue(self.app.put_queue_depth)
+            conn.tar_stream = TarStream()
+            pool.spawn(self._send_file, conn, req.path)
+
+    def _send_tar_headers(self, chunked, data_src):
+        for conn in data_src.conns:
+            info = conn['conn'].tar_stream.create_tarinfo(ftype=REGTYPE,
+                                                          name=conn['dev'],
+                                                          size=data_src.content_length)
+            for chunk in conn['conn'].tar_stream._serve_chunk(info):
+                if not conn['conn'].failed:
+                    conn['conn'].queue.put('%x\r\n%s\r\n' %
+                                           (len(chunk), chunk) if chunked else chunk)
+
+    def _finalize_tar_streams(self, chunked, data_src, req):
+        blocks, remainder = divmod(data_src.bytes_transferred, BLOCKSIZE)
+        if remainder > 0:
+            nulls = NUL * (BLOCKSIZE - remainder)
+            for conn in data_src.conns:
+                for chunk in conn['conn'].tar_stream._serve_chunk(nulls):
+                    if not conn['conn'].failed:
+                        conn['conn'].queue.put(
+                            '%x\r\n%s\r\n' % (len(chunk), chunk)
+                            if chunked else chunk)
+                    else:
+                        return HTTPServiceUnavailable(request=req)
+        for conn in data_src.conns:
+            if conn['conn'].last_data is data_src:
+                if conn['conn'].tar_stream.data:
+                    data = conn['conn'].tar_stream.data
+                    if not conn['conn'].failed:
+                        conn['conn'].queue.put('%x\r\n%s\r\n'
+                                               % (len(data), data) if chunked else data)
+                    else:
+                        return HTTPServiceUnavailable(request=req)
+                if chunked:
+                    conn['conn'].queue.put('0\r\n\r\n')
+
+    def _send_data_chunk(self, chunked, data_src, data, req):
+        data_src.bytes_transferred += len(data)
+        if data_src.bytes_transferred > MAX_FILE_SIZE:
+            return HTTPRequestEntityTooLarge(request=req)
+        for conn in data_src.conns:
+            for chunk in conn['conn'].tar_stream._serve_chunk(data):
+                if not conn['conn'].failed:
+                    conn['conn'].queue.put('%x\r\n%s\r\n'
+                                           % (len(chunk), chunk) if chunked else chunk)
+                else:
+                    return HTTPServiceUnavailable(request=req)
+
+    def _get_remote_objects(self, node):
+        channels = []
+        if is_swift_path(node.exe):
+            channels.append(ZvmChannel('boot', None, node.exe))
+        if len(node.channels) > 1:
+            for ch in node.channels[1:]:
+                if is_swift_path(ch.path) \
+                    and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
+                    and ch.device not in self.app.zerovm_sysimage_devices:
+                    channels.append(ch)
+        return channels
+
+    def _create_request_for_remote_object(self, data_sources, channel, exe_resp, req, nexe_headers, node):
+        source_resp = None
+        load_from = channel.path.path
+        for resp in data_sources:
+            if resp.request and load_from == resp.request.path_info:
+                source_resp = resp
+                break
+        if not source_resp:
+            if exe_resp and load_from == exe_resp.request.path_info:
+                source_resp = exe_resp
+            else:
+                source_req = req.copy_get()
+                source_req.path_info = load_from
+                if self.app.zerovm_uses_newest:
+                    source_req.headers['X-Newest'] = 'true'
+                if self.app.zerovm_prevalidate and 'boot' in channel.device:
+                    source_req.headers['X-Zerovm-Valid'] = 'true'
+                acct, src_container_name, src_obj_name =\
+                    split_path(load_from, 1, 3, True)
+                container_info = self.container_info(acct, src_container_name)
+                source_req.acl = container_info['read_acl']
+                #if 'boot' in ch.device:
+                #    source_req.acl = container_info['exec_acl']
+                source_resp = \
+                    ObjectController(self.app,
+                                     acct,
+                                     src_container_name,
+                                     src_obj_name).GET(source_req)
+                if source_resp.status_int >= 300:
+                    update_headers(source_resp, nexe_headers)
+                    source_resp.body = 'Error %s while fetching %s' \
+                                       % (source_resp.status, source_req.path_info)
+                    return source_resp
+            source_resp.nodes = []
+            data_sources.append(source_resp)
+        node.last_data = source_resp
+        source_resp.nodes.append({'node': node, 'dev': channel.device})
+        if source_resp.headers.get('x-zerovm-valid', None) and 'boot' in channel.device:
+            node.skip_validation = True
+        for repl_node in node.replicas:
+            repl_node.last_data = source_resp
+            source_resp.nodes.append({'node': repl_node, 'dev': channel.device})
+
     @delay_denial
     @cors_validation
     def POST(self, req, exe_resp=None, cluster_config=''):
@@ -888,16 +1039,11 @@ class ClusterController(ObjectController):
                     break
             if not cluster_config:
                 return HTTPBadRequest(request=req,
-                    body='System boot map was not found in request')
+                                      body='System boot map was not found in request')
             try:
                 cluster_config = json.loads(cluster_config)
             except Exception:
                 return HTTPUnprocessableEntity(body='Could not parse system map')
-            error = self.parse_cluster_config(req, cluster_config)
-            if error:
-                self.app.logger.warn(
-                    _('ERROR Error parsing config: %s'), cluster_config)
-                return error
         elif req.headers['content-type'].split(';')[0].strip() in 'application/json':
         # System map was sent as a POST body
             if 'chunked' not in req.headers.get('transfer-encoding', '') \
@@ -925,11 +1071,6 @@ class ClusterController(ObjectController):
                 cluster_config = json.loads(cluster_config)
             except Exception:
                 return HTTPUnprocessableEntity(body='Could not parse system map')
-            error = self.parse_cluster_config(req, cluster_config)
-            if error:
-                self.app.logger.warn(
-                    _('ERROR Error parsing config: %s'), cluster_config)
-                return error
         else:
             # assume the posted data is a script and try to execute
             if not 'content-length' in req.headers:
@@ -972,9 +1113,9 @@ class ClusterController(ObjectController):
             req.path_info_pop()
             if self.container_name and self.object_name:
                 template = POST_TEXT_OBJECT_SYSTEM_MAP
-                location = create_location(self.account_name,
-                                           self.container_name,
-                                           self.object_name)
+                location = SwiftPath.init(self.account_name,
+                                          self.container_name,
+                                          self.object_name)
                 config = self._config_from_template(params, template, location.url)
             else:
                 template = POST_TEXT_ACCOUNT_SYSTEM_MAP
@@ -986,16 +1127,16 @@ class ClusterController(ObjectController):
                 return HTTPUnprocessableEntity(body='Could not parse system map')
             if sysimage:
                 cluster_config[0]['file_list'].append({'device': sysimage})
-            error = self.parse_cluster_config(req, cluster_config)
-            if error:
-                self.app.logger.warn(
-                    _('ERROR Error parsing config: %s'), cluster_config)
-                return error
             string_path = Path(REGTYPE, 'script', int(req.headers['content-length']), cached_body)
             stream = TarStream(path_list=[string_path])
             user_image = iter(stream)
             user_image_length = stream.get_total_stream_length()
 
+        error = self.parse_cluster_config(req, cluster_config)
+        if error:
+            self.app.logger.warn(
+                _('ERROR Error parsing config: %s'), cluster_config)
+            return error
         req.path_info = '/' + self.account_name
 
         node_list = []
@@ -1083,58 +1224,13 @@ class ClusterController(ObjectController):
                 resp = repl_node._create_sysmap_resp()
                 repl_node._add_data_source(data_sources, resp, 'sysmap')
             #print json.dumps(node, sort_keys=True, indent=2, cls=NodeEncoder)
-            channels = []
-            if is_swift_path(node.exe):
-                channels.append(ZvmChannel('boot', None, node.exe))
-            if len(node.channels) > 1:
-                for ch in node.channels[1:]:
-                    if is_swift_path(ch.path) \
-                        and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
-                            and ch.device not in self.app.zerovm_sysimage_devices:
-                        channels.append(ch)
-
+            channels = self._get_remote_objects(node)
             for ch in channels:
-                source_resp = None
-                load_from = ch.path.path
-                for resp in data_sources:
-                    if resp.request and load_from == resp.request.path_info:
-                        source_resp = resp
-                        break
-                if not source_resp:
-                    if exe_resp and load_from == exe_resp.request.path_info:
-                        source_resp = exe_resp
-                    else:
-                        source_req = req.copy_get()
-                        source_req.path_info = load_from
-                        if self.app.zerovm_uses_newest:
-                            source_req.headers['X-Newest'] = 'true'
-                        if self.app.zerovm_prevalidate and 'boot' in ch.device:
-                            source_req.headers['X-Zerovm-Valid'] = 'true'
-                        acct, src_container_name, src_obj_name =\
-                            split_path(load_from, 1, 3, True)
-                        container_info = self.container_info(acct, src_container_name)
-                        source_req.acl = container_info['read_acl']
-                        #if 'boot' in ch.device:
-                        #    source_req.acl = container_info['exec_acl']
-                        source_resp = \
-                            ObjectController(self.app,
-                                             acct,
-                                             src_container_name,
-                                             src_obj_name).GET(source_req)
-                        if source_resp.status_int >= 300:
-                            update_headers(source_resp, nexe_headers)
-                            source_resp.body = 'Error %s while fetching %s' \
-                                               % (source_resp.status, source_req.path_info)
-                            return source_resp
-                    source_resp.nodes = []
-                    data_sources.append(source_resp)
-                node.last_data = source_resp
-                source_resp.nodes.append({'node': node, 'dev': ch.device})
-                if source_resp.headers.get('x-zerovm-valid', None) and 'boot' in ch.device:
-                    node.skip_validation = True
-                for repl_node in node.replicas:
-                    repl_node.last_data = source_resp
-                    source_resp.nodes.append({'node': repl_node, 'dev': ch.device})
+                error = self._create_request_for_remote_object(data_sources, ch,
+                                                               exe_resp, req,
+                                                               nexe_headers, node)
+                if error:
+                    return error
             if image_resp:
                 node.last_data = image_resp
                 image_resp.nodes.append({'node': node, 'dev': 'image'})
@@ -1145,6 +1241,9 @@ class ClusterController(ObjectController):
                 node.path_info = path_info
             exec_request.node = node
             exec_request.resp_headers = nexe_headers
+            sock = self.get_daemon_socket(node)
+            if sock:
+                exec_request.headers['x-zerovm-daemon'] = str(sock)
             exec_requests.append(exec_request)
 
         if image_resp:
@@ -1162,72 +1261,27 @@ class ClusterController(ObjectController):
                 return Response(body=conn.error,
                                 status="%d %s" % (conn.resp.status, conn.resp.reason),
                                 headers=conn.nexe_headers)
-        for data_src in data_sources:
-            data_src.conns = []
-            for node in data_src.nodes:
-                for conn in conns:
-                    if conn.cnode is node['node']:
-                        conn.last_data = node['node'].last_data
-                        data_src.conns.append({'conn': conn, 'dev': node['dev']})
-
+        self._attach_connections_to_data_sources(conns, data_sources)
         #chunked = req.headers.get('transfer-encoding')
         chunked = True
         try:
             with ContextPool(node_count) as pool:
-                for conn in conns:
-                    conn.failed = False
-                    conn.queue = Queue(self.app.put_queue_depth)
-                    conn.tar_stream = TarStream()
-                    pool.spawn(self._send_file, conn, req.path)
-
+                self._spawn_file_senders(conns, pool, req)
                 for data_src in data_sources:
                     data_src.bytes_transferred = 0
-                    for conn in data_src.conns:
-                        info = conn['conn'].tar_stream.create_tarinfo(ftype=REGTYPE,
-                                                                      name=conn['dev'],
-                                                                      size=data_src.content_length)
-                        for chunk in conn['conn'].tar_stream._serve_chunk(info):
-                            if not conn['conn'].failed:
-                                conn['conn'].queue.put('%x\r\n%s\r\n' %
-                                                       (len(chunk), chunk) if chunked else chunk)
+                    self._send_tar_headers(chunked, data_src)
                     while True:
                         with ChunkReadTimeout(self.app.client_timeout):
                             try:
                                 data = next(data_src.app_iter)
                             except StopIteration:
-                                blocks, remainder = divmod(data_src.bytes_transferred, BLOCKSIZE)
-                                if remainder > 0:
-                                    nulls = NUL * (BLOCKSIZE - remainder)
-                                    for conn in data_src.conns:
-                                        for chunk in conn['conn'].tar_stream._serve_chunk(nulls):
-                                            if not conn['conn'].failed:
-                                                conn['conn'].queue.put(
-                                                    '%x\r\n%s\r\n' % (len(chunk), chunk)
-                                                    if chunked else chunk)
-                                            else:
-                                                return HTTPServiceUnavailable(request=req)
-                                for conn in data_src.conns:
-                                    if conn['conn'].last_data is data_src:
-                                        if conn['conn'].tar_stream.data:
-                                            data = conn['conn'].tar_stream.data
-                                            if not conn['conn'].failed:
-                                                conn['conn'].queue.put('%x\r\n%s\r\n'
-                                                                       % (len(data), data) if chunked else data)
-                                            else:
-                                                return HTTPServiceUnavailable(request=req)
-                                        if chunked:
-                                            conn['conn'].queue.put('0\r\n\r\n')
+                                error = self._finalize_tar_streams(chunked, data_src, req)
+                                if error:
+                                    return error
                                 break
-                        data_src.bytes_transferred += len(data)
-                        if data_src.bytes_transferred > MAX_FILE_SIZE:
-                            return HTTPRequestEntityTooLarge(request=req)
-                        for conn in data_src.conns:
-                            for chunk in conn['conn'].tar_stream._serve_chunk(data):
-                                if not conn['conn'].failed:
-                                    conn['conn'].queue.put('%x\r\n%s\r\n'
-                                                           % (len(chunk), chunk) if chunked else chunk)
-                                else:
-                                    return HTTPServiceUnavailable(request=req)
+                        error = self._send_data_chunk(chunked, data_src, data, req)
+                        if error:
+                            return error
                     if data_src.bytes_transferred < data_src.content_length:
                         return HTTPClientDisconnect(request=req, body='data source %s dead' % data_src.__dict__)
                 for conn in conns:
@@ -1518,9 +1572,9 @@ class ClusterController(ObjectController):
             return HTTPNotFound(request=req,
                                 body='No application registered for %s' % content)
         req.path_info_pop()
-        location = create_location(self.account_name,
-                                   self.container_name,
-                                   self.object_name)
+        location = SwiftPath.init(self.account_name,
+                                  self.container_name,
+                                  self.object_name)
         config = self._config_from_template(req.params, template, location.url)
         #config = re.sub(r'\{\.[^\}]+\}', '', config)
         post_req = Request.blank('/%s' % self.account_name,

@@ -100,6 +100,13 @@ CHANNEL_TYPE_MAP = {
 MD5HASH_LENGTH = len(md5('').hexdigest())
 ENV_ITEM = 'name=%s, value=%s\n'
 STD_DEVICES = ['stdin', 'stdout', 'stderr']
+REPORT_LENGTH = 6
+REPORT_VALIDATOR = 0
+REPORT_DAEMON = 1
+REPORT_RETCODE = 2
+REPORT_ETAG = 3
+REPORT_CDR = 4
+REPORT_STATUS = 5
 
 
 def merge_headers(current, new):
@@ -157,11 +164,37 @@ def quote_for_env(val):
     return re.sub(r',', '\\x2c', val)
 
 
+def can_run_as_daemon(node_conf, daemon_conf):
+    if node_conf.exe != daemon_conf.exe:
+        return False
+    if not node_conf.channels:
+        return False
+    if len(node_conf.channels) != len(daemon_conf.channels):
+        return False
+    if node_conf.connect or node_conf.bind:
+        return False
+    channels = sorted(node_conf.channels, key=lambda ch: ch.device)
+    for n, d in zip(channels, daemon_conf.channels):
+        if n.device not in d.device:
+            return False
+    return True
+
+
 class ObjPath:
 
     def __init__(self, url, path):
         self.url = url
         self.path = path
+
+    def __eq__(self, other):
+        if self.url == other.url:
+            return True
+        return False
+
+    def __ne__(self, other):
+        if self.url != other.url:
+            return True
+        return False
 
 
 class SwiftPath(ObjPath):
@@ -173,6 +206,10 @@ class SwiftPath(ObjPath):
         self.account = account
         self.container = container
         self.obj = obj
+
+    @classmethod
+    def init(cls, account, container, obj):
+        return cls('swift://%s/%s/%s' % (account, container, obj))
 
 
 class ImagePath(ObjPath):
@@ -235,10 +272,6 @@ def parse_location(url):
     elif url.startswith('tcp://') or url.startswith('udp://'):
         return NetPath(url)
     return None
-
-
-def create_location(account, container, obj):
-    return SwiftPath('swift://%s/%s/%s' % (account, container, obj))
 
 
 def is_swift_path(location):
