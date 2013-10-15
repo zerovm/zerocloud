@@ -935,7 +935,7 @@ return open(mnfst.nvram['path']).read() + \
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 200)
             self.assertIn('[fstab]\n'
-                          'channel=/dev/sysimage, mountpoint=/, access=ro\n'
+                          'channel=/dev/sysimage, mountpoint=/, access=ro, warmup=yes\n'
                           '[args]\n'
                           'args = sort\n', res.body)
             self.assertIn('%d %s' % (3, sysimage_path),
@@ -1081,7 +1081,7 @@ return open(mnfst.nvram['path']).read()
         req.body = conf
         res = req.get_response(prosrv)
         self.assertIn('[fstab]\n'
-                      'channel=/dev/image, mountpoint=/, access=ro\n'
+                      'channel=/dev/image, mountpoint=/, access=ro, warmup=yes\n'
                       '[args]\n'
                       'args = sort\n', res.body)
         conf = [

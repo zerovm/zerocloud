@@ -15,7 +15,7 @@ from eventlet.green import select, subprocess, os, socket
 from eventlet.timeout import Timeout
 from eventlet.green.httplib import HTTPResponse
 import errno
-from uuid import uuid4
+import signal
 
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
@@ -26,8 +26,11 @@ from swift.common.utils import normalize_timestamp, fallocate, \
 from swift.obj.server import DiskFile, write_metadata, read_metadata
 from swift.common.constraints import check_mount, check_utf8, check_float
 from swift.common.exceptions import DiskFileError, DiskFileNotExist
+from swift.proxy.controllers.base import update_headers
 from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
-    CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env, parse_location, is_image_path, create_location, ACCESS_NETWORK, ACCESS_RANDOM
+    CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env, parse_location, \
+    is_image_path, ACCESS_NETWORK, ACCESS_RANDOM, REPORT_VALIDATOR, REPORT_RETCODE, REPORT_ETAG, \
+    REPORT_CDR, REPORT_STATUS, SwiftPath, REPORT_LENGTH, REPORT_DAEMON
 
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 
@@ -197,6 +200,9 @@ class ObjectQueryMiddleware(object):
         # obey `disable_fallocate` configuration directive
         if conf.get('disable_fallocate', 'no').lower() in TRUE_VALUES:
             disable_fallocate()
+
+    def is_sysimage_device(self, device_name):
+        return device_name in self.zerovm_sysimage_devices.keys()
 
     def send_to_socket(self, sock, zerovm_inputmnfst):
         SIZE = 8
@@ -548,11 +554,11 @@ class ObjectQueryMiddleware(object):
 
             fstab = None
 
-            def add_to_fstab(fstab, device, access):
+            def add_to_fstab(fstab, device, access, warmup='yes', mountpoint='/'):
                 if not fstab:
                     fstab = '[fstab]\n'
-                fstab += 'channel=/dev/%s, mountpoint=/, access=%s\n' \
-                         % (device, access)
+                fstab += 'channel=/dev/%s, mountpoint=%s, access=%s, warmup=%s\n' \
+                         % (device, mountpoint, access, warmup)
                 return fstab
 
             is_master = True
@@ -598,7 +604,7 @@ class ObjectQueryMiddleware(object):
                                                            'but no x-timestamp in request')
                         disk_file.channel_device = '/dev/%s' % ch['device']
                         local_object = ch
-                if ch['device'] in self.zerovm_sysimage_devices.keys():
+                if self.is_sysimage_device(ch['device']):
                     ch['lpath'] = self.zerovm_sysimage_devices[ch['device']]
                     fstab = add_to_fstab(fstab, ch['device'], 'ro')
                 elif ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
@@ -608,7 +614,7 @@ class ObjectQueryMiddleware(object):
                                                   body='Could not resolve channel path: %s'
                                                        % ch['path'])
                     if ch['device'] in 'image':
-                        fstab = add_to_fstab(fstab, ch['device'], 'ro')
+                        fstab = add_to_fstab(fstab, ch['device'], 'ro', warmup=ch['warmup'])
                 elif ch['access'] & ACCESS_WRITABLE:
                     writable_tmpdir = os.path.join(self.app.devices, device, 'tmp')
                     if not os.path.exists(writable_tmpdir):
@@ -643,7 +649,7 @@ class ObjectQueryMiddleware(object):
                 for ch in config['channels']:
                     type = CHANNEL_TYPE_MAP.get(ch['device'])
                     if type is None:
-                        if ch['device'] in self.zerovm_sysimage_devices.keys():
+                        if self.is_sysimage_device(ch['device']):
                             type = CHANNEL_TYPE_MAP.get('sysimage')
                         else:
                             return HTTPBadRequest(request=req,
@@ -751,7 +757,6 @@ class ObjectQueryMiddleware(object):
                 for chunk in [fstab, args, env, mapping]:
                     os.write(output_fd, chunk or '')
                 os.close(output_fd)
-                #print open(nvram_file).read()
                 zerovm_inputmnfst += \
                     'Channel=%s,/dev/nvram,3,0,%s,%s,%s,%s\n' % \
                     (nvram_file, self.zerovm_maxiops, self.zerovm_maxinput, 0, 0)
@@ -764,7 +769,8 @@ class ObjectQueryMiddleware(object):
                 # if daemon_create:
                 #     zerovm_inputmnfst += 'Job = %s\n' % daemon_sock
                 #print json.dumps(config, sort_keys=True, indent=2)
-                #print zerovm_inputmnfst
+                print zerovm_inputmnfst
+                print open(nvram_file).read()
                 holder.kill()
                 if thrdpool.free() <= 0 and thrdpool.waiting() >= queue:
                     return HTTPServiceUnavailable(body='Slot not available',
@@ -787,10 +793,11 @@ class ObjectQueryMiddleware(object):
                             return HTTPInternalServerError(body='Cannot find daemon nexe in system image %s'
                                                                 % sysimage_path)
                         zerovm_nexe = channels.pop('boot')
-                        zerovm_inputmnfst = re.sub(r'Program = .*',
-                                                   'Program = %s' % zerovm_nexe,
+                        zerovm_inputmnfst = re.sub(r'^(?m)Program=.*',
+                                                   'Program=%s' % zerovm_nexe,
                                                    zerovm_inputmnfst)
                         zerovm_inputmnfst += 'Job = %s\n' % daemon_sock
+                        print zerovm_inputmnfst
                         thrd = self._create_zerovm_thread(zerovm_inputmnfst,
                                                           zerovm_inputmnfst_fd, zerovm_inputmnfst_fn,
                                                           zerovm_valid, thrdpool)
@@ -1178,17 +1185,13 @@ class ObjectQueryMiddleware(object):
         elif local_object['access'] & ACCESS_RANDOM:
             # need to re-read the file to get correct md5
             new_etag = md5()
-            size = 0
             try:
                 for chunk in iter(lambda: os.read(fd, self.app.disk_chunk_size), ''):
                     new_etag.update(chunk)
-                    size += len(chunk)
             except IOError:
                 return HTTPInternalServerError(body='Cannot read resulting file for device %s'
                                                     % disk_file.channel_device)
             metadata['ETag'] = new_etag.hexdigest()
-            self.logger.info('Etag re-read yeilded %s instead of %s, filesize is %s'
-                             % (metadata['ETag'], disk_file.etag, str(size)))
         disk_file.tmppath = local_object['lpath']
         disk_file.put(fd, metadata)
         disk_file.unlinkold(metadata['X-Timestamp'])
@@ -1210,10 +1213,38 @@ class ObjectQueryMiddleware(object):
             device)
 
     def _cleanup_daemon(self, daemon_sock):
+        for pid in self._get_daemon_pid(daemon_sock):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                continue
         try:
             os.unlink(daemon_sock)
-        except IOError:
+        except OSError:
             pass
+
+    def _get_daemon_pid(self, daemon_sock):
+        result = []
+        sock = None
+        for l in open('/proc/net/unix').readlines():
+            m = re.search('(\d+) %s' % daemon_sock, l)
+            if m:
+                sock = m.group(1)
+        if not sock:
+            return []
+        for pid in [f for f in os.listdir('/proc') if re.match('\d+$', f)]:
+            try:
+                for fd in os.listdir('/proc/%s/fd' % pid):
+                    l = os.readlink('/proc/%s/fd/%s' % (pid, fd))
+                    m = re.match(r'socket:\[(\d+)\]', l)
+                    if m and sock in m.group(1):
+                        m = re.match('\d+ \(([^\)]+)', open('/proc/%s/stat' % pid).read())
+                        if 'zerovm.daemon' in m.group(1):
+                            result.append(pid)
+            except OSError:
+                continue
+        return result
+
 
 
 def filter_factory(global_conf, **local_conf):

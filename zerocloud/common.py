@@ -314,9 +314,11 @@ class ZvmNode(object):
 
     def add_channel(self, device, access, path=None,
                     content_type='application/octet-stream',
-                    meta_data=None, mode=None):
+                    meta_data=None, mode=None,
+                    warmup='yes', mountpoint='/'):
         channel = ZvmChannel(device, access, path,
-                             content_type, meta_data, mode)
+                             content_type, meta_data, mode,
+                             warmup, mountpoint)
         self.channels.append(channel)
 
     def get_channel(self, device=None, path=None):
@@ -411,13 +413,15 @@ class ZvmNode(object):
 class ZvmChannel(object):
     def __init__(self, device, access, path=None,
                  content_type='application/octet-stream', meta_data=None,
-                 mode=None):
+                 mode=None, warmup='yes', mountpoint='/'):
         self.device = device
         self.access = access
         self.path = path
         self.content_type = content_type
         self.meta = meta_data if meta_data else {}
         self.mode = mode
+        self.warmup = warmup
+        self.mountpoint = mountpoint
 
 
 class NodeEncoder(json.JSONEncoder):

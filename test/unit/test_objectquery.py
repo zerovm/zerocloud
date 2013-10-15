@@ -26,7 +26,7 @@ from swift.obj.server import ObjectController
 from test.unit import FakeLogger
 
 from test_proxyquery import ZEROVM_DEFAULT_MOCK
-from zerocloud.common import ZvmNode, ACCESS_READABLE, ACCESS_WRITABLE, NodeEncoder, ACCESS_CDR, parse_location
+from zerocloud.common import ZvmNode, ACCESS_READABLE, ACCESS_WRITABLE, NodeEncoder, ACCESS_CDR, parse_location, ACCESS_RANDOM, TAR_MIMES
 from zerocloud import objectquery
 
 try:
@@ -218,47 +218,41 @@ class TestObjectQuery(unittest.TestCase):
             self.assert_(os.path.exists(tmpdir))
 
     def test_QUERY_realzvm(self):
-        raise SkipTest
-        self.setup_zerovm_query()
-        self.app.zerovm_exename = ['./zerovm']
-        randomnum = self.create_random_numbers(1024 * 1024 / 4, proto='binary')
-        self.create_object(randomnum, path='/sda1/p/a/c/o_binary')
-        req = Request.blank('/sda1/p/a/c/o_binary',
-            environ={'REQUEST_METHOD': 'POST'},
-            headers={'Content-Type': 'application/octet-stream',
-                     'x-zerovm-execute': '1.0',
-                     'x-nexe-args': '%d' % (1024 * 1024)})
-        fd = open('sort.nexe')
-        real_nexe = fd.read()
-        fd.close()
-        etag = md5(real_nexe)
-        etag = etag.hexdigest()
-        req.headers['etag'] = etag
-        req.headers['x-nexe-content-type'] = 'text/plain'
-        req.body = real_nexe
-        resp = self.app.zerovm_query(req)
-        #resp = req.get_response(self.app)
-
-        sortednum = self.get_sorted_numbers(min_num=0, max_num=1024 * 1024 / 4, proto='binary')
-        self.assertEquals(resp.status_int, 200)
-        #fd = open('resp.sorted', 'w')
-        #fd.write(resp.body)
-        #fd.close()
-        #fd = open('my.sorted', 'w')
-        #fd.write(sortednum)
-        #fd.close()
-        self.assertEquals(resp.body, sortednum)
-        self.assertEquals(resp.content_length, len(sortednum))
-        self.assertEquals(resp.content_type, 'text/plain')
-        self.assertEquals(resp.headers['content-length'],
-            str(len(sortednum)))
-        self.assertEquals(resp.headers['content-type'], 'text/plain')
-        self.assertEquals(resp.headers['x-nexe-etag'], 'disabled')
-        self.assertEquals(resp.headers['x-nexe-retcode'], 0)
-        self.assertEquals(resp.headers['x-nexe-status'], 'ok')
-        #timestamp = normalize_timestamp(time())
-        #self.assertEquals(math.floor(float(resp.headers['X-Timestamp'])),
-        #    math.floor(float(timestamp)))
+        orig_exe = self.app.zerovm_exename
+        orig_sysimages = self.app.zerovm_sysimage_devices
+        try:
+            self.app.zerovm_sysimage_devices['python-image'] = '/media/40G/zerovm-samples/zshell/zpython2/python.tar'
+            self.setup_zerovm_query()
+            self.app.zerovm_exename = ['/opt/zerovm/bin/zerovm']
+            req = self.zerovm_free_request()
+            req.headers['x-zerovm-daemon'] = 'asdf'
+            conf = ZvmNode(1, 'python', parse_location('file://python-image:python'), args='hello.py')
+            conf.add_channel('stdout', ACCESS_WRITABLE)
+            conf.add_channel('python-image', ACCESS_READABLE | ACCESS_RANDOM)
+            conf.add_channel('image', ACCESS_CDR, warmup='no')
+            #print json.dumps(conf, cls=NodeEncoder, indent=2)
+            conf = json.dumps(conf, cls=NodeEncoder)
+            sysmap = StringIO(conf)
+            image = open('/home/kit/python-script.tar', 'rb')
+            with self.create_tar({'sysmap': sysmap, 'image': image}) as tar:
+                req.body_file = open(tar, 'rb')
+                resp = self.app.zerovm_query(req)
+                print resp.headers['x-nexe-cdr-line']
+                if resp.content_type in TAR_MIMES:
+                    fd, name = mkstemp()
+                    for chunk in resp.app_iter:
+                        os.write(fd, chunk)
+                    os.close(fd)
+                    tar = tarfile.open(name)
+                    names = tar.getnames()
+                    members = tar.getmembers()
+                    for n, m in zip(names, members):
+                        print [n, tar.extractfile(m).read()]
+                else:
+                    print resp.body
+        finally:
+            self.app.zerovm_exename = orig_exe
+            self.app.zerovm_sysimage_devices = orig_sysimages
 
     def test_QUERY_sort(self):
         self.setup_zerovm_query()
@@ -1221,7 +1215,7 @@ time.sleep(10)
                 file = tar.extractfile(members[-1])
                 out = '%s\n'\
                       '[fstab]\n'\
-                      'channel=/dev/%s, mountpoint=/, access=ro\n'\
+                      'channel=/dev/%s, mountpoint=/, access=ro, warmup=yes\n'\
                       '[args]\n'\
                       'args = sysimage-test\n' % (path, dev)
                 self.assertEqual(file.read(), out)
