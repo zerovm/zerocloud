@@ -514,6 +514,7 @@ class ObjectQueryMiddleware(object):
                     info = untar_stream.get_next_tarinfo()
             if 'content-length' in req.headers\
                     and int(req.headers['content-length']) != upload_size:
+                self.logger.warning('env: %s', str(req.environ))
                 return HTTPClientDisconnect(request=req,
                                             headers=nexe_headers,
                                             body='Content-Length: %s != %d'
