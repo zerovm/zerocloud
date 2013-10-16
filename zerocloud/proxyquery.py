@@ -192,7 +192,7 @@ class ProxyQueryMiddleware(object):
                 continue
             socks[sock] = 1
             try:
-                json_config = open(conf_file).read()
+                json_config = json.load(open(conf_file))
             except IOError:
                 self.logger.warning('Cannot load daemon config file: %s' % conf_file)
                 continue
@@ -857,13 +857,11 @@ class ClusterController(ObjectController):
                     pile.spawn(self._connect_exec_node, node_iter, partition,
                                exec_request, self.app.logger.thread_locals, node,
                                exec_headers[i])
-                    #print exec_headers[i]
                     for repl_node in node.replicas:
                         i += 1
                         pile.spawn(self._connect_exec_node, node_iter, partition,
                                    exec_request, self.app.logger.thread_locals, repl_node,
                                    exec_headers[i])
-                        #print exec_headers[i]
                 else:
                     if node.skip_validation:
                         exec_request.headers['x-zerovm-valid'] = 'true'
@@ -1189,10 +1187,10 @@ class ClusterController(ObjectController):
                                          environ=req.environ,
                                          headers=req.headers)
             exec_request.path_info = path_info
-            exec_request.content_length = None
+            #exec_request.content_length = None
             exec_request.etag = None
             exec_request.headers['content-type'] = TAR_MIMES[0]
-            exec_request.headers['transfer-encoding'] = 'chunked'
+            #exec_request.headers['transfer-encoding'] = 'chunked'
             exec_request.headers['x-account-name'] = self.account_name
             exec_request.headers['x-timestamp'] = normalize_timestamp(time.time())
             exec_request.headers['x-zerovm-valid'] = 'false'
@@ -1243,6 +1241,14 @@ class ClusterController(ObjectController):
 
         if image_resp:
             data_sources.append(image_resp)
+        tstream = TarStream()
+        for data_src in data_sources:
+            for n in data_src.nodes:
+                if not getattr(n['node'], 'size', None):
+                    n['node'].size = 0
+                n['node'].size += len(tstream.create_tarinfo(ftype=REGTYPE, name=n['dev'],
+                                                             size=data_src.content_length))
+                n['node'].size += TarStream.get_archive_size(data_src.content_length)
         pile = GreenPile(node_count)
         conns = self._make_exec_requests(pile, exec_requests)
         if len(conns) < node_count:
@@ -1256,9 +1262,11 @@ class ClusterController(ObjectController):
                 return Response(body=conn.error,
                                 status="%d %s" % (conn.resp.status, conn.resp.reason),
                                 headers=conn.nexe_headers)
+
         self._attach_connections_to_data_sources(conns, data_sources)
+
         #chunked = req.headers.get('transfer-encoding')
-        chunked = True
+        chunked = False
         try:
             with ContextPool(node_count) as pool:
                 self._spawn_file_senders(conns, pool, req)
@@ -1446,6 +1454,7 @@ class ClusterController(ObjectController):
                     #    request_headers['Expect'] = '100-continue'
                     #request.headers['Connection'] = 'close'
                     request_headers['Expect'] = '100-continue'
+                    request_headers['Content-Length'] = str(cnode.size)
                     conn = http_connect(node['ip'], node['port'],
                                         node['device'], part, request.method,
                                         request.path_info, request_headers)

@@ -964,15 +964,17 @@ class TarStream(object):
         buf = tarinfo.tobuf(self.format, self.encoding, self.errors)
         return buf
 
-    def get_archive_size(self, file_size):
+    @classmethod
+    def get_archive_size(cls, file_size):
         size = file_size + BLOCKSIZE - 1
         return (size / BLOCKSIZE) * BLOCKSIZE
 
     def get_total_stream_length(self):
         size = 0
         for path in self.path_list:
-            size += self.get_archive_size(path.size)
+            size += TarStream.get_archive_size(path.size)
             size += len(self.create_tarinfo(path=path))
+        size += BLOCKSIZE * 2
         return size
 
     def __iter__(self):

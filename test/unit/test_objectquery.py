@@ -237,7 +237,8 @@ class TestObjectQuery(unittest.TestCase):
             with self.create_tar({'sysmap': sysmap, 'image': image}) as tar:
                 req.body_file = open(tar, 'rb')
                 resp = self.app.zerovm_query(req)
-                print resp.headers['x-nexe-cdr-line']
+                print ['x-zerovm-daemon', resp.headers.get('x-zerovm-daemon', '---')]
+                print ['x-nexe-cdr-line', resp.headers['x-nexe-cdr-line']]
                 if resp.content_type in TAR_MIMES:
                     fd, name = mkstemp()
                     for chunk in resp.app_iter:
