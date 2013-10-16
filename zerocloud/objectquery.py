@@ -515,7 +515,8 @@ class ObjectQueryMiddleware(object):
             if 'content-length' in req.headers\
                     and int(req.headers['content-length']) != upload_size:
                 return HTTPClientDisconnect(request=req,
-                                            headers=nexe_headers)
+                                            headers=nexe_headers,
+                                            body='Content-Length: %s != %d' % (req.headers['content-length'], upload_size))
             perf = "%s %.3f" % (perf, time.time() - start)
             if self.zerovm_perf:
                 self.logger.info("PERF UNTAR: %s" % perf)
