@@ -483,8 +483,8 @@ class ObjectQueryMiddleware(object):
         start = time.time()
         channels = {}
         with tmpdir.mkdtemp() as zerovm_tmp:
-            reader = req.environ['wsgi.input'].read
-            read_iter = iter(lambda: reader(self.app.network_chunk_size),'')
+            #reader = req.body_file.read
+            read_iter = iter(lambda: req.body_file.read(self.app.network_chunk_size),'')
             upload_size = 0
             upload_expiration = time.time() + self.app.max_upload_time
             untar_stream = UntarStream(read_iter)
@@ -516,7 +516,8 @@ class ObjectQueryMiddleware(object):
                     and int(req.headers['content-length']) != upload_size:
                 return HTTPClientDisconnect(request=req,
                                             headers=nexe_headers,
-                                            body='Content-Length: %s != %d' % (req.headers['content-length'], upload_size))
+                                            body='Content-Length: %s != %d'
+                                                 % (req.headers['content-length'], upload_size))
             perf = "%s %.3f" % (perf, time.time() - start)
             if self.zerovm_perf:
                 self.logger.info("PERF UNTAR: %s" % perf)
