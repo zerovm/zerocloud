@@ -483,16 +483,13 @@ class ObjectQueryMiddleware(object):
         start = time.time()
         channels = {}
         with tmpdir.mkdtemp() as zerovm_tmp:
-            #reader = req.body_file.read
             read_iter = iter(lambda: req.body_file.read(self.app.network_chunk_size),'')
-            upload_size = 0
             upload_expiration = time.time() + self.app.max_upload_time
             untar_stream = UntarStream(read_iter)
             perf = "%.3f" % (time.time() - start)
             for chunk in read_iter:
                 perf = "%s %.3f" % (perf, time.time() - start)
-                upload_size += len(chunk)
-                if upload_size > self.zerovm_maxinput:
+                if req.body_file.position > self.zerovm_maxinput:
                     return HTTPRequestEntityTooLarge(body='RPC request too large',
                                                      request=req,
                                                      content_type='text/plain',
@@ -513,12 +510,9 @@ class ObjectQueryMiddleware(object):
                         fp.close()
                     info = untar_stream.get_next_tarinfo()
             if 'content-length' in req.headers\
-                    and int(req.headers['content-length']) != upload_size:
-                self.logger.warning('env: %s', str(req.environ))
+                    and int(req.headers['content-length']) != req.body_file.position:
                 return HTTPClientDisconnect(request=req,
-                                            headers=nexe_headers,
-                                            body='Content-Length: %s != %d'
-                                                 % (req.headers['content-length'], upload_size))
+                                            headers=nexe_headers)
             perf = "%s %.3f" % (perf, time.time() - start)
             if self.zerovm_perf:
                 self.logger.info("PERF UNTAR: %s" % perf)

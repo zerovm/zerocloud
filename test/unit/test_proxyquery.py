@@ -898,6 +898,37 @@ return [open(mnfst.image['path']).read(), sorted(id)]
                          str(['This is image file',
                               pickle.loads(self.get_sorted_numbers())]))
 
+    def test_QUERY_use_large_image(self):
+            self.setup_QUERY()
+            prolis = _test_sockets[0]
+            prosrv = _test_servers[0]
+            nexe =\
+    r'''
+    return [open(mnfst.image['path']).read(), sorted(id)]
+    '''[1:-1]
+            self.create_object(prolis, '/v1/a/c/exe2', nexe)
+            image = 'This is image file' * 10000
+            self.create_object(prolis, '/v1/a/c/img', image)
+            conf = [
+                {
+                    'name': 'sort',
+                    'exec': {'path': 'swift://a/c/exe2'},
+                    'file_list': [
+                        {'device': 'stdin', 'path': 'swift://a/c/o'},
+                        {'device': 'stdout'},
+                        {'device': 'image', 'path': 'swift://a/c/img'}
+                    ]
+                }
+            ]
+            conf = json.dumps(conf)
+            req = self.zerovm_request()
+            req.body = conf
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.body,
+                             str(['This is image file' * 10000,
+                                  pickle.loads(self.get_sorted_numbers())]))
+
     def test_QUERY_use_sysimage(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
