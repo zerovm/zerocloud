@@ -819,7 +819,8 @@ class ObjectQueryMiddleware(object):
                             sock.connect(daemon_sock)
                             thrd = thrdpool.spawn(self.send_to_socket, sock, zerovm_inputmnfst)
                         except IOError:
-                            return HTTPInternalServerError(body='Cannot connect to daemon even after daemon restart',
+                            return HTTPInternalServerError(body='Cannot connect to daemon even after daemon restart: '
+                                                                'socket %s' % daemon_sock,
                                                            headers=nexe_headers)
                 else:
                     thrd = self._create_zerovm_thread(zerovm_inputmnfst,
