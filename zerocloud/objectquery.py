@@ -30,7 +30,7 @@ from swift.proxy.controllers.base import update_headers
 from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
     CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env, parse_location, \
     is_image_path, ACCESS_NETWORK, ACCESS_RANDOM, REPORT_VALIDATOR, REPORT_RETCODE, REPORT_ETAG, \
-    REPORT_CDR, REPORT_STATUS, SwiftPath, REPORT_LENGTH, REPORT_DAEMON
+    REPORT_CDR, REPORT_STATUS, SwiftPath, REPORT_LENGTH, REPORT_DAEMON, NodeEncoder
 
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 
@@ -621,10 +621,11 @@ class ObjectQueryMiddleware(object):
                     os.close(output_fd)
                     ch['lpath'] = output_fn
                     channels[ch['device']] = output_fn
-                    if not chan_path:
-                        response_channels.append(ch)
-                    elif not ch is local_object and is_master:
-                        response_channels.insert(0, ch)
+                    if is_master:
+                        if not chan_path:
+                            response_channels.append(ch)
+                        elif not ch is local_object:
+                            response_channels.insert(0, ch)
                 elif ch['access'] & ACCESS_NETWORK:
                     ch['lpath'] = chan_path.path
 
