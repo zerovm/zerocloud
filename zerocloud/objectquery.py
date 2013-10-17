@@ -559,7 +559,7 @@ class ObjectQueryMiddleware(object):
                 return fstab
 
             is_master = True
-            if config.get('replicate', 1) > 1 and len(config.get('replicas', [])) == 0:
+            if config.get('replicate', 1) > 1 and len(config.get('replicas', [])) < (config.get('replicate', 1) - 1):
                 is_master = False
             response_channels = []
             local_object = {}
