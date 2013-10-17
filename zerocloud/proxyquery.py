@@ -220,6 +220,7 @@ class ProxyQueryMiddleware(object):
                     continue
                 node.channels = sorted(node.channels, key=lambda ch: ch.device)
                 result.append((sock, node))
+                self.logger.info('Loaded daemon config %s with UUID %s' % (conf_file, sock))
         return result
 
     def __init__(self, app, conf, logger=None):
