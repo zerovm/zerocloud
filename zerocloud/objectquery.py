@@ -276,7 +276,7 @@ class ObjectQueryMiddleware(object):
         stderr_data = ''
         readable = [proc.stdout, proc.stderr]
         try:
-            with Timeout(self.zerovm_timeout):
+            with Timeout(self.zerovm_timeout + 1):
                 start = time.time()
                 perf = ''
                 while len(readable) > 0:
@@ -408,6 +408,13 @@ class ObjectQueryMiddleware(object):
         nexe_headers['x-nexe-etag'] = report[REPORT_ETAG]
         nexe_headers['x-nexe-cdr-line'] = report[REPORT_CDR]
         nexe_headers['x-nexe-status'] = report[REPORT_STATUS].replace('\n', ' ').rstrip()
+
+    def _channel_cleanup(self, response_channels):
+        for ch in response_channels:
+            try:
+                os.unlink(ch['lpath'])
+            except OSError:
+                pass
 
     def zerovm_query(self, req):
         """Handle zerovm execution requests for the Swift Object Server."""
@@ -847,17 +854,19 @@ class ObjectQueryMiddleware(object):
                 #                zerovm_stdout)
                 #     self.logger.exception(err)
                 report = zerovm_stdout.split('\n', REPORT_LENGTH - 1)
-                if len(report) < REPORT_LENGTH or zerovm_retcode > 1:
-                    resp = self._create_exec_error(nexe_headers, zerovm_retcode, zerovm_stdout)
-                    return req.get_response(resp)
-                else:
+                if len(report) == REPORT_LENGTH:
                     try:
                         if daemon_status != 1:
                             daemon_status = int(report[REPORT_DAEMON])
                         self._parse_zerovm_report(nexe_headers, report)
-                    except Exception:
-                        resp = HTTPInternalServerError(body=zerovm_stdout)
+                    except ValueError:
+                        resp = self._create_exec_error(nexe_headers, zerovm_retcode, zerovm_stdout)
+                        self._channel_cleanup(response_channels)
                         return req.get_response(resp)
+                if zerovm_retcode > 1 or len(report) < REPORT_LENGTH:
+                    resp = self._create_exec_error(nexe_headers, zerovm_retcode, zerovm_stdout)
+                    self._channel_cleanup(response_channels)
+                    return req.get_response(resp)
 
                 self.logger.info('Zerovm CDR: %s' % nexe_headers['x-nexe-cdr-line'])
 
