@@ -34,22 +34,22 @@ class SharedContainersMiddleware(object):
             return self.app
         if version in (self.shared_container_add, self.shared_container_remove):
             if container:
-                return self.handle_shared(version, request.remote_user, account, container)
+                return self.handle_shared(version, request.remote_user, account, container, request.environ)
             return HTTPBadRequest(body='Cannot parse url path %s%s'
                                        % (request.environ.get('SCRIPT_NAME', ''),
                                           request.environ['PATH_INFO']))
         return self.app
 
-    def handle_shared(self, version, account, shared_account, shared_container):
+    def handle_shared(self, version, account, shared_account, shared_container, env):
         if not account:
             return HTTPUnauthorized()
         email = 'shared'
         if self.whitelist_url:
-            acc_id = get_account_from_whitelist(self.whitelist_url, self.app, unquote(shared_account), self.logger)
+            acc_id = get_account_from_whitelist(self.whitelist_url, self.app, unquote(shared_account), self.logger, env)
             if acc_id and acc_id.startswith(self.google_prefix):
                 email = unquote(shared_account)
                 shared_account = acc_id
-        shared = retrieve_metadata(self.app, self.version, account, 'shared')
+        shared = retrieve_metadata(self.app, self.version, account, 'shared', env)
         if not shared:
             shared = {}
         if version in self.shared_container_add:
@@ -60,7 +60,7 @@ class SharedContainersMiddleware(object):
             except KeyError:
                 return HTTPNotFound(body='Could not remove shared container %s/%s'
                                          % (shared_account, shared_container))
-        if store_metadata(self.app, self.version, account, 'shared', shared):
+        if store_metadata(self.app, self.version, account, 'shared', shared, env):
             return Response(body='Successfully handled shared container %s/%s'
                                  % (shared_account, shared_container))
         return HTTPNotFound(body='Could not handle shared container %s/%s'
