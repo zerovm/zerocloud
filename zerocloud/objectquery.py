@@ -429,7 +429,7 @@ class ObjectQueryMiddleware(object):
             'x-nexe-status': 'Zerovm did not run',
             'x-nexe-etag': '',
             'x-nexe-validation': 0,
-            'x-nexe-cdr-line': '0 0 0 0 0 0 0 0 0 0 0 0',
+            'x-nexe-cdr-line': '0 0 0 0 0 0 0 0 0 0',
             'x-nexe-system': ''
         }
 
