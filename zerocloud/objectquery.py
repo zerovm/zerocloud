@@ -558,11 +558,11 @@ class ObjectQueryMiddleware(object):
 
             fstab = None
 
-            def add_to_fstab(fstab, device, access, warmup='yes', mountpoint='/'):
+            def add_to_fstab(fstab, device, access, removable='no', mountpoint='/'):
                 if not fstab:
                     fstab = '[fstab]\n'
-                fstab += 'channel=/dev/%s, mountpoint=%s, access=%s, warmup=%s\n' \
-                         % (device, mountpoint, access, warmup)
+                fstab += 'channel=/dev/%s, mountpoint=%s, access=%s, removable=%s\n' \
+                         % (device, mountpoint, access, removable)
                 return fstab
 
             is_master = True
@@ -618,7 +618,7 @@ class ObjectQueryMiddleware(object):
                                                   body='Could not resolve channel path: %s'
                                                        % ch['path'])
                     if ch['device'] in 'image':
-                        fstab = add_to_fstab(fstab, ch['device'], 'ro', warmup=ch['warmup'])
+                        fstab = add_to_fstab(fstab, ch['device'], 'ro', removable=ch['removable'])
                 elif ch['access'] & ACCESS_WRITABLE:
                     writable_tmpdir = os.path.join(self.app.devices, device, 'tmp')
                     if not os.path.exists(writable_tmpdir):

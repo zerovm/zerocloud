@@ -1276,7 +1276,7 @@ time.sleep(10)
                 file = tar.extractfile(members[-1])
                 out = '%s\n'\
                       '[fstab]\n'\
-                      'channel=/dev/%s, mountpoint=/, access=ro, warmup=yes\n'\
+                      'channel=/dev/%s, mountpoint=/, access=ro, removable=no\n'\
                       '[args]\n'\
                       'args = sysimage-test\n' % (path, dev)
                 self.assertEqual(file.read(), out)

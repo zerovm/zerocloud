@@ -1156,7 +1156,7 @@ class ClusterController(ObjectController):
                                   headers={'Content-Length': user_image_length})
             image_resp.nodes = []
             for n in node_list:
-                n.add_channel('image', ACCESS_CDR)
+                n.add_channel('image', ACCESS_CDR, removable='yes')
 
         data_sources = []
         addr = self._get_own_address()
