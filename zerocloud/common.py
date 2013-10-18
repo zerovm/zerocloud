@@ -161,7 +161,7 @@ def update_metadata(request, meta_data):
 # quotes commas as \x2c for [env] stanza in nvram file
 # see ZRT docs
 def quote_for_env(val):
-    return re.sub(r',', '\\x2c', val)
+    return re.sub(r',', '\\x2c', str(val))
 
 
 def can_run_as_daemon(node_conf, daemon_conf):
