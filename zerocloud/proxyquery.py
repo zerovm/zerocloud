@@ -1497,8 +1497,8 @@ class ClusterController(ObjectController):
         config = _config_from_template(req.params, template, location.url)
         #config = re.sub(r'\{\.[^\}]+\}', '', config)
         post_req = Request.blank('/%s' % self.account_name,
-                                 environ=obj_req.environ,
-                                 headers=obj_req.headers)
+                                 environ=req.environ,
+                                 headers=req.headers)
         post_req.method = 'POST'
         post_req.headers['content-type'] = 'application/json'
         exe_resp = None
