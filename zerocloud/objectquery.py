@@ -379,8 +379,8 @@ class ObjectQueryMiddleware(object):
             std.write(zerovm_stderr)
             std.close()
 
-    def _create_zerovm_thread(self, zerovm_inputmnfst, zerovm_inputmnfst_fd, zerovm_inputmnfst_fn, zerovm_valid,
-                             thrdpool):
+    def _create_zerovm_thread(self, zerovm_inputmnfst, zerovm_inputmnfst_fd,
+                              zerovm_inputmnfst_fn, zerovm_valid, thrdpool):
         while zerovm_inputmnfst:
             written = self.os_interface.write(zerovm_inputmnfst_fd,
                                               zerovm_inputmnfst)
@@ -401,20 +401,6 @@ class ObjectQueryMiddleware(object):
         nexe_headers['x-nexe-status'] = 'ZeroVM runtime error'
         resp.headers = nexe_headers
         return resp
-
-    def _parse_zerovm_report(self, nexe_headers, report):
-        nexe_headers['x-nexe-validation'] = int(report[REPORT_VALIDATOR])
-        nexe_headers['x-nexe-retcode'] = int(report[REPORT_RETCODE])
-        nexe_headers['x-nexe-etag'] = report[REPORT_ETAG]
-        nexe_headers['x-nexe-cdr-line'] = report[REPORT_CDR]
-        nexe_headers['x-nexe-status'] = report[REPORT_STATUS].replace('\n', ' ').rstrip()
-
-    def _channel_cleanup(self, response_channels):
-        for ch in response_channels:
-            try:
-                os.unlink(ch['lpath'])
-            except OSError:
-                pass
 
     def zerovm_query(self, req):
         """Handle zerovm execution requests for the Swift Object Server."""
@@ -490,7 +476,7 @@ class ObjectQueryMiddleware(object):
         start = time.time()
         channels = {}
         with tmpdir.mkdtemp() as zerovm_tmp:
-            read_iter = iter(lambda: req.body_file.read(self.app.network_chunk_size),'')
+            read_iter = iter(lambda: req.body_file.read(self.app.network_chunk_size), '')
             upload_expiration = time.time() + self.app.max_upload_time
             untar_stream = UntarStream(read_iter)
             perf = "%.3f" % (time.time() - start)
@@ -817,7 +803,7 @@ class ObjectQueryMiddleware(object):
                         else:
                             try:
                                 daemon_status = int(report[REPORT_DAEMON])
-                                self._parse_zerovm_report(nexe_headers, report)
+                                _parse_zerovm_report(nexe_headers, report)
                             except Exception:
                                 resp = HTTPInternalServerError(body=zerovm_stdout)
                                 return req.get_response(resp)
@@ -858,14 +844,14 @@ class ObjectQueryMiddleware(object):
                     try:
                         if daemon_status != 1:
                             daemon_status = int(report[REPORT_DAEMON])
-                        self._parse_zerovm_report(nexe_headers, report)
+                        _parse_zerovm_report(nexe_headers, report)
                     except ValueError:
                         resp = self._create_exec_error(nexe_headers, zerovm_retcode, zerovm_stdout)
-                        self._channel_cleanup(response_channels)
+                        _channel_cleanup(response_channels)
                         return req.get_response(resp)
                 if zerovm_retcode > 1 or len(report) < REPORT_LENGTH:
                     resp = self._create_exec_error(nexe_headers, zerovm_retcode, zerovm_stdout)
-                    self._channel_cleanup(response_channels)
+                    _channel_cleanup(response_channels)
                     return req.get_response(resp)
 
                 self.logger.info('Zerovm CDR: %s' % nexe_headers['x-nexe-cdr-line'])
@@ -925,38 +911,38 @@ class ObjectQueryMiddleware(object):
                     resp_size += len(sysmap_info) + TarStream.get_archive_size(len(sysmap_dump))
 
                 def resp_iter(channels, chunk_size):
-                    tar_stream = TarStream(chunk_size=chunk_size)
+                    tstream = TarStream(chunk_size=chunk_size)
                     if send_config:
-                        for chunk in tar_stream._serve_chunk(sysmap_info):
+                        for chunk in tstream.serve_chunk(sysmap_info):
                             yield chunk
-                        for chunk in tar_stream._serve_chunk(sysmap_dump):
+                        for chunk in tstream.serve_chunk(sysmap_dump):
                             yield chunk
                         blocks, remainder = divmod(len(sysmap_dump), BLOCKSIZE)
                         if remainder > 0:
                             nulls = NUL * (BLOCKSIZE - remainder)
-                            for chunk in tar_stream._serve_chunk(nulls):
+                            for chunk in tstream.serve_chunk(nulls):
                                 yield chunk
                     for ch in channels:
                         fp = open(ch['lpath'], 'rb')
                         if ch.get('offset', None):
                             fp.seek(ch['offset'])
                         reader = iter(lambda: fp.read(chunk_size), '')
-                        for chunk in tar_stream._serve_chunk(ch['info']):
+                        for chunk in tstream.serve_chunk(ch['info']):
                             yield chunk
                         for data in reader:
-                            for chunk in tar_stream._serve_chunk(data):
+                            for chunk in tstream.serve_chunk(data):
                                 yield chunk
                         fp.close()
                         os.unlink(ch['lpath'])
                         blocks, remainder = divmod(ch['size'], BLOCKSIZE)
                         if remainder > 0:
                             nulls = NUL * (BLOCKSIZE - remainder)
-                            for chunk in tar_stream._serve_chunk(nulls):
+                            for chunk in tstream.serve_chunk(nulls):
                                 yield chunk
-                    if tar_stream.data:
-                        yield tar_stream.data
+                    if tstream.data:
+                        yield tstream.data
 
-                response.app_iter=resp_iter(immediate_responses, self.app.network_chunk_size)
+                response.app_iter = resp_iter(immediate_responses, self.app.network_chunk_size)
                 response.content_length = resp_size
                 return req.get_response(response)
 
@@ -1252,6 +1238,22 @@ class ObjectQueryMiddleware(object):
             except OSError:
                 continue
         return result
+
+
+def _parse_zerovm_report(nexe_headers, report):
+    nexe_headers['x-nexe-validation'] = int(report[REPORT_VALIDATOR])
+    nexe_headers['x-nexe-retcode'] = int(report[REPORT_RETCODE])
+    nexe_headers['x-nexe-etag'] = report[REPORT_ETAG]
+    nexe_headers['x-nexe-cdr-line'] = report[REPORT_CDR]
+    nexe_headers['x-nexe-status'] = report[REPORT_STATUS].replace('\n', ' ').rstrip()
+
+
+def _channel_cleanup(response_channels):
+    for ch in response_channels:
+        try:
+            os.unlink(ch['lpath'])
+        except OSError:
+            pass
 
 
 def filter_factory(global_conf, **local_conf):

@@ -952,7 +952,7 @@ class TarStream(object):
         self.file_len = 0
         self.append = append
 
-    def _serve_chunk(self, buf):
+    def serve_chunk(self, buf):
         self.to_write -= len(buf)
         if self.to_write < 0:
             self.data += buf[:self.to_write]
@@ -995,29 +995,29 @@ class TarStream(object):
         if self.append:
             if self.tar_iter:
                 for data in self.tar_iter:
-                    for chunk in self._serve_chunk(data):
+                    for chunk in self.serve_chunk(data):
                         yield chunk
         for path in self.path_list:
             buf = self.create_tarinfo(path=path)
-            for chunk in self._serve_chunk(buf):
+            for chunk in self.serve_chunk(buf):
                 yield chunk
             for file_data in path:
-                for chunk in self._serve_chunk(file_data):
+                for chunk in self.serve_chunk(file_data):
                     yield chunk
             self.file_len += len(self.data)
             blocks, remainder = divmod(self.file_len, BLOCKSIZE)
             if remainder > 0:
                 nulls = NUL * (BLOCKSIZE - remainder)
-                for chunk in self._serve_chunk(nulls):
+                for chunk in self.serve_chunk(nulls):
                     yield chunk
             self.file_len = 0
         if not self.append:
             if self.tar_iter:
                 for data in self.tar_iter:
-                    for chunk in self._serve_chunk(data):
+                    for chunk in self.serve_chunk(data):
                         yield chunk
             else:
-                for chunk in self._serve_chunk(NUL * (BLOCKSIZE * 2)):
+                for chunk in self.serve_chunk(NUL * (BLOCKSIZE * 2)):
                     yield chunk
         if self.data:
             yield self.data

@@ -1102,7 +1102,7 @@ class ClusterController(ObjectController):
         if not addr:
             return HTTPServiceUnavailable(
                 body='Cannot find own address, check zerovm_ns_hostname')
-        node_count = self._total_node_count(node_list)
+        node_count = _total_node_count(node_list)
         ns_server = None
         if node_count > 1:
             ns_server = NameService(node_count)
@@ -1331,7 +1331,7 @@ class ClusterController(ObjectController):
                 if 'sysmap' in info.name:
                     untar_stream.to_write = info.size
                     untar_stream.offset_data = info.offset_data
-                    self._load_channel_data(node, ExtractedFile(untar_stream))
+                    _load_channel_data(node, ExtractedFile(untar_stream))
                     info = untar_stream.get_next_tarinfo()
                     continue
                 chan = node.get_channel(device=info.name)
@@ -1450,16 +1450,6 @@ class ClusterController(ObjectController):
                 self.app.logger.warn(
                     _('ERROR Cannot write stats for account %s'), self.account_name)
 
-    def _load_channel_data(self, node, extracted_file):
-        config = json.loads(extracted_file.read())
-        for new_ch in config['channels']:
-            old_ch = node.get_channel(device=new_ch['device'])
-            if old_ch:
-                old_ch.content_type = new_ch['content_type']
-                if new_ch.get('meta', None):
-                    for k, v in new_ch.get('meta').iteritems():
-                        old_ch.meta[k] = v
-
     @delay_denial
     @cors_validation
     def GET(self, req):
@@ -1546,11 +1536,23 @@ class ClusterController(ObjectController):
             memcache_client.set(memcache_key, req.template,
                                 time=float(self.app.zerovm_cache_config_timeout))
 
-    def _total_node_count(self, node_list):
-        count = 0
-        for n in node_list:
-            count += n.replicate
-        return count
+
+def _load_channel_data(node, extracted_file):
+    config = json.loads(extracted_file.read())
+    for new_ch in config['channels']:
+        old_ch = node.get_channel(device=new_ch['device'])
+        if old_ch:
+            old_ch.content_type = new_ch['content_type']
+            if new_ch.get('meta', None):
+                for k, v in new_ch.get('meta').iteritems():
+                    old_ch.meta[k] = v
+
+
+def _total_node_count(node_list):
+    count = 0
+    for n in node_list:
+        count += n.replicate
+    return count
 
 
 def _config_from_template(params, template, url):
@@ -1579,15 +1581,29 @@ def _attach_connections_to_data_sources(conns, data_sources):
                     data_src.conns.append({'conn': conn, 'dev': node['dev']})
 
 
+def _queue_put(conn, data, chunked):
+    conn['conn'].queue.put('%x\r\n%s\r\n'
+                           % (len(data), data) if chunked else data)
+
+
+def _send_tar_headers(chunked, data_src):
+    for conn in data_src.conns:
+        info = conn['conn'].tar_stream.create_tarinfo(ftype=REGTYPE,
+                                                      name=conn['dev'],
+                                                      size=data_src.content_length)
+        for chunk in conn['conn'].tar_stream.serve_chunk(info):
+            if not conn['conn'].failed:
+                _queue_put(conn, chunk, chunked)
+
+
 def _send_data_chunk(chunked, data_src, data, req):
     data_src.bytes_transferred += len(data)
     if data_src.bytes_transferred > MAX_FILE_SIZE:
         return HTTPRequestEntityTooLarge(request=req)
     for conn in data_src.conns:
-        for chunk in conn['conn'].tar_stream._serve_chunk(data):
+        for chunk in conn['conn'].tar_stream.serve_chunk(data):
             if not conn['conn'].failed:
-                conn['conn'].queue.put('%x\r\n%s\r\n'
-                                       % (len(chunk), chunk) if chunked else chunk)
+                _queue_put(conn, chunk, chunked)
             else:
                 return HTTPServiceUnavailable(request=req)
 
@@ -1597,11 +1613,9 @@ def _finalize_tar_streams(chunked, data_src, req):
     if remainder > 0:
         nulls = NUL * (BLOCKSIZE - remainder)
         for conn in data_src.conns:
-            for chunk in conn['conn'].tar_stream._serve_chunk(nulls):
+            for chunk in conn['conn'].tar_stream.serve_chunk(nulls):
                 if not conn['conn'].failed:
-                    conn['conn'].queue.put(
-                        '%x\r\n%s\r\n' % (len(chunk), chunk)
-                        if chunked else chunk)
+                    _queue_put(conn, chunk, chunked)
                 else:
                     return HTTPServiceUnavailable(request=req)
     for conn in data_src.conns:
@@ -1609,23 +1623,11 @@ def _finalize_tar_streams(chunked, data_src, req):
             if conn['conn'].tar_stream.data:
                 data = conn['conn'].tar_stream.data
                 if not conn['conn'].failed:
-                    conn['conn'].queue.put('%x\r\n%s\r\n'
-                                           % (len(data), data) if chunked else data)
+                    _queue_put(conn, data, chunked)
                 else:
                     return HTTPServiceUnavailable(request=req)
             if chunked:
                 conn['conn'].queue.put('0\r\n\r\n')
-
-
-def _send_tar_headers(chunked, data_src):
-    for conn in data_src.conns:
-        info = conn['conn'].tar_stream.create_tarinfo(ftype=REGTYPE,
-                                                      name=conn['dev'],
-                                                      size=data_src.content_length)
-        for chunk in conn['conn'].tar_stream._serve_chunk(info):
-            if not conn['conn'].failed:
-                conn['conn'].queue.put('%x\r\n%s\r\n' %
-                                       (len(chunk), chunk) if chunked else chunk)
 
 
 def _get_local_address(node):
