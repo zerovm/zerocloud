@@ -1296,8 +1296,8 @@ class ClusterController(ObjectController):
                     server_response = conn.getresponse()
         except (Exception, Timeout):
             self.exception_occurred(conn.node, _('Object'),
-                _('Trying to get final status of POST to %s')
-                % request.path_info)
+                                    _('Trying to get final status of POST to %s')
+                                    % request.path_info)
             conn.error = 'Timeout: trying to get final status of POST to %s' % request.path_info
             #conn.resp = HTTPClientDisconnect(body=conn.path,
             #    headers=conn.nexe_headers)
