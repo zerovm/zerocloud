@@ -393,14 +393,14 @@ class ZvmNode(object):
         self.env['HTTP_ACCEPT_ENCODING'] = request.headers.get('accept-encoding')
         self.env['HTTP_ACCEPT_LANGUAGE'] = request.headers.get('accept-language')
 
-    def _create_sysmap_resp(self):
+    def create_sysmap_resp(self):
         sysmap = json.dumps(self, cls=NodeEncoder)
         #print json.dumps(self, cls=NodeEncoder, indent=2)
         sysmap_iter = iter([sysmap])
         return Response(app_iter=sysmap_iter,
                         headers={'Content-Length': str(len(sysmap))})
 
-    def _add_data_source(self, data_sources, resp, dev='sysmap', append=False):
+    def add_data_source(self, data_sources, resp, dev='sysmap', append=False):
         if append:
             data_sources.append(resp)
         else:

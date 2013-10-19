@@ -96,19 +96,19 @@ S_IFDIR = 0040000        # directory
 S_IFCHR = 0020000        # character device
 S_IFIFO = 0010000        # fifo
 
-TSUID   = 04000          # set UID on execution
-TSGID   = 02000          # set GID on execution
-TSVTX   = 01000          # reserved
+TSUID = 04000          # set UID on execution
+TSGID = 02000          # set GID on execution
+TSVTX = 01000          # reserved
 
-TUREAD  = 0400           # read by owner
+TUREAD = 0400           # read by owner
 TUWRITE = 0200           # write by owner
-TUEXEC  = 0100           # execute/search by owner
-TGREAD  = 0040           # read by group
+TUEXEC = 0100           # execute/search by owner
+TGREAD = 0040           # read by group
 TGWRITE = 0020           # write by group
-TGEXEC  = 0010           # execute/search by group
-TOREAD  = 0004           # read by other
+TGEXEC = 0010           # execute/search by group
+TOREAD = 0004           # read by other
 TOWRITE = 0002           # write by other
-TOEXEC  = 0001           # execute/search by other
+TOEXEC = 0001           # execute/search by other
 
 #---------------------------------------------------------
 # initialization
@@ -121,10 +121,12 @@ if ENCODING is None:
 # Some useful functions
 #---------------------------------------------------------
 
+
 def stn(s, length):
     """Convert a python string to a null-terminated string buffer.
     """
     return s[:length] + (length - len(s)) * NUL
+
 
 def nts(s):
     """Convert a null-terminated string field to a python string.
@@ -134,6 +136,7 @@ def nts(s):
     if p == -1:
         return s
     return s[:p]
+
 
 def nti(s):
     """Convert a number field to a python number.
@@ -151,6 +154,7 @@ def nti(s):
             n <<= 8
             n += ord(s[i + 1])
     return n
+
 
 def itn(n, digits=8, format=DEFAULT_FORMAT):
     """Convert a python number to a number field.
@@ -179,6 +183,7 @@ def itn(n, digits=8, format=DEFAULT_FORMAT):
         s = chr(0200) + s
     return s
 
+
 def uts(s, encoding, errors):
     """Convert a unicode object to a string.
     """
@@ -199,6 +204,7 @@ def uts(s, encoding, errors):
     else:
         return s.encode(encoding, errors)
 
+
 def calc_chksums(buf):
     """Calculate the checksum for a member's header by summing up all
        characters except for the chksum field which is treated as if
@@ -211,6 +217,7 @@ def calc_chksums(buf):
     unsigned_chksum = 256 + sum(struct.unpack("148B", buf[:148]) + struct.unpack("356B", buf[156:512]))
     signed_chksum = 256 + sum(struct.unpack("148b", buf[:148]) + struct.unpack("356b", buf[156:512]))
     return unsigned_chksum, signed_chksum
+
 
 class TarInfo(object):
     """Informational class which holds the details about an
@@ -247,14 +254,17 @@ class TarInfo(object):
     # "path" and "linkpath".
     def _getpath(self):
         return self.name
+
     def _setpath(self, name):
         self.name = name
     path = property(_getpath, _setpath)
 
     def _getlinkpath(self):
         return self.linkname
+
     def _setlinkpath(self, linkname):
         self.linkname = linkname
+
     linkpath = property(_getlinkpath, _setlinkpath)
 
     def __repr__(self):
@@ -453,8 +463,8 @@ class TarInfo(object):
         info["magic"] = GNU_MAGIC
 
         # create extended header + name blocks.
-        return cls._create_header(info, USTAR_FORMAT) +\
-               cls._create_payload(name)
+        return cls._create_header(info, USTAR_FORMAT) + \
+            cls._create_payload(name)
 
     @classmethod
     def _create_pax_generic_header(cls, pax_headers, type=XHDTYPE):
@@ -485,8 +495,8 @@ class TarInfo(object):
         info["magic"] = POSIX_MAGIC
 
         # Create pax header + record blocks.
-        return cls._create_header(info, USTAR_FORMAT) +\
-               cls._create_payload(records)
+        return cls._create_header(info, USTAR_FORMAT) + \
+            cls._create_payload(records)
 
     @classmethod
     def frombuf(cls, buf):
@@ -535,40 +545,6 @@ class TarInfo(object):
             obj.name = prefix + "/" + obj.name
         return obj
 
-#    @classmethod
-#    def fromtarfile(cls, tarfile):
-#        """Return the next TarInfo object from TarFile object
-#           tarfile.
-#        """
-#        buf = tarfile.fileobj.read(BLOCKSIZE)
-#        obj = cls.frombuf(buf)
-#        obj.offset = tarfile.fileobj.tell() - BLOCKSIZE
-#        return obj._proc_member(tarfile)
-
-    #--------------------------------------------------------------------------
-    # The following are methods that are called depending on the type of a
-    # member. The entry point is _proc_member() which can be overridden in a
-    # subclass to add custom _proc_*() methods. A _proc_*() method MUST
-    # implement the following
-    # operations:
-    # 1. Set self.offset_data to the position where the data blocks begin,
-    #    if there is data that follows.
-    # 2. Set tarfile.offset to the position where the next member's header will
-    #    begin.
-    # 3. Return self or another valid TarInfo object.
-#    def _proc_member(self, tarfile):
-#        """Choose the right processing method depending on
-#           the type and call it.
-#        """
-#        if self.type in (GNUTYPE_LONGNAME, GNUTYPE_LONGLINK):
-#            return self._proc_gnulong(tarfile)
-#        elif self.type == GNUTYPE_SPARSE:
-#            return self._proc_sparse(tarfile)
-#        elif self.type in (XHDTYPE, XGLTYPE, SOLARIS_XHDTYPE):
-#            return self._proc_pax(tarfile)
-#        else:
-#            return self._proc_builtin(tarfile)
-
     def _proc_builtin(self, untar_stream):
         """Process a builtin type or an unknown type which
            will be treated as a regular file.
@@ -614,7 +590,7 @@ class TarInfo(object):
     def _proc_sparse(self, untar_stream):
         """Process a GNU sparse header plus extra headers.
         """
-        buf = self.buf
+        buf = untar_stream.next_block(size=self._block(self.size))
         sp = _ringbuffer()
         pos = 386
         lastpos = 0L
@@ -764,59 +740,90 @@ class TarInfo(object):
 
     def isreg(self):
         return self.type in REGULAR_TYPES
+
     def isfile(self):
         return self.isreg()
+
     def isdir(self):
         return self.type == DIRTYPE
+
     def issym(self):
         return self.type == SYMTYPE
+
     def islnk(self):
         return self.type == LNKTYPE
+
     def ischr(self):
         return self.type == CHRTYPE
+
     def isblk(self):
         return self.type == BLKTYPE
+
     def isfifo(self):
         return self.type == FIFOTYPE
+
     def issparse(self):
         return self.type == GNUTYPE_SPARSE
+
     def isdev(self):
         return self.type in (CHRTYPE, BLKTYPE, FIFOTYPE)
     # class TarInfo
 
+
 class TarError(Exception):
     """Base exception."""
     pass
+
+
 class ExtractError(TarError):
     """General exception for extract errors."""
     pass
+
+
 class ReadError(TarError):
     """Exception for unreadble tar archives."""
     pass
+
+
 class CompressionError(TarError):
     """Exception for unavailable compression methods."""
     pass
+
+
 class StreamError(TarError):
     """Exception for unsupported operations on stream-like TarFiles."""
     pass
+
+
 class HeaderError(TarError):
     """Base exception for header errors."""
     pass
+
+
 class EmptyHeaderError(HeaderError):
     """Exception for empty headers."""
     pass
+
+
 class TruncatedHeaderError(HeaderError):
     """Exception for truncated headers."""
     pass
+
+
 class EOFHeaderError(HeaderError):
     """Exception for end of file headers."""
     pass
+
+
 class InvalidHeaderError(HeaderError):
     """Exception for invalid headers."""
     pass
+
+
 class SubsequentHeaderError(HeaderError):
     """Exception for missing and invalid extended headers."""
     pass
+
 
 # Helper classes for sparse file support
 class _section:
@@ -825,8 +832,10 @@ class _section:
     def __init__(self, offset, size):
         self.offset = offset
         self.size = size
+
     def __contains__(self, offset):
         return self.offset <= offset < self.offset + self.size
+
 
 class _data(_section):
     """Represent a data section in a sparse file.
@@ -835,10 +844,12 @@ class _data(_section):
         _section.__init__(self, offset, size)
         self.realpos = realpos
 
+
 class _hole(_section):
     """Represent a hole section in a sparse file.
     """
     pass
+
 
 class _ringbuffer(list):
     """Ringbuffer class which increases performance
@@ -846,6 +857,7 @@ class _ringbuffer(list):
     """
     def __init__(self):
         self.idx = 0
+
     def find(self, offset):
         idx = self.idx
         while True:
@@ -905,6 +917,7 @@ class RegFile:
                 self.fp = None
                 raise StopIteration
 
+
 class StringBuffer:
 
     def __init__(self, name, body=''):
@@ -921,6 +934,7 @@ class StringBuffer:
 
     def close(self):
         self.is_closed = True
+
 
 class TarStream(object):
 

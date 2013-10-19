@@ -84,7 +84,7 @@ class CachedBody(object):
                         break
                     else:
                         yield chunk
-            for chunk in self.read_iter:
+            for _junk in self.read_iter:
                 pass
         else:
             for chunk in self.cache:
@@ -120,6 +120,8 @@ class NameService(object):
         self.port = None
         self.hostaddr = None
         self.peers = peers
+        self.sock = None
+        self.thread = None
         #print "NameServer got %d peers" % self.peers
 
     def start(self, pool):
@@ -351,14 +353,6 @@ class ClusterController(ObjectController):
             if can_run_as_daemon(config, daemon_conf):
                 return daemon_sock
         return None
-
-    def _get_local_address(self, node):
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect((node['ip'], node['port']))
-        result = s.getsockname()[0]
-        s.shutdown(socket.SHUT_RDWR)
-        s.close()
-        return result
 
     def get_random_partition(self):
         partition_count = self.app.object_ring.partition_count
@@ -612,7 +606,7 @@ class ClusterController(ObjectController):
                             read_mask = re.escape(path.path).replace('\\*', '(.*)')
                             read_mask = re.compile(read_mask)
                             for i in range(len(temp_list)):
-                                new_name = self._create_node_name(node_name, i+1)
+                                new_name = _create_node_name(node_name, i+1)
                                 new_path = temp_list[i]
                                 new_node = self.nodes.get(new_name)
                                 if not new_node:
@@ -623,13 +617,13 @@ class ClusterController(ObjectController):
                                 new_node.add_channel(device, access,
                                                      path=new_path, mode=mode)
                                 new_match = read_mask.match(new_path.path)
-                                new_node.wildcards = map(lambda i: new_match.group(i),
+                                new_node.wildcards = map(lambda idx: new_match.group(idx),
                                                          range(1, new_match.lastindex + 1))
                             node_count = len(temp_list)
                         else:
                             if node_count > 1:
                                 for i in range(1, node_count + 1):
-                                    new_name = self._create_node_name(node_name, i)
+                                    new_name = _create_node_name(node_name, i)
                                     new_path = SwiftPath.init(path.account, path.container, path.obj)
                                     new_node = self.nodes.get(new_name)
                                     if not new_node:
@@ -659,7 +653,7 @@ class ClusterController(ObjectController):
                         if path and '*' in path.url:
                             if read_group:
                                 for i in range(1, node_count + 1):
-                                    new_name = self._create_node_name(node_name, i)
+                                    new_name = _create_node_name(node_name, i)
                                     new_url = path.url
                                     new_node = self.nodes.get(new_name)
                                     for wc in new_node.wildcards:
@@ -675,7 +669,7 @@ class ClusterController(ObjectController):
                                                          meta_data=meta, mode=mode)
                             else:
                                 for i in range(1, node_count + 1):
-                                    new_name = self._create_node_name(node_name, i)
+                                    new_name = _create_node_name(node_name, i)
                                     new_url = path.url
                                     new_url = new_url.replace('*', new_name)
                                     new_node = self.nodes.get(new_name)
@@ -706,13 +700,13 @@ class ClusterController(ObjectController):
                                                  meta_data=meta, mode=mode)
                         else:
                             if 'stdout' not in device \
-                                and 'stderr' not in device:
+                                    and 'stderr' not in device:
                                 return HTTPBadRequest(request=req,
                                                       body='Immediate response is not available '
                                                            'for device %s' % device)
                             if node_count > 1:
                                 for i in range(1, node_count + 1):
-                                    new_name = self._create_node_name(node_name, i)
+                                    new_name = _create_node_name(node_name, i)
                                     new_node = self.nodes.get(new_name)
                                     if not new_node:
                                         new_node = ZvmNode(nid, new_name,
@@ -746,7 +740,7 @@ class ClusterController(ObjectController):
                                                       body='Path required for device %s' % device)
                         if node_count > 1:
                             for i in range(1, node_count + 1):
-                                new_name = self._create_node_name(node_name, i)
+                                new_name = _create_node_name(node_name, i)
                                 new_node = self.nodes.get(new_name)
                                 if not new_node:
                                     new_node = ZvmNode(nid, new_name,
@@ -792,7 +786,7 @@ class ClusterController(ObjectController):
                                           body='Invalid connect string for node %s' % node_name)
             elif self.nodes.get(node_name + '-1'):
                 j = 1
-                connect_node = self.nodes.get(self._create_node_name(node_name, j))
+                connect_node = self.nodes.get(_create_node_name(node_name, j))
                 while connect_node:
                     try:
                         for bind_name in connect:
@@ -809,7 +803,7 @@ class ClusterController(ObjectController):
                                                    % (connect_node.name, e))
                     j += 1
                     connect_node = self.nodes.get(
-                        self._create_node_name(node_name, j))
+                        _create_node_name(node_name, j))
             else:
                 return HTTPBadRequest(request=req,
                                       body='Non existing node in connect string for node %s'
@@ -832,7 +826,7 @@ class ClusterController(ObjectController):
             part = randrange(0, partition_count)
             nodes = self.app.object_ring.get_part_nodes(part)
             for n in nodes:
-                addr = self._get_local_address(n)
+                addr = _get_local_address(n)
                 if addr:
                     break
         return addr
@@ -887,67 +881,12 @@ class ClusterController(ObjectController):
                                exec_request.headers)
         return [conn for conn in pile if conn]
 
-    def _attach_connections_to_data_sources(self, conns, data_sources):
-        for data_src in data_sources:
-            data_src.conns = []
-            for node in data_src.nodes:
-                for conn in conns:
-                    if conn.cnode is node['node']:
-                        conn.last_data = node['node'].last_data
-                        data_src.conns.append({'conn': conn, 'dev': node['dev']})
-
     def _spawn_file_senders(self, conns, pool, req):
         for conn in conns:
             conn.failed = False
             conn.queue = Queue(self.app.put_queue_depth)
             conn.tar_stream = TarStream()
             pool.spawn(self._send_file, conn, req.path)
-
-    def _send_tar_headers(self, chunked, data_src):
-        for conn in data_src.conns:
-            info = conn['conn'].tar_stream.create_tarinfo(ftype=REGTYPE,
-                                                          name=conn['dev'],
-                                                          size=data_src.content_length)
-            for chunk in conn['conn'].tar_stream._serve_chunk(info):
-                if not conn['conn'].failed:
-                    conn['conn'].queue.put('%x\r\n%s\r\n' %
-                                           (len(chunk), chunk) if chunked else chunk)
-
-    def _finalize_tar_streams(self, chunked, data_src, req):
-        blocks, remainder = divmod(data_src.bytes_transferred, BLOCKSIZE)
-        if remainder > 0:
-            nulls = NUL * (BLOCKSIZE - remainder)
-            for conn in data_src.conns:
-                for chunk in conn['conn'].tar_stream._serve_chunk(nulls):
-                    if not conn['conn'].failed:
-                        conn['conn'].queue.put(
-                            '%x\r\n%s\r\n' % (len(chunk), chunk)
-                            if chunked else chunk)
-                    else:
-                        return HTTPServiceUnavailable(request=req)
-        for conn in data_src.conns:
-            if conn['conn'].last_data is data_src:
-                if conn['conn'].tar_stream.data:
-                    data = conn['conn'].tar_stream.data
-                    if not conn['conn'].failed:
-                        conn['conn'].queue.put('%x\r\n%s\r\n'
-                                               % (len(data), data) if chunked else data)
-                    else:
-                        return HTTPServiceUnavailable(request=req)
-                if chunked:
-                    conn['conn'].queue.put('0\r\n\r\n')
-
-    def _send_data_chunk(self, chunked, data_src, data, req):
-        data_src.bytes_transferred += len(data)
-        if data_src.bytes_transferred > MAX_FILE_SIZE:
-            return HTTPRequestEntityTooLarge(request=req)
-        for conn in data_src.conns:
-            for chunk in conn['conn'].tar_stream._serve_chunk(data):
-                if not conn['conn'].failed:
-                    conn['conn'].queue.put('%x\r\n%s\r\n'
-                                           % (len(chunk), chunk) if chunked else chunk)
-                else:
-                    return HTTPServiceUnavailable(request=req)
 
     def _get_remote_objects(self, node):
         channels = []
@@ -957,7 +896,7 @@ class ClusterController(ObjectController):
             for ch in node.channels[1:]:
                 if is_swift_path(ch.path) \
                     and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
-                    and ch.device not in self.app.zerovm_sysimage_devices:
+                        and ch.device not in self.app.zerovm_sysimage_devices:
                     channels.append(ch)
         return channels
 
@@ -1110,10 +1049,10 @@ class ClusterController(ObjectController):
                 location = SwiftPath.init(self.account_name,
                                           self.container_name,
                                           self.object_name)
-                config = self._config_from_template(params, template, location.url)
+                config = _config_from_template(params, template, location.url)
             else:
                 template = POST_TEXT_ACCOUNT_SYSTEM_MAP
-                config = self._config_from_template(params, template, '')
+                config = _config_from_template(params, template, '')
 
             try:
                 cluster_config = json.loads(config)
@@ -1211,12 +1150,12 @@ class ClusterController(ObjectController):
                         node.replicas.append(deepcopy(node))
                         node.replicas[i].id = node.id + (i + 1) * len(node_list)
             node.copy_cgi_env(exec_request)
-            resp = node._create_sysmap_resp()
-            node._add_data_source(data_sources, resp, 'sysmap')
+            resp = node.create_sysmap_resp()
+            node.add_data_source(data_sources, resp, 'sysmap')
             for repl_node in node.replicas:
                 repl_node.copy_cgi_env(exec_request)
-                resp = repl_node._create_sysmap_resp()
-                repl_node._add_data_source(data_sources, resp, 'sysmap')
+                resp = repl_node.create_sysmap_resp()
+                repl_node.add_data_source(data_sources, resp, 'sysmap')
             #print json.dumps(node, sort_keys=True, indent=2, cls=NodeEncoder)
             channels = self._get_remote_objects(node)
             for ch in channels:
@@ -1264,7 +1203,7 @@ class ClusterController(ObjectController):
                                 status="%d %s" % (conn.resp.status, conn.resp.reason),
                                 headers=conn.nexe_headers)
 
-        self._attach_connections_to_data_sources(conns, data_sources)
+        _attach_connections_to_data_sources(conns, data_sources)
 
         #chunked = req.headers.get('transfer-encoding')
         chunked = False
@@ -1273,17 +1212,17 @@ class ClusterController(ObjectController):
                 self._spawn_file_senders(conns, pool, req)
                 for data_src in data_sources:
                     data_src.bytes_transferred = 0
-                    self._send_tar_headers(chunked, data_src)
+                    _send_tar_headers(chunked, data_src)
                     while True:
                         with ChunkReadTimeout(self.app.client_timeout):
                             try:
                                 data = next(data_src.app_iter)
                             except StopIteration:
-                                error = self._finalize_tar_streams(chunked, data_src, req)
+                                error = _finalize_tar_streams(chunked, data_src, req)
                                 if error:
                                     return error
                                 break
-                        error = self._send_data_chunk(chunked, data_src, data, req)
+                        error = _send_data_chunk(chunked, data_src, data, req)
                         if error:
                             return error
                     if data_src.bytes_transferred < data_src.content_length:
@@ -1347,9 +1286,6 @@ class ClusterController(ObjectController):
         final_response.headers['Etag'] = etag.hexdigest()
         return final_response
 
-    def _create_node_name(self, node_name, i):
-        return node_name + '-' + str(i)
-
     def _process_response(self, conn, request):
         conn.error = None
         try:
@@ -1375,7 +1311,7 @@ class ClusterController(ObjectController):
         resp = Response(status='%d %s' %
                                (server_response.status,
                                 server_response.reason),
-                        app_iter=iter(lambda: server_response.read(self.app.network_chunk_size),''),
+                        app_iter=iter(lambda: server_response.read(self.app.network_chunk_size), ''),
                         headers=dict(server_response.getheaders()))
         conn.resp = resp
         if resp.content_length == 0:
@@ -1524,17 +1460,6 @@ class ClusterController(ObjectController):
                     for k, v in new_ch.get('meta').iteritems():
                         old_ch.meta[k] = v
 
-    def _config_from_template(self, params, template, url):
-        for k, v in params.iteritems():
-            if k in 'object_path':
-                continue
-            ptrn = r'\{\.%s(|=[^\}]+)\}'
-            ptrn = ptrn % k
-            template = re.sub(ptrn, v, template)
-        config = template.replace('{.object_path}', url)
-        config = re.sub(r'\{\.[^=\}]+=?([^\}]*)\}', '\\1', config)
-        return config
-
     @delay_denial
     @cors_validation
     def GET(self, req):
@@ -1579,7 +1504,7 @@ class ClusterController(ObjectController):
         location = SwiftPath.init(self.account_name,
                                   self.container_name,
                                   self.object_name)
-        config = self._config_from_template(req.params, template, location.url)
+        config = _config_from_template(req.params, template, location.url)
         #config = re.sub(r'\{\.[^\}]+\}', '', config)
         post_req = Request.blank('/%s' % self.account_name,
                                  environ=obj_req.environ,
@@ -1626,6 +1551,90 @@ class ClusterController(ObjectController):
         for n in node_list:
             count += n.replicate
         return count
+
+
+def _config_from_template(params, template, url):
+    for k, v in params.iteritems():
+        if k in 'object_path':
+            continue
+        ptrn = r'\{\.%s(|=[^\}]+)\}'
+        ptrn = ptrn % k
+        template = re.sub(ptrn, v, template)
+    config = template.replace('{.object_path}', url)
+    config = re.sub(r'\{\.[^=\}]+=?([^\}]*)\}', '\\1', config)
+    return config
+
+
+def _create_node_name(node_name, i):
+    return node_name + '-' + str(i)
+
+
+def _attach_connections_to_data_sources(conns, data_sources):
+    for data_src in data_sources:
+        data_src.conns = []
+        for node in data_src.nodes:
+            for conn in conns:
+                if conn.cnode is node['node']:
+                    conn.last_data = node['node'].last_data
+                    data_src.conns.append({'conn': conn, 'dev': node['dev']})
+
+
+def _send_data_chunk(chunked, data_src, data, req):
+    data_src.bytes_transferred += len(data)
+    if data_src.bytes_transferred > MAX_FILE_SIZE:
+        return HTTPRequestEntityTooLarge(request=req)
+    for conn in data_src.conns:
+        for chunk in conn['conn'].tar_stream._serve_chunk(data):
+            if not conn['conn'].failed:
+                conn['conn'].queue.put('%x\r\n%s\r\n'
+                                       % (len(chunk), chunk) if chunked else chunk)
+            else:
+                return HTTPServiceUnavailable(request=req)
+
+
+def _finalize_tar_streams(chunked, data_src, req):
+    blocks, remainder = divmod(data_src.bytes_transferred, BLOCKSIZE)
+    if remainder > 0:
+        nulls = NUL * (BLOCKSIZE - remainder)
+        for conn in data_src.conns:
+            for chunk in conn['conn'].tar_stream._serve_chunk(nulls):
+                if not conn['conn'].failed:
+                    conn['conn'].queue.put(
+                        '%x\r\n%s\r\n' % (len(chunk), chunk)
+                        if chunked else chunk)
+                else:
+                    return HTTPServiceUnavailable(request=req)
+    for conn in data_src.conns:
+        if conn['conn'].last_data is data_src:
+            if conn['conn'].tar_stream.data:
+                data = conn['conn'].tar_stream.data
+                if not conn['conn'].failed:
+                    conn['conn'].queue.put('%x\r\n%s\r\n'
+                                           % (len(data), data) if chunked else data)
+                else:
+                    return HTTPServiceUnavailable(request=req)
+            if chunked:
+                conn['conn'].queue.put('0\r\n\r\n')
+
+
+def _send_tar_headers(chunked, data_src):
+    for conn in data_src.conns:
+        info = conn['conn'].tar_stream.create_tarinfo(ftype=REGTYPE,
+                                                      name=conn['dev'],
+                                                      size=data_src.content_length)
+        for chunk in conn['conn'].tar_stream._serve_chunk(info):
+            if not conn['conn'].failed:
+                conn['conn'].queue.put('%x\r\n%s\r\n' %
+                                       (len(chunk), chunk) if chunked else chunk)
+
+
+def _get_local_address(node):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect((node['ip'], node['port']))
+    result = s.getsockname()[0]
+    s.shutdown(socket.SHUT_RDWR)
+    s.close()
+    return result
 
 
 def filter_factory(global_conf, **local_conf):
