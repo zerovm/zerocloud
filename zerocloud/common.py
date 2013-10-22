@@ -161,7 +161,23 @@ def update_metadata(request, meta_data):
 # quotes commas as \x2c for [env] stanza in nvram file
 # see ZRT docs
 def quote_for_env(val):
-    return re.sub(r',', '\\x2c', val)
+    return re.sub(r',', '\\x2c', str(val))
+
+
+def can_run_as_daemon(node_conf, daemon_conf):
+    if node_conf.exe != daemon_conf.exe:
+        return False
+    if not node_conf.channels:
+        return False
+    if len(node_conf.channels) != len(daemon_conf.channels):
+        return False
+    if node_conf.connect or node_conf.bind:
+        return False
+    channels = sorted(node_conf.channels, key=lambda ch: ch.device)
+    for n, d in zip(channels, daemon_conf.channels):
+        if n.device not in d.device:
+            return False
+    return True
 
 
 def can_run_as_daemon(node_conf, daemon_conf):
@@ -314,9 +330,11 @@ class ZvmNode(object):
 
     def add_channel(self, device, access, path=None,
                     content_type='application/octet-stream',
-                    meta_data=None, mode=None):
+                    meta_data=None, mode=None,
+                    removable='no', mountpoint='/'):
         channel = ZvmChannel(device, access, path,
-                             content_type, meta_data, mode)
+                             content_type, meta_data, mode,
+                             removable, mountpoint)
         self.channels.append(channel)
 
     def get_channel(self, device=None, path=None):
@@ -391,14 +409,14 @@ class ZvmNode(object):
         self.env['HTTP_ACCEPT_ENCODING'] = request.headers.get('accept-encoding')
         self.env['HTTP_ACCEPT_LANGUAGE'] = request.headers.get('accept-language')
 
-    def _create_sysmap_resp(self):
+    def create_sysmap_resp(self):
         sysmap = json.dumps(self, cls=NodeEncoder)
         #print json.dumps(self, cls=NodeEncoder, indent=2)
         sysmap_iter = iter([sysmap])
         return Response(app_iter=sysmap_iter,
                         headers={'Content-Length': str(len(sysmap))})
 
-    def _add_data_source(self, data_sources, resp, dev='sysmap', append=False):
+    def add_data_source(self, data_sources, resp, dev='sysmap', append=False):
         if append:
             data_sources.append(resp)
         else:
@@ -411,13 +429,15 @@ class ZvmNode(object):
 class ZvmChannel(object):
     def __init__(self, device, access, path=None,
                  content_type='application/octet-stream', meta_data=None,
-                 mode=None):
+                 mode=None, removable='no', mountpoint='/'):
         self.device = device
         self.access = access
         self.path = path
         self.content_type = content_type
         self.meta = meta_data if meta_data else {}
         self.mode = mode
+        self.removable = removable
+        self.mountpoint = mountpoint
 
 
 class NodeEncoder(json.JSONEncoder):

@@ -685,6 +685,34 @@ return 'hello, world'
         self.assertEqual(res.body, 'hello, world')
         self.check_container_integrity(prosrv, '/v1/a/c', {})
 
+    def test_QUERY_hello_stderr(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe =\
+r'''
+return 'hello, world'
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/hello.nexe', nexe)
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/c/hello.nexe"},
+                "file_list": [
+                    {"device": "stderr",
+                     "path": "swift://a/c/stderr.log"},
+                    {"device": "stdout"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, 'hello, world')
+        self.check_container_integrity(prosrv, '/v1/a/c', {})
+
     def test_QUERY_cgi_response(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
@@ -898,6 +926,37 @@ return [open(mnfst.image['path']).read(), sorted(id)]
                          str(['This is image file',
                               pickle.loads(self.get_sorted_numbers())]))
 
+    def test_QUERY_use_large_image(self):
+            self.setup_QUERY()
+            prolis = _test_sockets[0]
+            prosrv = _test_servers[0]
+            nexe =\
+    r'''
+    return [open(mnfst.image['path']).read(), sorted(id)]
+    '''[1:-1]
+            self.create_object(prolis, '/v1/a/c/exe2', nexe)
+            image = 'This is image file' * 10000
+            self.create_object(prolis, '/v1/a/c/img', image)
+            conf = [
+                {
+                    'name': 'sort',
+                    'exec': {'path': 'swift://a/c/exe2'},
+                    'file_list': [
+                        {'device': 'stdin', 'path': 'swift://a/c/o'},
+                        {'device': 'stdout'},
+                        {'device': 'image', 'path': 'swift://a/c/img'}
+                    ]
+                }
+            ]
+            conf = json.dumps(conf)
+            req = self.zerovm_request()
+            req.body = conf
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.body,
+                             str(['This is image file' * 10000,
+                                  pickle.loads(self.get_sorted_numbers())]))
+
     def test_QUERY_use_sysimage(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
@@ -935,7 +994,7 @@ return open(mnfst.nvram['path']).read() + \
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 200)
             self.assertIn('[fstab]\n'
-                          'channel=/dev/sysimage, mountpoint=/, access=ro\n'
+                          'channel=/dev/sysimage, mountpoint=/, access=ro, removable=no\n'
                           '[args]\n'
                           'args = sort\n', res.body)
             self.assertIn('%d %s' % (3, sysimage_path),
@@ -1081,7 +1140,7 @@ return open(mnfst.nvram['path']).read()
         req.body = conf
         res = req.get_response(prosrv)
         self.assertIn('[fstab]\n'
-                      'channel=/dev/image, mountpoint=/, access=ro\n'
+                      'channel=/dev/image, mountpoint=/, access=ro, removable=no\n'
                       '[args]\n'
                       'args = sort\n', res.body)
         conf = [
