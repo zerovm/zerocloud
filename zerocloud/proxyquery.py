@@ -214,7 +214,7 @@ class ProxyQueryMiddleware(object):
                     continue
                 image = None
                 for sysimage in self.app.zerovm_sysimage_devices:
-                    if node.exe.image in sysimage:
+                    if node.exe.image == sysimage:
                         image = sysimage
                         break
                 if not image:
@@ -1025,23 +1025,23 @@ class ClusterController(ObjectController):
             if not shebang:
                 return HTTPBadRequest(request=req,
                                       body='Cannot find shebang (#!) in script')
-            command_line = re.split('\s+', re.sub('^#!\s*(.*)', '\\1', shebang))
+            command_line = re.split('\s+', re.sub('^#!\s*(.*)', '\\1', shebang), 1)
             sysimage = None
-            location = parse_location(command_line[0])
-            if is_swift_path(location):
-                exe_path = location.url
-            elif len(command_line) > 1:
-                exe_path = command_line[1]
-                if exe_path.startswith('/'):
-                    exe_path = exe_path[1:]
-                sysimage = command_line[0]
-            else:
-                exe_path = command_line[0]
-                try:
-                    sysimage = self.app.zerovm_sysimage_devices[0]
-                except IndexError:
+            args = None
+            exe_path = command_line[0]
+            location = parse_location(exe_path)
+            if not location:
+                return HTTPBadRequest(request=req,
+                                      body='Bad interpreter %s' % exe_path)
+            if is_image_path(location):
+                print location.image
+                if 'image' == location.image:
                     return HTTPBadRequest(request=req,
-                                          body='Cannot find interpreter: %s' % command_line[0])
+                                          body='Must supply image name '
+                                               'in shebang url %s' % location.url)
+                sysimage = location.image
+            if len(command_line) > 1:
+                args = command_line[1]
             params = {'exe_path': exe_path}
             req.path_info_pop()
             if self.container_name and self.object_name:
@@ -1328,7 +1328,7 @@ class ClusterController(ObjectController):
             info = untar_stream.get_next_tarinfo()
             while info:
                 #print [info.name, info.size, info.offset, info.offset_data]
-                if 'sysmap' in info.name:
+                if 'sysmap' == info.name:
                     untar_stream.to_write = info.size
                     untar_stream.offset_data = info.offset_data
                     _load_channel_data(node, ExtractedFile(untar_stream))
@@ -1460,7 +1460,7 @@ class ClusterController(ObjectController):
         if obj_req.environ.get('QUERY_STRING'):
             obj_req.environ['QUERY_STRING'] = ''
         run = False
-        if self.object_name[-len('.nexe'):] in '.nexe':
+        if self.object_name[-len('.nexe'):] == '.nexe':
             #let's get a small speedup as it's quite possibly an executable
             obj_req.method = 'GET'
             run = True
@@ -1473,7 +1473,7 @@ class ClusterController(ObjectController):
         obj_resp = handler(obj_req)
         content = obj_resp.content_type.split(';')[0].strip()
         #print content
-        if content in 'application/x-nexe':
+        if content == 'application/x-nexe':
             run = True
         elif run:
             # speedup did not succeed...
@@ -1557,7 +1557,7 @@ def _total_node_count(node_list):
 
 def _config_from_template(params, template, url):
     for k, v in params.iteritems():
-        if k in 'object_path':
+        if k == 'object_path':
             continue
         ptrn = r'\{\.%s(|=[^\}]+)\}'
         ptrn = ptrn % k
