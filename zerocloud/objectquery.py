@@ -23,7 +23,8 @@ from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict, HTTPConflict
 from swift.common.utils import normalize_timestamp, fallocate, \
     split_path, get_logger, mkdirs, disable_fallocate, TRUE_VALUES
-from swift.obj.server import DiskFile, write_metadata, read_metadata, DiskWriter
+from swift.obj.diskfile import read_metadata, write_metadata, DiskWriter
+from swift.obj.server import DiskFile
 from swift.common.constraints import check_mount, check_utf8, check_float
 from swift.common.exceptions import DiskFileError, DiskFileNotExist, DiskFileNoSpace
 from swift.proxy.controllers.base import update_headers
@@ -47,7 +48,7 @@ class ZDiskFile(DiskFile):
                  bytes_per_sync=(512 * 1024 * 1024), iter_hook=None,
                  threadpool=None):
         super(ZDiskFile, self).__init__(path, device, partition, account, container, obj, logger,
-                                        keep_data_fp=keep_data_fp, disk_chunk_size=disk_chunk_size,
+                                        disk_chunk_size=disk_chunk_size,
                                         bytes_per_sync=bytes_per_sync, iter_hook=iter_hook,
                                         threadpool=threadpool)
         self.tmppath = None
@@ -55,26 +56,18 @@ class ZDiskFile(DiskFile):
         self.timestamp = None
 
     @contextmanager
-    def writer(self, size=None, fd=None):
+    def writer(self, fd=None):
         if not os.path.exists(self.tmpdir):
             mkdirs(self.tmpdir)
-        tmppath = self.tmppath
-        if not fd:
-            fd, tmppath = mkstemp(dir=self.tmpdir)
         try:
-            if size is not None and size > 0:
-                try:
-                    fallocate(fd, size)
-                except OSError:
-                    raise DiskFileNoSpace()
-            yield DiskWriter(self, fd, tmppath, self.threadpool)
+            yield DiskWriter(self, fd, self.tmppath, self.threadpool)
         finally:
             try:
                 os.close(fd)
             except OSError:
                 pass
             try:
-                os.unlink(tmppath)
+                os.unlink(self.tmppath)
             except OSError:
                 pass
 
@@ -612,6 +605,7 @@ class ObjectQueryMiddleware(object):
                             obj,
                             self.logger,
                             disk_chunk_size=self.app.disk_chunk_size,)
+                        disk_file.open()
                         if ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
                             try:
                                 input_file_size = disk_file.get_data_file_size()
@@ -740,11 +734,12 @@ class ObjectQueryMiddleware(object):
                     env = '[env]\n'
                     if local_object:
                         if local_object['access'] & (ACCESS_READABLE | ACCESS_CDR):
+                            metadata = disk_file.get_metadata()
                             env += ENV_ITEM % ('CONTENT_LENGTH', disk_file.get_data_file_size())
                             env += ENV_ITEM % ('CONTENT_TYPE',
-                                               quote_for_env(disk_file.metadata.get('Content-Type',
-                                                                                    'application/octet-stream')))
-                            for k, v in disk_file.metadata.iteritems():
+                                               quote_for_env(metadata.get('Content-Type',
+                                                                          'application/octet-stream')))
+                            for k, v in metadata.iteritems():
                                 meta = k.upper()
                                 if meta.startswith('X-OBJECT-META-'):
                                     env += ENV_ITEM % ('HTTP_%s' % meta.replace('-', '_'),
@@ -1092,57 +1087,58 @@ class ObjectQueryMiddleware(object):
             self.logger,
             disk_chunk_size=self.app.disk_chunk_size,
         )
-        try:
-            nexe_size = os.path.getsize(file.data_file)
-        except (DiskFileError, DiskFileNotExist):
-            return False
-        if nexe_size > self.zerovm_maxnexe:
-            return False
-        if file.is_deleted():
-            return False
-        tmpdir = TmpDir(
-            self.app.devices,
-            device,
-            disk_chunk_size=self.app.disk_chunk_size,
-            os_interface=self.os_interface
-        )
-        with tmpdir.mkstemp() as (zerovm_inputmnfst_fd, zerovm_inputmnfst_fn):
-            zerovm_inputmnfst = (
-                'Version=%s\n'
-                'Program=%s\n'
-                'Timeout=%s\n'
-                'Memory=%s,0\n'
-                'Channel=/dev/null,/dev/stdin, 0,0,1,1,0,0\n'
-                'Channel=/dev/null,/dev/stdout,0,0,0,0,1,1\n'
-                'Channel=/dev/null,/dev/stderr,0,0,0,0,1,1\n'
-                % (
-                    self.zerovm_manifest_ver,
-                    file.data_file,
-                    self.zerovm_timeout,
-                    self.zerovm_maxnexemem
-                ))
-            while zerovm_inputmnfst:
-                written = self.os_interface.write(zerovm_inputmnfst_fd,
-                                                  zerovm_inputmnfst)
-                zerovm_inputmnfst = zerovm_inputmnfst[written:]
+        with file.open():
+            try:
+                nexe_size = os.path.getsize(file.data_file)
+            except (DiskFileError, DiskFileNotExist):
+                return False
+            if nexe_size > self.zerovm_maxnexe:
+                return False
+            if file.is_deleted():
+                return False
+            tmpdir = TmpDir(
+                self.app.devices,
+                device,
+                disk_chunk_size=self.app.disk_chunk_size,
+                os_interface=self.os_interface
+            )
+            with tmpdir.mkstemp() as (zerovm_inputmnfst_fd, zerovm_inputmnfst_fn):
+                zerovm_inputmnfst = (
+                    'Version=%s\n'
+                    'Program=%s\n'
+                    'Timeout=%s\n'
+                    'Memory=%s,0\n'
+                    'Channel=/dev/null,/dev/stdin, 0,0,1,1,0,0\n'
+                    'Channel=/dev/null,/dev/stdout,0,0,0,0,1,1\n'
+                    'Channel=/dev/null,/dev/stderr,0,0,0,0,1,1\n'
+                    % (
+                        self.zerovm_manifest_ver,
+                        file.data_file,
+                        self.zerovm_timeout,
+                        self.zerovm_maxnexemem
+                    ))
+                while zerovm_inputmnfst:
+                    written = self.os_interface.write(zerovm_inputmnfst_fd,
+                                                      zerovm_inputmnfst)
+                    zerovm_inputmnfst = zerovm_inputmnfst[written:]
 
-            (thrdpool, queue) = self.zerovm_threadpools['default']
-            thrd = thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, ['-F'])
-            (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
-            if zerovm_stderr:
-                self.logger.warning('zerovm stderr: ' + zerovm_stderr)
-            if zerovm_retcode == 0:
-                report = zerovm_stdout.split('\n', 1)
-                try:
-                    validated = int(report[REPORT_VALIDATOR])
-                except ValueError:
-                    return False
-                if validated == 0:
-                    metadata = file.metadata
-                    metadata['Validated'] = metadata['ETag']
-                    write_metadata(file.data_file, metadata)
-                    return True
-            return False
+                (thrdpool, queue) = self.zerovm_threadpools['default']
+                thrd = thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, ['-F'])
+                (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
+                if zerovm_stderr:
+                    self.logger.warning('zerovm stderr: ' + zerovm_stderr)
+                if zerovm_retcode == 0:
+                    report = zerovm_stdout.split('\n', 1)
+                    try:
+                        validated = int(report[REPORT_VALIDATOR])
+                    except ValueError:
+                        return False
+                    if validated == 0:
+                        metadata = file.get_metadata()
+                        metadata['Validated'] = metadata['ETag']
+                        write_metadata(file.data_file, metadata)
+                        return True
+                return False
 
     def is_validated(self, req):
         try:
@@ -1162,14 +1158,15 @@ class ObjectQueryMiddleware(object):
             self.logger,
             disk_chunk_size=self.app.disk_chunk_size,
         )
-        if file.is_deleted():
+        with file.open():
+            if file.is_deleted():
+                return False
+            metadata = file.get_metadata()
+            status = metadata.get('Validated', None)
+            etag = metadata.get('ETag', None)
+            if status and etag and etag == status:
+                return True
             return False
-        metadata = read_metadata(file.data_file)
-        status = metadata.get('Validated', None)
-        etag = metadata.get('ETag', None)
-        if status and etag and etag == status:
-            return True
-        return False
 
     def _finalize_local_file(self, local_object, disk_file, nexe_etag,
                              account, container, obj, request, device):
@@ -1191,7 +1188,8 @@ class ObjectQueryMiddleware(object):
         if len(reported_etag) != MD5HASH_LENGTH:
             return HTTPUnprocessableEntity(body='Bad etag for %s: %s'
                                                 % (disk_file.channel_device, reported_etag))
-        old_delete_at = int(disk_file.metadata.get('X-Delete-At') or 0)
+        old_metatada = disk_file.get_metadata()
+        old_delete_at = int(old_metatada.get('X-Delete-At') or 0)
         metadata = {
             'X-Timestamp': disk_file.timestamp,
             'Content-Type': local_object['content_type'],
@@ -1228,7 +1226,6 @@ class ObjectQueryMiddleware(object):
         disk_file.tmppath = local_object['lpath']
         with disk_file.writer(fd=fd) as writer:
             writer.put(metadata)
-        disk_file.unlinkold(metadata['X-Timestamp'])
         if old_delete_at > 0:
             self.app.delete_at_update(
                 'DELETE', old_delete_at, account, container, obj,
@@ -1240,11 +1237,12 @@ class ObjectQueryMiddleware(object):
             obj,
             request,
             HeaderKeyDict({
-                'x-size': disk_file.metadata['Content-Length'],
-                'x-content-type': disk_file.metadata['Content-Type'],
-                'x-timestamp': disk_file.metadata['X-Timestamp'],
-                'x-etag': disk_file.metadata['ETag']}),
+                'x-size': metadata['Content-Length'],
+                'x-content-type': metadata['Content-Type'],
+                'x-timestamp': metadata['X-Timestamp'],
+                'x-etag': metadata['ETag']}),
             device)
+        disk_file.close()
 
     def _cleanup_daemon(self, daemon_sock):
         for pid in self._get_daemon_pid(daemon_sock):
