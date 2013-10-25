@@ -180,22 +180,6 @@ def can_run_as_daemon(node_conf, daemon_conf):
     return True
 
 
-def can_run_as_daemon(node_conf, daemon_conf):
-    if node_conf.exe != daemon_conf.exe:
-        return False
-    if not node_conf.channels:
-        return False
-    if len(node_conf.channels) != len(daemon_conf.channels):
-        return False
-    if node_conf.connect or node_conf.bind:
-        return False
-    channels = sorted(node_conf.channels, key=lambda ch: ch.device)
-    for n, d in zip(channels, daemon_conf.channels):
-        if n.device not in d.device:
-            return False
-    return True
-
-
 class ObjPath:
 
     def __init__(self, url, path):
