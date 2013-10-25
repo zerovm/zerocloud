@@ -44,13 +44,9 @@ except ImportError:
 class ZDiskFile(DiskFile):
 
     def __init__(self, path, device, partition, account, container, obj, logger,
-                 keep_data_fp=False, disk_chunk_size=65536,
-                 bytes_per_sync=(512 * 1024 * 1024), iter_hook=None,
-                 threadpool=None):
+                 disk_chunk_size=65536):
         super(ZDiskFile, self).__init__(path, device, partition, account, container, obj, logger,
-                                        disk_chunk_size=disk_chunk_size,
-                                        bytes_per_sync=bytes_per_sync, iter_hook=iter_hook,
-                                        threadpool=threadpool)
+                                        disk_chunk_size=disk_chunk_size)
         self.tmppath = None
         self.channel_device = None
         self.timestamp = None
