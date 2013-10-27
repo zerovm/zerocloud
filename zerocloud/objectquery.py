@@ -17,6 +17,7 @@ from eventlet.green.httplib import HTTPResponse
 import errno
 import signal
 
+from swift import gettext_ as _
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \

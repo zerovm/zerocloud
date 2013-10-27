@@ -16,6 +16,7 @@ from eventlet import GreenPile, GreenPool, sleep, Queue
 from eventlet.green import socket
 from eventlet.timeout import Timeout
 
+from swift import gettext_ as _
 from swift.common.http import HTTP_CONTINUE, is_success, \
     HTTP_INSUFFICIENT_STORAGE, is_client_error
 from swift.proxy.controllers.base import update_headers, delay_denial, \
