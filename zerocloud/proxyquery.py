@@ -22,7 +22,7 @@ from swift.common.http import HTTP_CONTINUE, is_success, \
 from swift.proxy.controllers.base import update_headers, delay_denial, \
     Controller, cors_validation
 from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
-    get_remote_client, ContextPool, cache_from_env, normalize_timestamp
+    get_remote_client, ContextPool, cache_from_env, normalize_timestamp, GreenthreadSafeIterator
 from swift.proxy.server import ObjectController, ContainerController, \
     AccountController
 from swift.common.bufferedhttp import http_connect
@@ -360,7 +360,7 @@ class ClusterController(ObjectController):
         part = randrange(0, partition_count)
         return part
 
-    def iter_nodes(self, partition, nodes, ring, handoff=True):
+    def _iter_nodes(self, partition, nodes, ring, handoff=True):
         """
         Node iterator that will first iterate over the normal nodes for a
         partition and then the handoff partitions for the node.
@@ -370,6 +370,7 @@ class ClusterController(ObjectController):
         :param ring: ring to get handoff nodes from
         :param handoff: disable handoff for free-standing executors
         """
+        shuffle(nodes)
         for node in nodes:
             if not self.error_limited(node):
                 yield node
@@ -838,7 +839,8 @@ class ClusterController(ObjectController):
             try:
                 account, container, obj = split_path(node.path_info, 3, 3, True)
                 partition, nodes = self.app.object_ring.get_nodes(account, container, obj)
-                node_iter = self.iter_nodes(partition, nodes, self.app.object_ring)
+                node_iter = GreenthreadSafeIterator(self.iter_nodes_local_first(self.app.object_ring, partition))
+                #node_iter = self.iter_nodes(partition, nodes, self.app.object_ring)
                 exec_request.path_info = node.path_info
                 if node.replicate > 1:
                     container_info = self.container_info(account, container)
@@ -866,8 +868,9 @@ class ClusterController(ObjectController):
                                exec_request.headers)
             except ValueError:
                 partition = self.get_random_partition()
-                nodes = self.app.object_ring.get_part_nodes(partition)
-                node_iter = self.iter_nodes(partition, nodes, self.app.object_ring, handoff=False)
+                node_iter = self.iter_nodes_local_first(self.app.object_ring, partition)
+                #nodes = self.app.object_ring.get_part_nodes(partition)
+                #node_iter = self.iter_nodes(partition, nodes, self.app.object_ring, handoff=False)
                 if node.skip_validation:
                     exec_request.headers['x-zerovm-valid'] = 'true'
                 pile.spawn(self._connect_exec_node, node_iter, partition,
@@ -875,8 +878,9 @@ class ClusterController(ObjectController):
                            exec_request.headers)
                 for repl_node in node.replicas:
                     partition = self.get_random_partition()
-                    nodes = self.app.object_ring.get_part_nodes(partition)
-                    node_iter = self.iter_nodes(partition, nodes, self.app.object_ring, handoff=False)
+                    node_iter = self.iter_nodes_local_first(self.app.object_ring, partition)
+                    #nodes = self.app.object_ring.get_part_nodes(partition)
+                    #node_iter = self.iter_nodes(partition, nodes, self.app.object_ring, handoff=False)
                     pile.spawn(self._connect_exec_node, node_iter, partition,
                                exec_request, self.app.logger.thread_locals, repl_node,
                                exec_request.headers)
