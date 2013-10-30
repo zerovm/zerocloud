@@ -1476,6 +1476,8 @@ class ClusterController(ObjectController):
             self.object_name)
         handler = getattr(controller, obj_req.method, None)
         obj_resp = handler(obj_req)
+        if not is_success(obj_resp.status_int):
+            return obj_resp
         content = obj_resp.content_type.split(';')[0].strip()
         #print content
         if content == 'application/x-nexe':
@@ -1500,7 +1502,6 @@ class ClusterController(ObjectController):
                                   self.container_name,
                                   self.object_name)
         config = _config_from_template(req.params, template, location.url)
-        #config = re.sub(r'\{\.[^\}]+\}', '', config)
         post_req = Request.blank('/%s' % self.account_name,
                                  environ=req.environ,
                                  headers=req.headers)
