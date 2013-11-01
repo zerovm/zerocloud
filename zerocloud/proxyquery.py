@@ -1125,7 +1125,7 @@ class ClusterController(ObjectController):
                 'x-nexe-retcode': 0,
                 'x-nexe-etag': '',
                 'x-nexe-validation': 0,
-                'x-nexe-cdr-line': '0 0 0 0 0 0 0 0 0 0 0 0'
+                'x-nexe-cdr-line': '0.0 0.0 0 0 0 0 0 0 0 0'
             }
             path_info = req.path_info
             exec_request = Request.blank(path_info,
@@ -1267,6 +1267,8 @@ class ClusterController(ObjectController):
             #print [final_response.headers, conn.nexe_headers]
             self._store_accounting_data(req, conn)
             merge_headers(final_response.headers, conn.nexe_headers)
+            if resp.headers.get('x-zerovm-daemon', None):
+                final_response.headers['x-nexe-cached'] = 'true'
             if resp and resp.content_length > 0:
                 if final_body:
                     final_body.append(resp.app_iter)
