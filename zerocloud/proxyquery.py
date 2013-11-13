@@ -1267,7 +1267,7 @@ class ClusterController(ObjectController):
             #print [final_response.headers, conn.nexe_headers]
             self._store_accounting_data(req, conn)
             merge_headers(final_response.headers, conn.nexe_headers)
-            if resp.headers.get('x-zerovm-daemon', None):
+            if resp and resp.headers.get('x-zerovm-daemon', None):
                 final_response.headers['x-nexe-cached'] = 'true'
             if resp and resp.content_length > 0:
                 if final_body:

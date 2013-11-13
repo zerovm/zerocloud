@@ -231,13 +231,14 @@ class TestObjectQuery(unittest.TestCase):
             conf = ZvmNode(1, 'python', parse_location('file://python-image:python'), args='hello.py')
             conf.add_channel('stdout', ACCESS_WRITABLE)
             conf.add_channel('python-image', ACCESS_READABLE | ACCESS_RANDOM)
-            conf.add_channel('image', ACCESS_CDR, warmup='no')
+            conf.add_channel('image', ACCESS_CDR, removable='yes')
             #print json.dumps(conf, cls=NodeEncoder, indent=2)
             conf = json.dumps(conf, cls=NodeEncoder)
             sysmap = StringIO(conf)
             image = open('/home/kit/python-script.tar', 'rb')
             with self.create_tar({'sysmap': sysmap, 'image': image}) as tar:
-                req.body_file = open(tar, 'rb')
+                length = os.path.getsize(tar)
+                req.body_file = Input(open(tar, 'rb'), length)
                 resp = self.app.zerovm_query(req)
                 print ['x-zerovm-daemon', resp.headers.get('x-zerovm-daemon', '---')]
                 print ['x-nexe-cdr-line', resp.headers['x-nexe-cdr-line']]
