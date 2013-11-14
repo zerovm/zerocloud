@@ -1396,7 +1396,7 @@ class ClusterController(ObjectController):
                 with ConnectionTimeout(self.app.conn_timeout):
                     #if (request.content_length > 0) or 'transfer-encoding' in request_headers:
                     #    request_headers['Expect'] = '100-continue'
-                    #request.headers['Connection'] = 'close'
+                    request.headers['Connection'] = 'close'
                     request_headers['Expect'] = '100-continue'
                     request_headers['Content-Length'] = str(cnode.size)
                     conn = http_connect(node['ip'], node['port'],
