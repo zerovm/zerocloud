@@ -21,13 +21,13 @@ from swift import gettext_ as _
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
-    HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict, HTTPConflict
+    HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict
 from swift.common.utils import normalize_timestamp, fallocate, \
     split_path, get_logger, mkdirs, disable_fallocate, TRUE_VALUES
-from swift.obj.diskfile import read_metadata, write_metadata, DiskWriter
+from swift.obj.diskfile import DiskWriter
 from swift.obj.server import DiskFile
 from swift.common.constraints import check_mount, check_utf8, check_float
-from swift.common.exceptions import DiskFileError, DiskFileNotExist, DiskFileNoSpace
+from swift.common.exceptions import DiskFileError, DiskFileNotExist, DiskFileNoSpace, DiskFileDeviceUnavailable
 from swift.proxy.controllers.base import update_headers
 from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
     CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env, parse_location, \
@@ -1074,24 +1074,28 @@ class ObjectQueryMiddleware(object):
             return False
         if self.app.mount_check and not check_mount(self.app.devices, device):
             return False
-        file = DiskFile(
-            self.app.devices,
-            device,
-            partition,
-            account,
-            container,
-            obj,
-            self.logger,
-            disk_chunk_size=self.app.disk_chunk_size,
-        )
-        with file.open():
+        try:
+            disk_file = DiskFile(
+                self.app.devices,
+                device,
+                partition,
+                account,
+                container,
+                obj,
+                self.logger,
+                disk_chunk_size=self.app.disk_chunk_size,
+            )
+        except DiskFileDeviceUnavailable:
+            return False
+        with disk_file.open():
+            if disk_file.is_deleted() or disk_file.is_expired():
+                return False
             try:
-                nexe_size = os.path.getsize(file.data_file)
+                nexe_size = disk_file.get_data_file_size()
             except (DiskFileError, DiskFileNotExist):
+                disk_file.quarantine()
                 return False
             if nexe_size > self.zerovm_maxnexe:
-                return False
-            if file.is_deleted():
                 return False
             tmpdir = TmpDir(
                 self.app.devices,
@@ -1110,7 +1114,7 @@ class ObjectQueryMiddleware(object):
                     'Channel=/dev/null,/dev/stderr,0,0,0,0,1,1\n'
                     % (
                         self.zerovm_manifest_ver,
-                        file.data_file,
+                        disk_file.data_file,
                         self.zerovm_timeout,
                         self.zerovm_maxnexemem
                     ))
@@ -1131,9 +1135,9 @@ class ObjectQueryMiddleware(object):
                     except ValueError:
                         return False
                     if validated == 0:
-                        metadata = file.get_metadata()
+                        metadata = disk_file.get_metadata()
                         metadata['Validated'] = metadata['ETag']
-                        write_metadata(file.data_file, metadata)
+                        disk_file.put_metadata(metadata)
                         return True
                 return False
 
