@@ -21,12 +21,9 @@ class ClusterConfigParser(object):
         """
         Create a new parser instance
 
-        :param sysimage_devices: list of known system image devices
+        :param sysimage_devices: dict of known system image devices
         :param default_content_type: default content type to use for writable objects
-        :param read_limit: limit for network channel read iops
-        :param rbytes_limit: limit for network channel read bytes
-        :param write_limit: limit for network channel write iops
-        :param wbytes_limit: limit for network channel write bytes
+        :param parser_config: configuration dictionary
         :param list_account_callback: callback function that can be called with
                 (account_name, mask) to get a list of container names in account
                 that match the mask regex
@@ -168,7 +165,7 @@ class ClusterConfigParser(object):
                             _add_connected_device(connect_devices, channel, zvm_node)
                             continue
                         if channel.access < 0:
-                            if channel.device in self.sysimage_devices:
+                            if self.is_sysimage_device(channel.device):
                                 other_list.append(channel)
                                 continue
                             raise ClusterConfigParsingError(_('Unknown device %s in %s')
@@ -235,7 +232,7 @@ class ClusterConfigParser(object):
                                 self._add_new_channel(zvm_node, chan,
                                                       content_type=f.get('content_type', 'text/html'))
                     for chan in other_list:
-                        if chan.device in self.sysimage_devices:
+                        if self.is_sysimage_device(chan.device):
                             chan.access = ACCESS_RANDOM | ACCESS_READABLE
                         else:
                             if not chan.path:
@@ -384,6 +381,9 @@ class ClusterConfigParser(object):
                           str(self.parser_config['limits']['wbytes'])])
             )
         node.connect = tmp
+
+    def is_sysimage_device(self, device_name):
+        return device_name in self.sysimage_devices.keys()
 
 
 def _add_connected_device(devices, channel, zvm_node):
