@@ -197,6 +197,7 @@ class ProxyQueryMiddleware(object):
                 continue
             parser = ClusterConfigParser(fake_controller.app.zerovm_sysimage_devices,
                                          fake_controller.app.zerovm_content_type,
+                                         fake_controller.app.parser_config,
                                          fake_controller.list_account,
                                          fake_controller.list_container)
             try:
@@ -236,12 +237,6 @@ class ProxyQueryMiddleware(object):
         self.app.zerovm_execute = 'x-zerovm-execute'
         # execution engine version
         self.app.zerovm_execute_ver = '1.0'
-        # total maximum iops for channel read or write operations, per zerovm session
-        self.app.zerovm_maxiops = int(conf.get('zerovm_maxiops', 1024 * 1048576))
-        # total maximum bytes for a channel write operations, per zerovm session
-        self.app.zerovm_maxoutput = int(conf.get('zerovm_maxoutput', 1024 * 1048576))
-        # total maximum bytes for a channel read operations, per zerovm session
-        self.app.zerovm_maxinput = int(conf.get('zerovm_maxinput', 1024 * 1048576))
         # maximum size of a system map file
         self.app.zerovm_maxconfig = int(conf.get('zerovm_maxconfig', 65536))
         # name server hostname or ip, will be autodetected if not set
@@ -283,6 +278,17 @@ class ProxyQueryMiddleware(object):
         # list of daemons we need to lazy load (first request will start the daemon)
         daemon_list = [i.strip() for i in conf.get('zerovm_daemons', '').split() if i.strip()]
         self.app.zerovm_daemons = self.parse_daemon_config(daemon_list)
+        self.app.parser_config = {
+            'limits': {
+                # total maximum iops for channel read or write operations, per zerovm session
+                'reads': int(conf.get('zerovm_maxiops', 1024 * 1048576)),
+                'writes': int(conf.get('zerovm_maxiops', 1024 * 1048576)),
+                # total maximum bytes for a channel write operations, per zerovm session
+                'rbytes': int(conf.get('zerovm_maxoutput', 1024 * 1048576)),
+                # total maximum bytes for a channel read operations, per zerovm session
+                'wbytes': int(conf.get('zerovm_maxinput', 1024 * 1048576))
+            }
+        }
 
     @wsgify
     def __call__(self, req):
@@ -690,8 +696,7 @@ class ClusterController(ObjectController):
             user_image_length = stream.get_total_stream_length()
 
         parser = ClusterConfigParser(self.app.zerovm_sysimage_devices, self.app.zerovm_content_type,
-                                     self.app.zerovm_maxiops, self.app.zerovm_maxinput,
-                                     self.app.zerovm_maxiops, self.app.zerovm_maxoutput,
+                                     self.app.parser_config,
                                      self.list_account, self.list_container)
         try:
             parser.parse(cluster_config, request=req)

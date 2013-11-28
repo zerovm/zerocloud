@@ -16,7 +16,7 @@ class ClusterConfigParsingError(Exception):
 
 class ClusterConfigParser(object):
     def __init__(self, sysimage_devices, default_content_type,
-                 read_limit, rbytes_limit, write_limit, wbytes_limit,
+                 parser_config,
                  list_account_callback, list_container_callback):
         """
         Create a new parser instance
@@ -40,10 +40,7 @@ class ClusterConfigParser(object):
         self.nodes = {}
         self.default_content_type = default_content_type
         self.node_id = 1
-        self.write_limit = write_limit
-        self.wbytes_limit = wbytes_limit
-        self.read_limit = read_limit
-        self.rbytes_limit = rbytes_limit
+        self.parser_config = parser_config
 
     def find_objects(self, path, **kwargs):
         """
@@ -365,8 +362,8 @@ class ClusterConfigParser(object):
                 ','.join([proto,
                           dst_dev,
                           '0,0',  # type = 0, sequential, etag = 0, not needed
-                          str(self.read_limit),
-                          str(self.rbytes_limit),
+                          str(self.parser_config['limits']['reads']),
+                          str(self.parser_config['limits']['rbytes']),
                           '0,0'])
             )
         node.bind = tmp
@@ -383,8 +380,8 @@ class ClusterConfigParser(object):
                           dst_dev,
                           '0,0',  # type = 0, sequential, etag = 0, not needed
                           '0,0',
-                          str(self.write_limit),
-                          str(self.wbytes_limit)])
+                          str(self.parser_config['limits']['writes']),
+                          str(self.parser_config['limits']['wbytes'])])
             )
         node.connect = tmp
 
