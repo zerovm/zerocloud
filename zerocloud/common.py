@@ -1,3 +1,4 @@
+from copy import deepcopy
 import re
 from hashlib import md5
 from swift.common.constraints import MAX_META_NAME_LENGTH, MAX_META_VALUE_LENGTH, \
@@ -299,26 +300,41 @@ def is_cache_path(location):
 
 
 class ZvmNode(object):
-    def __init__(self, nid, name, nexe_path, args=None, env=None, replicate=1):
-        self.id = nid
+    def __init__(self, id=None, name=None, exe=None, args=None, env=None, replicate=1):
+        self.id = id
         self.name = name
-        self.exe = nexe_path
+        self.exe = exe
         self.args = args
         self.env = env
+        self.replicate = replicate
         self.channels = []
         self.connect = []
         self.bind = []
-        self.replicate = replicate
         self.replicas = []
         self.skip_validation = False
+        self.wildcards = None
 
-    def add_channel(self, device, access, path=None,
-                    content_type='application/octet-stream',
-                    meta_data=None, mode=None,
-                    removable='no', mountpoint='/'):
+    def copy(self, id, name=None):
+        newnode = deepcopy(self)
+        newnode.id = id
+        if name:
+            newnode.name = name
+        return newnode
+
+    def add_channel(self, path=None,
+                    content_type=None, channel=None):
+        channel = deepcopy(channel)
+        if path:
+            channel.path = path
+        if content_type:
+            channel.content_type = content_type
+        self.channels.append(channel)
+
+    def add_new_channel(self, device=None, access=None, path=None, content_type='application/octet-stream',
+                        meta_data=None, mode=None, removable='no', mountpoint='/'):
         channel = ZvmChannel(device, access, path,
-                             content_type, meta_data, mode,
-                             removable, mountpoint)
+                             content_type=content_type, meta_data=meta_data, mode=mode,
+                             removable=removable, mountpoint=mountpoint)
         self.channels.append(channel)
 
     def get_channel(self, device=None, path=None):
@@ -331,46 +347,6 @@ class ZvmNode(object):
                 if chan.path == path:
                     return chan
         return None
-
-    def resolve_wildcards(self, param):
-        if param.count('*') > 0:
-            for wc in getattr(self, 'wildcards', []):
-                param = param.replace('*', wc, 1)
-            if param.count('*') > 0:
-                raise Exception('Cannot resolve wildcard for node %s' % self.name)
-        return param
-
-    def add_connection(self, bind_name, nodes, src_device=None, dst_device=None):
-        if not dst_device:
-            dst_device = '/dev/in/' + self.name
-        else:
-            dst_device = self.resolve_wildcards(dst_device)
-        if nodes.get(bind_name):
-            bind_node = nodes.get(bind_name)
-            if bind_node is self:
-                raise Exception('Cannot bind to itself: %s' % bind_name)
-            bind_node.bind.append((self.name, dst_device))
-            if not src_device:
-                self.connect.append((bind_name, '/dev/out/' + bind_name))
-            else:
-                src_device = bind_node.resolve_wildcards(src_device)
-                self.connect.append((bind_name, src_device))
-        elif nodes.get(bind_name + '-1'):
-            i = 1
-            bind_node = nodes.get(bind_name + '-1')
-            while bind_node:
-                if not bind_node is self:
-                    bind_node.bind.append((self.name, dst_device))
-                    if not src_device:
-                        self.connect.append((bind_name + '-' + str(i),
-                                            '/dev/out/' + bind_name + '-' + str(i)))
-                    else:
-                        src_device = bind_node.resolve_wildcards(src_device)
-                        self.connect.append((bind_name + '-' + str(i), src_device))
-                i += 1
-                bind_node = nodes.get(bind_name + '-' + str(i))
-        else:
-            raise Exception('Non-existing node in connect %s' % bind_name)
 
     def copy_cgi_env(self, request):
         if not self.env:
@@ -409,10 +385,15 @@ class ZvmNode(object):
             self.last_data = resp
         resp.nodes = [{'node': self, 'dev': dev}]
 
+    def store_wildcards(self, path, mask):
+        new_match = mask.match(path.path)
+        self.wildcards = map(lambda idx: new_match.group(idx),
+                             range(1, new_match.lastindex + 1))
+
 
 class ZvmChannel(object):
     def __init__(self, device, access, path=None,
-                 content_type='application/octet-stream', meta_data=None,
+                 content_type=None, meta_data=None,
                  mode=None, removable='no', mountpoint='/'):
         self.device = device
         self.access = access

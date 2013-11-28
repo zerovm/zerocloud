@@ -29,12 +29,12 @@ from swift.account import server as account_server
 from swift.container import server as container_server
 from swift.obj import server as object_server
 from swift.common.utils import mkdirs, normalize_timestamp, NullLogger
-from swift.common.wsgi import monkey_patch_mimetools
 from swift.common import ring
 
 from zerocloud import proxyquery, objectquery
 from test.unit import connect_tcp, readuntil2crlfs, FakeLogger, fake_http_connect
 from zerocloud.common import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, NodeEncoder
+from zerocloud.configparser import ClusterConfigParser, ClusterConfigParsingError
 
 try:
     import simplejson as json
@@ -1820,7 +1820,7 @@ return json.dumps(con_list)
             req.body = conf
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 400)
-            self.assertEqual(res.body, 'Error querying object server for account a')
+            self.assertEqual(res.body, 'Error querying object server for account: a')
 
     def test_QUERY_config_parser(self):
 
@@ -1852,9 +1852,15 @@ return json.dumps(con_list)
         ]
         req = Request.blank('/a', environ={'REQUEST_METHOD': 'POST'},
                             headers={'Content-Type': 'application/json'})
-        error = fake_controller.parse_cluster_config(req, conf)
-        self.assertIsNone(error)
-        self.assertEqual(len(fake_controller.nodes), 5)
+        parser = ClusterConfigParser(fake_controller.app.zerovm_sysimage_devices,
+                                     fake_controller.app.zerovm_content_type,
+                                     fake_controller.list_account,
+                                     fake_controller.list_container)
+        try:
+            parser.parse(conf, request=req)
+        except ClusterConfigParsingError:
+            self.assertTrue(False, msg='ClusterConfigParsingError is raised')
+        self.assertEqual(len(parser.nodes), 5)
 
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
