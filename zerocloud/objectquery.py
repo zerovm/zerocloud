@@ -431,6 +431,153 @@ class ObjectQueryMiddleware(object):
         resp.headers = nexe_headers
         return resp
 
+    def prepare_zerovm_files(self, config, nvram_file, local_object, zerovm_nexe, use_dev_self=True):
+        zerovm_inputmnfst = (
+            'Version=%s\n'
+            'Program=%s\n'
+            'Timeout=%s\n'
+            'Memory=%s,0\n'
+            % (
+                self.zerovm_manifest_ver,
+                zerovm_nexe or '/dev/null',
+                self.zerovm_timeout,
+                self.zerovm_maxnexemem
+            ))
+        mode_mapping = {}
+        fstab = None
+
+        def add_to_fstab(fstab, device, access, removable='no', mountpoint='/'):
+            if not fstab:
+                fstab = '[fstab]\n'
+            fstab += 'channel=/dev/%s, mountpoint=%s, access=%s, removable=%s\n' \
+                     % (device, mountpoint, access, removable)
+            return fstab
+
+        channels = []
+        for ch in config['channels']:
+            device = ch['device']
+            type = CHANNEL_TYPE_MAP.get(device)
+            if type is None:
+                if self.is_sysimage_device(device):
+                    type = CHANNEL_TYPE_MAP.get('sysimage')
+                else:
+                    continue
+                    #return HTTPBadRequest(request=req,
+                    #                      body='Could not resolve channel type for: %s'
+                    #                           % ch['device'])
+            access = ch['access']
+            if self.is_sysimage_device(device):
+                fstab = add_to_fstab(fstab, device, 'ro')
+            if access & ACCESS_READABLE:
+                zerovm_inputmnfst += \
+                    'Channel=%s,/dev/%s,%s,0,%s,%s,0,0\n' % \
+                    (ch['lpath'], device, type,
+                     self.zerovm_maxiops, self.zerovm_maxinput)
+            elif access & ACCESS_CDR:
+                zerovm_inputmnfst += \
+                    'Channel=%s,/dev/%s,%s,0,%s,%s,%s,%s\n' % \
+                    (ch['lpath'], device, type,
+                     self.zerovm_maxiops, self.zerovm_maxinput,
+                     self.zerovm_maxiops, self.zerovm_maxoutput)
+                if device in 'image':
+                    fstab = add_to_fstab(fstab, device, 'ro', removable=ch['removable'])
+            elif access & ACCESS_WRITABLE:
+                tag = '0'
+                if not ch['path'] or ch is local_object:
+                    tag = '1'
+                zerovm_inputmnfst += \
+                    'Channel=%s,/dev/%s,%s,%s,0,0,%s,%s\n' % \
+                    (ch['lpath'], device, type, tag,
+                     self.zerovm_maxiops, self.zerovm_maxoutput)
+            elif access & ACCESS_NETWORK:
+                zerovm_inputmnfst += \
+                    'Channel=%s,/dev/%s,%s,0,0,0,%s,%s\n' % \
+                    (ch['lpath'], device, type,
+                     self.zerovm_maxiops, self.zerovm_maxoutput)
+            mode = ch.get('mode', None)
+            if mode:
+                mode_mapping[device] = mode
+            channels.append(device)
+        network_devices = []
+        for conn in config['connect'] + config['bind']:
+            zerovm_inputmnfst += 'Channel=%s\n' % conn
+            dev = conn.split(',', 2)[1][5:]  # len('/dev/') = 5
+            if dev in STD_DEVICES:
+                network_devices.append(dev)
+        for dev in STD_DEVICES:
+            if not dev in channels and not dev in network_devices:
+                if 'stdin' in dev:
+                    zerovm_inputmnfst += \
+                        'Channel=/dev/null,/dev/stdin,0,0,%s,%s,0,0\n' % \
+                        (self.zerovm_maxiops, self.zerovm_maxinput)
+                else:
+                    zerovm_inputmnfst += \
+                        'Channel=/dev/null,/dev/%s,0,0,0,0,%s,%s\n' % \
+                        (dev, self.zerovm_maxiops, self.zerovm_maxoutput)
+        if use_dev_self:
+            zerovm_inputmnfst += \
+                'Channel=%s,/dev/self,3,0,%s,%s,0,0\n' % \
+                (zerovm_nexe, self.zerovm_maxiops, self.zerovm_maxinput)
+        env = None
+        if config.get('env'):
+            env = '[env]\n'
+            if local_object:
+                if local_object['access'] & (ACCESS_READABLE | ACCESS_CDR):
+                    metadata = local_object['meta']
+                    env += ENV_ITEM % ('CONTENT_LENGTH', local_object['size'])
+                    env += ENV_ITEM % ('CONTENT_TYPE',
+                                       quote_for_env(metadata.get('Content-Type',
+                                                                  'application/octet-stream')))
+                    for k, v in metadata.iteritems():
+                        meta = k.upper()
+                        if meta.startswith('X-OBJECT-META-'):
+                            env += ENV_ITEM % ('HTTP_%s' % meta.replace('-', '_'),
+                                               quote_for_env(v))
+                            continue
+                        for hdr in ['X-TIMESTAMP', 'ETAG', 'CONTENT-ENCODING']:
+                            if hdr in meta:
+                                env += ENV_ITEM % ('HTTP_%s' % meta.replace('-', '_'),
+                                                   quote_for_env(v))
+                                break
+                elif local_object['access'] & ACCESS_WRITABLE:
+                    env += ENV_ITEM % ('CONTENT_TYPE',
+                                       quote_for_env(local_object.get('content_type',
+                                                                      'application/octet-stream')))
+                    meta = local_object.get('meta', None)
+                    if meta:
+                        for k, v in meta.iteritems():
+                            env += ENV_ITEM % ('HTTP_X_OBJECT_META_%s' % k.upper().replace('-', '_'),
+                                               quote_for_env(v))
+                env += ENV_ITEM % ('DOCUMENT_ROOT', '/dev/%s' % local_object['device'])
+                config['env']['REQUEST_METHOD'] = 'POST'
+                config['env']['PATH_INFO'] = local_object['path_info']
+            for k, v in config['env'].iteritems():
+                if v:
+                    env += ENV_ITEM % (k, quote_for_env(v))
+        args = '[args]\nargs = %s' % config['name']
+        if config.get('args'):
+            args += ' %s' % config['args']
+        args += '\n'
+        mapping = None
+        if mode_mapping:
+            mapping = '[mapping]\n'
+            for ch_device, mode in mode_mapping.iteritems():
+                mapping += 'channel=/dev/%s, mode=%s\n' % (ch_device, mode)
+
+        fd = open(nvram_file, 'wb')
+        for chunk in [fstab, args, env, mapping]:
+            fd.write(chunk or '')
+        fd.close()
+        zerovm_inputmnfst += \
+            'Channel=%s,/dev/nvram,3,0,%s,%s,%s,%s\n' % \
+            (nvram_file, self.zerovm_maxiops, self.zerovm_maxinput, 0, 0)
+        zerovm_inputmnfst += 'Node=%d\n' \
+                             % (config['id'])
+        if 'name_service' in config:
+            zerovm_inputmnfst += 'NameServer=%s\n' \
+                                 % config['name_service']
+        return zerovm_inputmnfst
+
     def zerovm_query(self, req):
         """Handle zerovm execution requests for the Swift Object Server."""
 
@@ -449,6 +596,11 @@ class ObjectQueryMiddleware(object):
         }
 
         zerovm_execute_only = False
+        device = None
+        partition = None
+        account = None
+        container = None
+        obj = None
         try:
             (device, partition, account) = \
                 split_path(unquote(req.path), 3, 3)
@@ -538,7 +690,6 @@ class ObjectQueryMiddleware(object):
             perf = "%s %.3f" % (perf, time.time() - start)
             if self.zerovm_perf:
                 self.logger.info("PERF UNTAR: %s" % perf)
-            config = None
             if 'sysmap' in channels:
                 config_file = channels.pop('sysmap')
                 fp = open(config_file, 'rb')
@@ -570,16 +721,6 @@ class ObjectQueryMiddleware(object):
             elif not daemon_sock:
                 return HTTPBadRequest(request=req,
                                       body='No executable found in request')
-
-            fstab = None
-
-            def add_to_fstab(fstab, device, access, removable='no', mountpoint='/'):
-                if not fstab:
-                    fstab = '[fstab]\n'
-                fstab += 'channel=/dev/%s, mountpoint=%s, access=%s, removable=%s\n' \
-                         % (device, mountpoint, access, removable)
-                return fstab
-
             is_master = True
             if config.get('replicate', 1) > 1 and len(config.get('replicas', [])) < (config.get('replicate', 1) - 1):
                 is_master = False
@@ -615,6 +756,8 @@ class ObjectQueryMiddleware(object):
                                                                  headers=nexe_headers)
                             ch['lpath'] = disk_file.data_file
                             channels[ch['device']] = disk_file.data_file
+                            ch['meta'] = disk_file.get_metadata()
+                            ch['size'] = input_file_size
                         elif ch['access'] & ACCESS_WRITABLE:
                             try:
                                 disk_file.timestamp = req.headers.get('x-timestamp')
@@ -624,17 +767,15 @@ class ObjectQueryMiddleware(object):
                                                            'but no x-timestamp in request')
                         disk_file.channel_device = '/dev/%s' % ch['device']
                         local_object = ch
+                        local_object['path_info'] = disk_file.name
                 if self.is_sysimage_device(ch['device']):
                     ch['lpath'] = self.zerovm_sysimage_devices[ch['device']]
-                    fstab = add_to_fstab(fstab, ch['device'], 'ro')
                 elif ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
                     if not ch.get('lpath'):
                         if not chan_path or is_image_path(chan_path):
                             return HTTPBadRequest(request=req,
                                                   body='Could not resolve channel path: %s'
                                                        % ch['path'])
-                    if ch['device'] in 'image':
-                        fstab = add_to_fstab(fstab, ch['device'], 'ro', removable=ch['removable'])
                 elif ch['access'] & ACCESS_WRITABLE:
                     writable_tmpdir = os.path.join(self.app.devices, device, 'tmp')
                     if not os.path.exists(writable_tmpdir):
@@ -654,140 +795,13 @@ class ObjectQueryMiddleware(object):
 
             with tmpdir.mkstemp() as (zerovm_inputmnfst_fd,
                                       zerovm_inputmnfst_fn):
-                zerovm_inputmnfst = (
-                    'Version=%s\n'
-                    'Program=%s\n'
-                    'Timeout=%s\n'
-                    'Memory=%s,0\n'
-                    % (
-                        self.zerovm_manifest_ver,
-                        zerovm_nexe or '/dev/null',
-                        self.zerovm_timeout,
-                        self.zerovm_maxnexemem
-                    ))
-
-                mode_mapping = {}
-                for ch in config['channels']:
-                    type = CHANNEL_TYPE_MAP.get(ch['device'])
-                    if type is None:
-                        if self.is_sysimage_device(ch['device']):
-                            type = CHANNEL_TYPE_MAP.get('sysimage')
-                        else:
-                            return HTTPBadRequest(request=req,
-                                                  body='Could not resolve channel type for: %s'
-                                                       % ch['device'])
-                    access = ch['access']
-                    if access & ACCESS_READABLE:
-                        zerovm_inputmnfst += \
-                            'Channel=%s,/dev/%s,%s,0,%s,%s,0,0\n' % \
-                            (ch['lpath'], ch['device'], type,
-                             self.zerovm_maxiops, self.zerovm_maxinput)
-                    elif access & ACCESS_CDR:
-                        zerovm_inputmnfst += \
-                            'Channel=%s,/dev/%s,%s,0,%s,%s,%s,%s\n' % \
-                            (ch['lpath'], ch['device'], type,
-                             self.zerovm_maxiops, self.zerovm_maxinput,
-                             self.zerovm_maxiops, self.zerovm_maxoutput)
-                    elif access & ACCESS_WRITABLE:
-                        tag = '0'
-                        if not ch['path'] or ch is local_object:
-                            tag = '1'
-                        zerovm_inputmnfst += \
-                            'Channel=%s,/dev/%s,%s,%s,0,0,%s,%s\n' % \
-                            (ch['lpath'], ch['device'], type, tag,
-                             self.zerovm_maxiops, self.zerovm_maxoutput)
-                    elif access & ACCESS_NETWORK:
-                        zerovm_inputmnfst += \
-                            'Channel=%s,/dev/%s,%s,0,0,0,%s,%s\n' % \
-                            (ch['lpath'], ch['device'], type,
-                             self.zerovm_maxiops, self.zerovm_maxoutput)
-                    mode = ch.get('mode', None)
-                    if mode:
-                        mode_mapping[ch['device']] = mode
-
-                network_devices = []
-                for conn in config['connect'] + config['bind']:
-                    zerovm_inputmnfst += 'Channel=%s\n' % conn
-                    dev = conn.split(',', 2)[1][5:]  # len('/dev/') = 5
-                    if dev in STD_DEVICES:
-                        network_devices.append(dev)
-
-                for dev in STD_DEVICES:
-                    if not dev in channels and not dev in network_devices:
-                        if 'stdin' in dev:
-                            zerovm_inputmnfst += \
-                                'Channel=/dev/null,/dev/stdin,0,0,%s,%s,0,0\n' % \
-                                (self.zerovm_maxiops, self.zerovm_maxinput)
-                        else:
-                            zerovm_inputmnfst += \
-                                'Channel=/dev/null,/dev/%s,0,0,0,0,%s,%s\n' % \
-                                (dev, self.zerovm_maxiops, self.zerovm_maxoutput)
-                if not daemon_sock:
-                    zerovm_inputmnfst += \
-                        'Channel=%s,/dev/self,3,0,%s,%s,0,0\n' % \
-                        (zerovm_nexe, self.zerovm_maxiops, self.zerovm_maxinput)
-                env = None
-                if config.get('env'):
-                    env = '[env]\n'
-                    if local_object:
-                        if local_object['access'] & (ACCESS_READABLE | ACCESS_CDR):
-                            metadata = disk_file.get_metadata()
-                            env += ENV_ITEM % ('CONTENT_LENGTH', disk_file.get_data_file_size())
-                            env += ENV_ITEM % ('CONTENT_TYPE',
-                                               quote_for_env(metadata.get('Content-Type',
-                                                                          'application/octet-stream')))
-                            for k, v in metadata.iteritems():
-                                meta = k.upper()
-                                if meta.startswith('X-OBJECT-META-'):
-                                    env += ENV_ITEM % ('HTTP_%s' % meta.replace('-', '_'),
-                                                       quote_for_env(v))
-                                    continue
-                                for hdr in ['X-TIMESTAMP', 'ETAG', 'CONTENT-ENCODING']:
-                                    if hdr in meta:
-                                        env += ENV_ITEM % ('HTTP_%s' % meta.replace('-', '_'),
-                                                           quote_for_env(v))
-                                        break
-                        elif local_object['access'] & ACCESS_WRITABLE:
-                            env += ENV_ITEM % ('CONTENT_TYPE',
-                                               quote_for_env(local_object.get('content_type',
-                                                                              'application/octet-stream')))
-                            meta = local_object.get('meta', None)
-                            if meta:
-                                for k, v in meta.iteritems():
-                                    env += ENV_ITEM % ('HTTP_X_OBJECT_META_%s' % k.upper().replace('-', '_'),
-                                                       quote_for_env(v))
-                        env += ENV_ITEM % ('DOCUMENT_ROOT', disk_file.channel_device)
-                        config['env']['REQUEST_METHOD'] = 'POST'
-                        config['env']['PATH_INFO'] = disk_file.name
-                    for k, v in config['env'].iteritems():
-                        if v:
-                            env += ENV_ITEM % (k, quote_for_env(v))
-
-                args = '[args]\nargs = %s' % config['name']
-                if config.get('args'):
-                    # zerovm_inputmnfst += 'CommandLine=%s\n'\
-                    #                      % config['args']
-                    args += ' %s' % config['args']
-                args += '\n'
-
-                mapping = None
-                if mode_mapping:
-                    mapping = '[mapping]\n'
-                    for ch_device, mode in mode_mapping.iteritems():
-                        mapping += 'channel=/dev/%s, mode=%s\n' % (ch_device, mode)
                 (output_fd, nvram_file) = mkstemp()
-                for chunk in [fstab, args, env, mapping]:
-                    os.write(output_fd, chunk or '')
                 os.close(output_fd)
-                zerovm_inputmnfst += \
-                    'Channel=%s,/dev/nvram,3,0,%s,%s,%s,%s\n' % \
-                    (nvram_file, self.zerovm_maxiops, self.zerovm_maxinput, 0, 0)
-
-                zerovm_inputmnfst += 'Node=%d\n' \
-                                     % (config['id'])
-                if 'name_service' in config:
-                    zerovm_inputmnfst += 'NameServer=%s\n'\
-                                         % config['name_service']
+                zerovm_inputmnfst = self.prepare_zerovm_files(config,
+                                                              nvram_file,
+                                                              local_object,
+                                                              zerovm_nexe,
+                                                              False if daemon_sock else True)
                 #print json.dumps(config, sort_keys=True, indent=2)
                 #print zerovm_inputmnfst
                 #print open(nvram_file).read()

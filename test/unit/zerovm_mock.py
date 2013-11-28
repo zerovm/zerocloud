@@ -171,6 +171,7 @@ con_list = []
 bind_map = {}
 alias = int(mnfst.Node)
 mnfst.channels = {}
+stddev = {'/dev/stdin': 0, '/dev/stdout': 0, '/dev/stderr': 0}
 for fname, device, type, tag, rd, rd_byte, wr, wr_byte in zip(*[iter(channel_list)]*8):
     if fname.startswith('tcp:'):
         if ';' in fname:
@@ -202,6 +203,7 @@ for fname, device, type, tag, rd, rd_byte, wr, wr_byte in zip(*[iter(channel_lis
         'write': wr,
         'write_bytes': wr_byte
     }
+    stddev.pop(device, 0)
     if device == '/dev/stdin' or device == '/dev/input':
         mnfst.input = mnfst.channels[device]
     elif device == '/dev/stdout' or device == '/dev/output':
@@ -213,6 +215,8 @@ for fname, device, type, tag, rd, rd_byte, wr, wr_byte in zip(*[iter(channel_lis
     elif device == '/dev/nvram':
         mnfst.nvram = mnfst.channels[device]
 
+if len(stddev) > 0:
+    errdump(1, valid, 0, mnfst.Etag, accounting, 'all standard channels must be present')
 request = \
     struct.pack('!I', alias) + \
     struct.pack('!I', bind_count) + \
