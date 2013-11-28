@@ -31,7 +31,8 @@ from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
     HTTPClientDisconnect, wsgify
-from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
+from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
+    CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
     merge_headers, update_metadata, DEFAULT_EXE_SYSTEM_MAP, STREAM_CACHE_SIZE, \
     ZvmChannel, parse_location, is_swift_path, is_image_path, can_run_as_daemon, SwiftPath, NodeEncoder
@@ -437,42 +438,6 @@ class ClusterController(ObjectController):
                                        mask=None, marker=marker, request=request)
         return ret
 
-    def _build_connect_string(self, node, node_count):
-        tmp = []
-        for (dst, dst_dev) in node.bind:
-            dst_id = self.nodes.get(dst).id
-            dst_repl = self.nodes.get(dst).replicate
-            proto = ';'.join(map(
-                lambda i: 'tcp:%d:0' % (dst_id + i * node_count),
-                range(dst_repl)
-            ))
-            tmp.append(
-                ','.join([proto,
-                          dst_dev,
-                          '0,0',  # type = 0, sequential, etag = 0, not needed
-                          str(self.app.zerovm_maxiops),
-                          str(self.app.zerovm_maxinput),
-                          '0,0'])
-            )
-        node.bind = tmp
-        tmp = []
-        for (dst, dst_dev) in node.connect:
-            dst_id = self.nodes.get(dst).id
-            dst_repl = self.nodes.get(dst).replicate
-            proto = ';'.join(map(
-                lambda i: 'tcp:%d:' % (dst_id + i * node_count),
-                range(dst_repl)
-            ))
-            tmp.append(
-                ','.join([proto,
-                          dst_dev,
-                          '0,0',  # type = 0, sequential, etag = 0, not needed
-                          '0,0',
-                          str(self.app.zerovm_maxiops),
-                          str(self.app.zerovm_maxoutput)])
-            )
-        node.connect = tmp
-
     def _get_own_address(self):
         if self.app.zerovm_ns_hostname:
             addr = self.app.zerovm_ns_hostname
@@ -725,10 +690,11 @@ class ClusterController(ObjectController):
             user_image_length = stream.get_total_stream_length()
 
         parser = ClusterConfigParser(self.app.zerovm_sysimage_devices, self.app.zerovm_content_type,
+                                     self.app.zerovm_maxiops, self.app.zerovm_maxinput,
+                                     self.app.zerovm_maxiops, self.app.zerovm_maxoutput,
                                      self.list_account, self.list_container)
         try:
             parser.parse(cluster_config, request=req)
-            self.nodes = parser.nodes
         except ClusterConfigParsingError, e:
             self.app.logger.warn(
                 _('ERROR Error parsing config: %s'), cluster_config)
@@ -736,8 +702,8 @@ class ClusterController(ObjectController):
         req.path_info = '/' + self.account_name
 
         node_list = []
-        for k in sorted(self.nodes.iterkeys()):
-            node = self.nodes[k]
+        for k in sorted(parser.nodes.iterkeys()):
+            node = parser.nodes[k]
             top_channel = node.channels[0]
             if top_channel and is_swift_path(top_channel.path):
                 if top_channel.access & (ACCESS_READABLE | ACCESS_CDR):
@@ -807,7 +773,7 @@ class ClusterController(ObjectController):
                     return aresp
             if ns_server:
                 node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
-                self._build_connect_string(node, len(node_list))
+                parser.build_connect_string(node, len(node_list))
                 if node.replicate > 1:
                     for i in range(0, node.replicate - 1):
                         node.replicas.append(deepcopy(node))

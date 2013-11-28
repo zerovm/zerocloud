@@ -16,12 +16,17 @@ class ClusterConfigParsingError(Exception):
 
 class ClusterConfigParser(object):
     def __init__(self, sysimage_devices, default_content_type,
+                 read_limit, rbytes_limit, write_limit, wbytes_limit,
                  list_account_callback, list_container_callback):
         """
         Create a new parser instance
 
         :param sysimage_devices: list of known system image devices
         :param default_content_type: default content type to use for writable objects
+        :param read_limit: limit for network channel read iops
+        :param rbytes_limit: limit for network channel read bytes
+        :param write_limit: limit for network channel write iops
+        :param wbytes_limit: limit for network channel write bytes
         :param list_account_callback: callback function that can be called with
                 (account_name, mask) to get a list of container names in account
                 that match the mask regex
@@ -35,6 +40,10 @@ class ClusterConfigParser(object):
         self.nodes = {}
         self.default_content_type = default_content_type
         self.node_id = 1
+        self.write_limit = write_limit
+        self.wbytes_limit = wbytes_limit
+        self.read_limit = read_limit
+        self.rbytes_limit = rbytes_limit
 
     def find_objects(self, path, **kwargs):
         """
@@ -336,6 +345,48 @@ class ClusterConfigParser(object):
                 bind_node = self.nodes.get(bind_name + '-' + str(i))
         else:
             raise ClusterConfigParsingError('Non-existing node in connect %s' % bind_name)
+
+    def build_connect_string(self, node, node_count):
+        """
+        Builds connect strings from connection information stored in job config
+
+        :param node: ZvmNode object we build strings for
+        :param node_count: total count of nodes, including replicated ones
+        """
+        tmp = []
+        for (dst, dst_dev) in node.bind:
+            dst_id = self.nodes.get(dst).id
+            dst_repl = self.nodes.get(dst).replicate
+            proto = ';'.join(map(
+                lambda i: 'tcp:%d:0' % (dst_id + i * node_count),
+                range(dst_repl)
+            ))
+            tmp.append(
+                ','.join([proto,
+                          dst_dev,
+                          '0,0',  # type = 0, sequential, etag = 0, not needed
+                          str(self.read_limit),
+                          str(self.rbytes_limit),
+                          '0,0'])
+            )
+        node.bind = tmp
+        tmp = []
+        for (dst, dst_dev) in node.connect:
+            dst_id = self.nodes.get(dst).id
+            dst_repl = self.nodes.get(dst).replicate
+            proto = ';'.join(map(
+                lambda i: 'tcp:%d:' % (dst_id + i * node_count),
+                range(dst_repl)
+            ))
+            tmp.append(
+                ','.join([proto,
+                          dst_dev,
+                          '0,0',  # type = 0, sequential, etag = 0, not needed
+                          '0,0',
+                          str(self.write_limit),
+                          str(self.wbytes_limit)])
+            )
+        node.connect = tmp
 
 
 def _add_connected_device(devices, channel, zvm_node):

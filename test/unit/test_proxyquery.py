@@ -43,6 +43,7 @@ except ImportError:
 
 ZEROVM_DEFAULT_MOCK = 'test/unit/zerovm_mock.py'
 
+
 class FakeRing(object):
 
     def __init__(self, replicas=3):
@@ -1854,6 +1855,10 @@ return json.dumps(con_list)
                             headers={'Content-Type': 'application/json'})
         parser = ClusterConfigParser(fake_controller.app.zerovm_sysimage_devices,
                                      fake_controller.app.zerovm_content_type,
+                                     fake_controller.app.zerovm_maxiops,
+                                     fake_controller.app.zerovm_maxinput,
+                                     fake_controller.app.zerovm_maxiops,
+                                     fake_controller.app.zerovm_maxoutput,
                                      fake_controller.list_account,
                                      fake_controller.list_container)
         try:
