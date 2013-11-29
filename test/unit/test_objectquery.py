@@ -700,7 +700,8 @@ return resp + out
             file = tar.extractfile(members[-1])
             self.assertEqual(file.read(), self._emptyresult)
 
-        del self.app.zerovm_maxoutput
+        #del self.app.zerovm_maxoutput
+        del self.app.parser_config['limits']['wbytes']
         self.setup_zerovm_query()
         req = self.zerovm_free_request()
         nexefile = StringIO(self._nexescript)
@@ -1049,9 +1050,9 @@ sys.stderr.write(''.zfill(4096*20))
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
         with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
-            orig_timeout = self.app.zerovm_timeout
+            orig_timeout = self.app.parser_config['manifest']['Timeout']
             try:
-                self.app.zerovm_timeout = 1
+                self.app.parser_config['manifest']['Timeout'] = 1
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
                 req.content_length = length
@@ -1059,7 +1060,7 @@ sys.stderr.write(''.zfill(4096*20))
                 self.assertEqual(resp.status_int, 500)
                 self.assertIn('ERROR OBJ.QUERY retcode=Output too long', resp.body)
             finally:
-                self.app.zerovm_timeout = orig_timeout
+                self.app.parser_config['manifest']['Timeout'] = orig_timeout
 
     def test_QUERY_zerovm_term_timeouts(self):
         self.setup_zerovm_query(
@@ -1078,16 +1079,14 @@ sleep(10)
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            orig_timeout = None if not\
-            hasattr(self.app, 'zerovm_timeout') else\
-            self.app.zerovm_timeout
+            orig_timeout = self.app.parser_config['manifest']['Timeout']
             try:
-                self.app.zerovm_timeout = 1
+                self.app.parser_config['manifest']['Timeout'] = 1
                 resp = self.app.zerovm_query(req)
                 self.assertEquals(resp.status_int, 500)
                 self.assertIn('ERROR OBJ.QUERY retcode=Timed out', resp.body)
             finally:
-                self.app.zerovm_timeout = orig_timeout
+                self.app.parser_config['manifest']['Timeout'] = orig_timeout
 
     def test_QUERY_zerovm_kill_timeouts(self):
         self.setup_zerovm_query(
@@ -1107,16 +1106,16 @@ time.sleep(10)
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            orig_timeout = self.app.zerovm_timeout
+            orig_timeout = self.app.parser_config['manifest']['Timeout']
             orig_kill_timeout = self.app.zerovm_kill_timeout
             try:
-                self.app.zerovm_timeout = 1
+                self.app.parser_config['manifest']['Timeout'] = 1
                 self.app.zerovm_kill_timeout = 1
                 resp = self.app.zerovm_query(req)
                 self.assertEquals(resp.status_int, 500)
                 self.assertIn('ERROR OBJ.QUERY retcode=Killed', resp.body)
             finally:
-                self.app.zerovm_timeout = orig_timeout
+                self.app.parser_config['manifest']['Timeout'] = orig_timeout
                 self.app.zerovm_kill_timeout = orig_kill_timeout
 
     def test_QUERY_simulteneous_running_zerovm_limits(self):
@@ -1131,9 +1130,9 @@ time.sleep(10)
         with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             orig_zerovm_threadpools = self.app.zerovm_threadpools
-            orig_timeout = self.app.zerovm_timeout
+            orig_timeout = self.app.parser_config['manifest']['Timeout']
             try:
-                self.app.zerovm_timeout = 5
+                self.app.parser_config['manifest']['Timeout'] = 5
                 pool = GreenPool()
                 t = copy(r)
 
@@ -1166,14 +1165,14 @@ time.sleep(10)
                 make_requests_storm(0, 0.1)
 
             finally:
-                self.app.zerovm_timeout = orig_timeout
+                self.app.parser_config['manifest']['Timeout'] = orig_timeout
                 self.app.zerovm_threadpools = orig_zerovm_threadpools
 
     def test_QUERY_max_input_size(self):
         self.setup_zerovm_query()
-        orig_maxinput = getattr(self.app, 'zerovm_maxinput')
+        orig_maxinput = self.app.parser_config['limits']['rbytes']
         try:
-            self.app.zerovm_maxinput = 0
+            self.app.parser_config['limits']['rbytes'] = 0
             req = self.zerovm_object_request()
             req.body = 'xxxxxxxxx'
             resp = req.get_response(self.app)
@@ -1188,7 +1187,7 @@ time.sleep(10)
             sysmap = StringIO(conf)
             with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
                 self.create_object(self.create_random_numbers(os.path.getsize(tar) + 2))
-                self.app.zerovm_maxinput = os.path.getsize(tar) + 1
+                self.app.parser_config['limits']['rbytes'] = os.path.getsize(tar) + 1
                 req = self.zerovm_object_request()
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
@@ -1198,7 +1197,7 @@ time.sleep(10)
                 self.assertEqual(resp.body, 'Data object too large')
         finally:
             self.create_object(self.create_random_numbers(10))
-            self.app.zerovm_maxinput = orig_maxinput
+            self.app.parser_config['limits']['rbytes'] = orig_maxinput
 
     def test_QUERY_max_nexe_size(self):
         self.setup_zerovm_query()
@@ -1249,7 +1248,7 @@ time.sleep(10)
     def test_QUERY_sysimage(self):
         self.setup_zerovm_query()
         req = self.zerovm_free_request()
-        for dev, path in self.app.zerovm_sysimage_devices.items():
+        for dev, path in self.app.parser.sysimage_devices.items():
             script = 'return mnfst.channels["/dev/%s"]["path"]'\
                      ' + "\\n" + ' \
                      'open(mnfst.channels["/dev/nvram"]["path"]).read()' \

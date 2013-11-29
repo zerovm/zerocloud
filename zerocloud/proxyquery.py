@@ -179,11 +179,61 @@ class NameService(object):
 
 class ProxyQueryMiddleware(object):
 
+    def list_account(self, account, mask=None, marker=None, request=None):
+        new_req = request.copy_get()
+        new_req.path_info = '/' + quote(account)
+        new_req.query_string = 'format=json'
+        if marker:
+            new_req.query_string += '&marker=' + marker
+        resp = AccountController(self.app, account).GET(new_req)
+        if resp.status_int == 204:
+            data = resp.body
+            return []
+        if resp.status_int < 200 or resp.status_int >= 300:
+            raise Exception('Error querying object server')
+        data = json.loads(resp.body)
+        if marker:
+            return data
+        ret = []
+        while data:
+            for item in data:
+                if not mask or mask.match(item['name']):
+                    ret.append(item['name'])
+            marker = data[-1]['name']
+            data = self.list_account(account, mask=None, marker=marker, request=request)
+        return ret
+
+    def list_container(self, account, container, mask=None, marker=None, request=None):
+        new_req = request.copy_get()
+        new_req.path_info = '/' + quote(account) + '/' + quote(container)
+        new_req.query_string = 'format=json'
+        if marker:
+            new_req.query_string += '&marker=' + marker
+        resp = ContainerController(self.app, account, container).GET(new_req)
+        if resp.status_int == 204:
+            data = resp.body
+            return []
+        if resp.status_int < 200 or resp.status_int >= 300:
+            raise Exception('Error querying object server')
+        data = json.loads(resp.body)
+        if marker:
+            return data
+        ret = []
+        while data:
+            for item in data:
+                if item['name'][-1] == '/':
+                    continue
+                if not mask or mask.match(item['name']):
+                    ret.append(item['name'])
+            marker = data[-1]['name']
+            data = self.list_container(account, container,
+                                       mask=None, marker=marker, request=request)
+        return ret
+
     def parse_daemon_config(self, daemon_list):
         result = []
         request = Request.blank('/daemon', environ={'REQUEST_METHOD': 'POST'},
                                 headers={'Content-Type': 'application/json'})
-        fake_controller = self.get_controller('daemon', None, None)
         socks = {}
         for sock, conf_file in zip(*[iter(daemon_list)] * 2):
             if socks.get(sock, None):
@@ -195,19 +245,14 @@ class ProxyQueryMiddleware(object):
             except IOError:
                 self.logger.warning('Cannot load daemon config file: %s' % conf_file)
                 continue
-            parser = ClusterConfigParser(fake_controller.app.zerovm_sysimage_devices,
-                                         fake_controller.app.zerovm_content_type,
-                                         fake_controller.app.parser_config,
-                                         fake_controller.list_account,
-                                         fake_controller.list_container)
             try:
-                parser.parse(json_config, request=request)
+                self.app.parser.parse(json_config, request=request)
             except ClusterConfigParsingError, e:
                 self.logger.warning('Daemon config %s error: %s' % (conf_file, str(e)))
                 continue
-            if len(parser.nodes) != 1:
+            if len(self.app.parser.nodes) != 1:
                 self.logger.warning('Bad daemon config %s: too many nodes' % conf_file)
-            for node in parser.nodes.itervalues():
+            for node in self.app.parser.nodes.itervalues():
                 if node.bind or node.connect:
                     self.logger.warning('Bad daemon config %s: network channels are present' % conf_file)
                     continue
@@ -215,7 +260,7 @@ class ProxyQueryMiddleware(object):
                     self.logger.warning('Bad daemon config %s: exe path must be in image file' % conf_file)
                     continue
                 image = None
-                for sysimage in self.app.zerovm_sysimage_devices:
+                for sysimage in self.app.parser.sysimage_devices.keys():
                     if node.exe.image == sysimage:
                         image = sysimage
                         break
@@ -263,8 +308,9 @@ class ProxyQueryMiddleware(object):
         # default content-type for unknown files
         self.app.zerovm_content_type = conf.get('zerovm_default_content_type', 'application/octet-stream')
         # names of sysimage devices, no sysimage devices exist by default
-        self.app.zerovm_sysimage_devices = [i.strip() for i in conf.get('zerovm_sysimage_devices', '').split()
-                                            if i.strip()]
+        zerovm_sysimage_devices = dict([(i.strip(), None)
+                                        for i in conf.get('zerovm_sysimage_devices', '').split()
+                                        if i.strip()])
         # GET support: container for content-type association storage
         self.app.zerovm_registry_path = '.zvm'
         # GET support: API version for "open" command
@@ -275,9 +321,6 @@ class ProxyQueryMiddleware(object):
         self.app.zerovm_allowed_commands = [self.app.zerovm_open_version, self.app.zerovm_openwith_version]
         # GET support: cache config files for this amount of seconds
         self.app.zerovm_cache_config_timeout = 60
-        # list of daemons we need to lazy load (first request will start the daemon)
-        daemon_list = [i.strip() for i in conf.get('zerovm_daemons', '').split() if i.strip()]
-        self.app.zerovm_daemons = self.parse_daemon_config(daemon_list)
         self.app.parser_config = {
             'limits': {
                 # total maximum iops for channel read or write operations, per zerovm session
@@ -289,6 +332,14 @@ class ProxyQueryMiddleware(object):
                 'wbytes': int(conf.get('zerovm_maxinput', 1024 * 1048576))
             }
         }
+        # sysmap json config parser instance
+        self.app.parser = ClusterConfigParser(zerovm_sysimage_devices,
+                                              self.app.zerovm_content_type,
+                                              self.app.parser_config,
+                                              self.list_account, self.list_container)
+        # list of daemons we need to lazy load (first request will start the daemon)
+        daemon_list = [i.strip() for i in conf.get('zerovm_daemons', '').split() if i.strip()]
+        self.app.zerovm_daemons = self.parse_daemon_config(daemon_list)
 
     @wsgify
     def __call__(self, req):
@@ -352,7 +403,6 @@ class ClusterController(ObjectController):
     def __init__(self, app, account_name, container_name, obj_name,
                  **kwargs):
         ObjectController.__init__(self, app, account_name, container_name or '', obj_name or '')
-        self.nodes = {}
         self.command = None
 
     def get_daemon_socket(self, config):
@@ -392,57 +442,6 @@ class ClusterController(ObjectController):
                         if handoffs == len(nodes):
                             self.app.logger.increment('handoff_all_count')
                 yield node
-
-    def list_account(self, account, mask=None, marker=None, request=None):
-        new_req = request.copy_get()
-        new_req.path_info = '/' + quote(account)
-        new_req.query_string = 'format=json'
-        if marker:
-            new_req.query_string += '&marker=' + marker
-        resp = AccountController(self.app, account).GET(new_req)
-        if resp.status_int == 204:
-            data = resp.body
-            return []
-        if resp.status_int < 200 or resp.status_int >= 300:
-            raise Exception('Error querying object server')
-        data = json.loads(resp.body)
-        if marker:
-            return data
-        ret = []
-        while data:
-            for item in data:
-                if not mask or mask.match(item['name']):
-                    ret.append(item['name'])
-            marker = data[-1]['name']
-            data = self.list_account(account, mask=None, marker=marker, request=request)
-        return ret
-
-    def list_container(self, account, container, mask=None, marker=None, request=None):
-        new_req = request.copy_get()
-        new_req.path_info = '/' + quote(account) + '/' + quote(container)
-        new_req.query_string = 'format=json'
-        if marker:
-            new_req.query_string += '&marker=' + marker
-        resp = ContainerController(self.app, account, container).GET(new_req)
-        if resp.status_int == 204:
-            data = resp.body
-            return []
-        if resp.status_int < 200 or resp.status_int >= 300:
-            raise Exception('Error querying object server')
-        data = json.loads(resp.body)
-        if marker:
-            return data
-        ret = []
-        while data:
-            for item in data:
-                if item['name'][-1] == '/':
-                    continue
-                if not mask or mask.match(item['name']):
-                    ret.append(item['name'])
-            marker = data[-1]['name']
-            data = self.list_container(account, container,
-                                       mask=None, marker=marker, request=request)
-        return ret
 
     def _get_own_address(self):
         if self.app.zerovm_ns_hostname:
@@ -526,7 +525,7 @@ class ClusterController(ObjectController):
             for ch in node.channels[1:]:
                 if is_swift_path(ch.path) \
                     and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
-                        and ch.device not in self.app.zerovm_sysimage_devices:
+                        and not self.app.parser.is_sysimage_device(ch.device):
                     channels.append(ch)
         return channels
 
@@ -695,11 +694,8 @@ class ClusterController(ObjectController):
             user_image = iter(stream)
             user_image_length = stream.get_total_stream_length()
 
-        parser = ClusterConfigParser(self.app.zerovm_sysimage_devices, self.app.zerovm_content_type,
-                                     self.app.parser_config,
-                                     self.list_account, self.list_container)
         try:
-            parser.parse(cluster_config, request=req)
+            self.app.parser.parse(cluster_config, request=req)
         except ClusterConfigParsingError, e:
             self.app.logger.warn(
                 _('ERROR Error parsing config: %s'), cluster_config)
@@ -707,8 +703,8 @@ class ClusterController(ObjectController):
         req.path_info = '/' + self.account_name
 
         node_list = []
-        for k in sorted(parser.nodes.iterkeys()):
-            node = parser.nodes[k]
+        for k in sorted(self.app.parser.nodes.iterkeys()):
+            node = self.app.parser.nodes[k]
             top_channel = node.channels[0]
             if top_channel and is_swift_path(top_channel.path):
                 if top_channel.access & (ACCESS_READABLE | ACCESS_CDR):
@@ -778,7 +774,7 @@ class ClusterController(ObjectController):
                     return aresp
             if ns_server:
                 node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
-                parser.build_connect_string(node, len(node_list))
+                self.app.parser.build_connect_string(node, len(node_list))
                 if node.replicate > 1:
                     for i in range(0, node.replicate - 1):
                         node.replicas.append(deepcopy(node))

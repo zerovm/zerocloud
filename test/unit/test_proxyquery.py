@@ -418,18 +418,18 @@ class TestProxyQuery(unittest.TestCase):
         prosrv = _test_servers[0]
         _obj1srv = _test_servers[5]
         _obj2srv = _test_servers[6]
-        zerovm_sysimage_devices = prosrv.app.zerovm_sysimage_devices
-        zerovm_sysimage_devices1 = _obj1srv.zerovm_sysimage_devices
-        zerovm_sysimage_devices2 = _obj2srv.zerovm_sysimage_devices
-        prosrv.app.zerovm_sysimage_devices = ['sysimage']
-        _obj1srv.zerovm_sysimage_devices = {'sysimage': sysimage_path}
-        _obj2srv.zerovm_sysimage_devices = {'sysimage': sysimage_path}
+        zerovm_sysimage_devices = prosrv.app.parser.sysimage_devices
+        zerovm_sysimage_devices1 = _obj1srv.parser.sysimage_devices
+        zerovm_sysimage_devices2 = _obj2srv.parser.sysimage_devices
+        prosrv.app.parser.sysimage_devices = {'sysimage1': None}
+        _obj1srv.parser.sysimage_devices = {'sysimage1': sysimage_path}
+        _obj2srv.parser.sysimage_devices = {'sysimage1': sysimage_path}
         try:
             yield True
         finally:
-            prosrv.app.zerovm_sysimage_devices = zerovm_sysimage_devices
-            _obj1srv.zerovm_sysimage_devices = zerovm_sysimage_devices1
-            _obj2srv.zerovm_sysimage_devices = zerovm_sysimage_devices2
+            prosrv.app.parser.sysimage_devices = zerovm_sysimage_devices
+            _obj1srv.parser.sysimage_devices = zerovm_sysimage_devices1
+            _obj2srv.parser.sysimage_devices = zerovm_sysimage_devices2
             try:
                 os.unlink(sysimage_path)
             except IOError:
@@ -968,8 +968,8 @@ return [open(mnfst.image['path']).read(), sorted(id)]
         nexe =\
 r'''
 return open(mnfst.nvram['path']).read() + \
-    str(mnfst.channels['/dev/sysimage']['type']) + ' ' + \
-    str(mnfst.channels['/dev/sysimage']['path'])
+    str(mnfst.channels['/dev/sysimage1']['type']) + ' ' + \
+    str(mnfst.channels['/dev/sysimage1']['path'])
 '''[1:-1]
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         img = open(sysimage_path, 'wb')
@@ -985,7 +985,7 @@ return open(mnfst.nvram['path']).read() + \
                     'file_list': [
                         {'device': 'stdin', 'path': 'swift://a/c/o'},
                         {'device': 'stdout'},
-                        {'device': 'sysimage'}
+                        {'device': 'sysimage1'}
                     ]
                 }
             ]
@@ -995,7 +995,7 @@ return open(mnfst.nvram['path']).read() + \
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 200)
             self.assertIn('[fstab]\n'
-                          'channel=/dev/sysimage, mountpoint=/, access=ro, removable=no\n'
+                          'channel=/dev/sysimage1, mountpoint=/, access=ro, removable=no\n'
                           '[args]\n'
                           'args = sort\n', res.body)
             self.assertIn('%d %s' % (3, sysimage_path),
@@ -1006,7 +1006,7 @@ return open(mnfst.nvram['path']).read() + \
         prosrv = _test_servers[0]
         script = \
 r'''
-#! file://sysimage:bin/sh
+#! file://sysimage1:bin/sh
 print 'Test'
 '''[1:-1]
         nexe = \
@@ -1825,8 +1825,7 @@ return json.dumps(con_list)
 
     def test_QUERY_config_parser(self):
 
-        fake_controller = proxyquery.ProxyQueryMiddleware(
-            self.proxy_app, {'zerovm_sysimage_devices': 'sysimage1 sysimage2'}).get_controller('a', None, None)
+        pqm = proxyquery.ProxyQueryMiddleware(self.proxy_app, {'zerovm_sysimage_devices': 'sysimage1 sysimage2'})
         conf = [
             {
                 'name': 'script',
@@ -1853,16 +1852,11 @@ return json.dumps(con_list)
         ]
         req = Request.blank('/a', environ={'REQUEST_METHOD': 'POST'},
                             headers={'Content-Type': 'application/json'})
-        parser = ClusterConfigParser(fake_controller.app.zerovm_sysimage_devices,
-                                     fake_controller.app.zerovm_content_type,
-                                     fake_controller.app.parser_config,
-                                     fake_controller.list_account,
-                                     fake_controller.list_container)
         try:
-            parser.parse(conf, request=req)
+            pqm.app.parser.parse(conf, request=req)
         except ClusterConfigParsingError:
             self.assertTrue(False, msg='ClusterConfigParsingError is raised')
-        self.assertEqual(len(parser.nodes), 5)
+        self.assertEqual(len(pqm.app.parser.nodes), 5)
 
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]

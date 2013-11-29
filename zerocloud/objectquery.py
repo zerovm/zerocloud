@@ -30,9 +30,10 @@ from swift.common.constraints import check_mount, check_utf8, check_float
 from swift.common.exceptions import DiskFileError, DiskFileNotExist, DiskFileNoSpace, DiskFileDeviceUnavailable
 from swift.proxy.controllers.base import update_headers
 from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
-    CHANNEL_TYPE_MAP, MD5HASH_LENGTH, STD_DEVICES, ENV_ITEM, quote_for_env, parse_location, \
+    MD5HASH_LENGTH, parse_location, \
     is_image_path, ACCESS_NETWORK, ACCESS_RANDOM, REPORT_VALIDATOR, REPORT_RETCODE, REPORT_ETAG, \
     REPORT_CDR, REPORT_STATUS, SwiftPath, REPORT_LENGTH, REPORT_DAEMON, NodeEncoder
+from zerocloud.configparser import ClusterConfigParser
 
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 
@@ -159,48 +160,23 @@ class ObjectQueryMiddleware(object):
         else:
             self.logger = get_logger(conf, log_route='obj-query')
 
-        self.zerovm_manifest_ver = conf.get('zerovm_manifest_ver', '20130611')
+        # path to zerovm executable, better use absolute path here for security reasons
         self.zerovm_exename = [i.strip() for i in conf.get('zerovm_exename', 'zerovm').split() if i.strip()]
-
-        # maximum number of simultaneous running zerovms, others are queued
-        #self.zerovm_maxpool = int(conf.get('zerovm_maxpool', 10))
-
-        # maximum number of simultaneous running zerovms with dependent nodes, no queue
-        #self.zerovm_max_cluster_pool = int(conf.get('zerovm_maxpool', 10))
-
-        # maximum length of queue for requests awaiting zerovm execution
-        #self.zerovm_maxqueue = int(conf.get('zerovm_maxqueue', 3))
-
-        # timeout for zerovm to finish execution
-        self.zerovm_timeout = int(conf.get('zerovm_timeout', 5))
-
         # timeout for zerovm between TERM signal and KILL signal
         self.zerovm_kill_timeout = int(conf.get('zerovm_kill_timeout', 1))
-
-        # maximum input data file size
-        self.zerovm_maxinput = int(conf.get('zerovm_maxinput', 1024 * 1048576))
-
-        # maximal number of iops permitted for reads or writes on particular channel
-        self.zerovm_maxiops = int(conf.get('zerovm_maxiops', 1024 * 1048576))
-
-        # maximum nexe size
+        # maximum nexe binary size
         self.zerovm_maxnexe = int(conf.get('zerovm_maxnexe', 256 * 1048576))
-
-        # maximum output data file size
-        self.zerovm_maxoutput = int(conf.get('zerovm_maxoutput', 1024 * 1048576))
-
-        # max nexe memory size
-        self.zerovm_maxnexemem = int(conf.get('zerovm_maxnexemem', 4 * 1024 * 1048576))
-
+        # run the middleware in debug mode
+        # will gather temp files and write them into /tmp/zvm_debug/ dir
         self.zerovm_debug = conf.get('zerovm_debug', 'no').lower() in TRUE_VALUES
+        # run the middleware in performance check mode
+        # will print performance data to system log
         self.zerovm_perf = conf.get('zerovm_perf', 'no').lower() in TRUE_VALUES
-
         # name-path pairs for sysimage devices on this node
-        self.zerovm_sysimage_devices = {}
+        zerovm_sysimage_devices = {}
         sysimage_list = [i.strip() for i in conf.get('zerovm_sysimage_devices', '').split() if i.strip()]
         for k, v in zip(*[iter(sysimage_list)]*2):
-            self.zerovm_sysimage_devices[k] = v
-
+            zerovm_sysimage_devices[k] = v
         # threadpolls for advanced scheduling in proxy middleware
         self.zerovm_threadpools = {}
         threadpool_list = [i.strip()
@@ -214,33 +190,51 @@ class ObjectQueryMiddleware(object):
         if len(self.zerovm_threadpools) < 1 or not self.zerovm_threadpools.get('default', None):
             raise ValueError('Invalid "zerovm_threadpools" configuration variable')
 
-        # hardcoded, we don't want to crush the server
+        # hardcoded absolute limits for zerovm executable stdout and stderr size
+        # we don't want to crush the server
         self.zerovm_stderr_size = 65536
         self.zerovm_stdout_size = 65536
 
+        # hardcoded dir for zerovm caching daemon sockets
         self.zerovm_sockets_dir = '/tmp/zvm-daemons'
         if not os.path.exists(self.zerovm_sockets_dir):
             mkdirs(self.zerovm_sockets_dir)
+        # mapping between return code and its message
         self.retcode_map = ['OK', 'Error', 'Timed out', 'Killed', 'Output too long']
 
         self.fault_injection = conf.get('fault_injection', ' ')  # for unit-tests
         self.os_interface = os  # for unit-tests
 
-        # green thread pool for zerovm execution
-        #self.zerovm_thrdpool = GreenPool(self.zerovm_maxpool)
-
+        self.parser_config = {
+            'limits': {
+                # maximal number of iops permitted for reads or writes on particular channel
+                'reads': int(conf.get('zerovm_maxiops', 1024 * 1048576)),
+                'writes': int(conf.get('zerovm_maxiops', 1024 * 1048576)),
+                # maximum input data file size
+                'rbytes': int(conf.get('zerovm_maxinput', 1024 * 1048576)),
+                # maximum output data file size
+                'wbytes': int(conf.get('zerovm_maxoutput', 1024 * 1048576))
+            },
+            'manifest': {
+                # zerovm manifest version
+                'Version': conf.get('zerovm_manifest_ver', '20130611'),
+                # timeout for zerovm to finish execution
+                'Timeout': int(conf.get('zerovm_timeout', 5)),
+                # max nexe memory size
+                'Memory': int(conf.get('zerovm_maxnexemem', 4 * 1024 * 1048576))
+            }
+        }
+        self.parser = ClusterConfigParser(zerovm_sysimage_devices, None,
+                                          self.parser_config, None, None)
         # obey `disable_fallocate` configuration directive
         if conf.get('disable_fallocate', 'no').lower() in TRUE_VALUES:
             disable_fallocate()
-
-    def is_sysimage_device(self, device_name):
-        return device_name in self.zerovm_sysimage_devices.keys()
 
     def send_to_socket(self, sock, zerovm_inputmnfst):
         SIZE = 8
         size = '0x%06x' % len(zerovm_inputmnfst)
         try:
-            with Timeout(self.zerovm_timeout):
+            with Timeout(self.parser_config['manifest']['Timeout']):
                 sock.sendall(size + zerovm_inputmnfst)
                 try:
                     size = int(sock.recv(SIZE), 0)
@@ -288,7 +282,7 @@ class ObjectQueryMiddleware(object):
 
         def read_from_std(readable, stdout_data, stderr_data):
             rlist, _junk, __junk = \
-                select.select(readable, [], [], self.zerovm_timeout)
+                select.select(readable, [], [], self.parser_config['manifest']['Timeout'])
             if rlist:
                 for stream in rlist:
                     data = self.os_interface.read(stream.fileno(), 4096)
@@ -305,7 +299,7 @@ class ObjectQueryMiddleware(object):
         stderr_data = ''
         readable = [proc.stdout, proc.stderr]
         try:
-            with Timeout(self.zerovm_timeout + 1):
+            with Timeout(self.parser_config['manifest']['Timeout'] + 1):
                 start = time.time()
                 perf = ''
                 while len(readable) > 0:
@@ -360,7 +354,7 @@ class ObjectQueryMiddleware(object):
 
     def _placeholder(self):
         try:
-            sleep(self.zerovm_timeout)
+            sleep(self.parser_config['manifest']['Timeout'])
         except GreenletExit:
             return
 
@@ -431,153 +425,6 @@ class ObjectQueryMiddleware(object):
         resp.headers = nexe_headers
         return resp
 
-    def prepare_zerovm_files(self, config, nvram_file, local_object, zerovm_nexe, use_dev_self=True):
-        zerovm_inputmnfst = (
-            'Version=%s\n'
-            'Program=%s\n'
-            'Timeout=%s\n'
-            'Memory=%s,0\n'
-            % (
-                self.zerovm_manifest_ver,
-                zerovm_nexe or '/dev/null',
-                self.zerovm_timeout,
-                self.zerovm_maxnexemem
-            ))
-        mode_mapping = {}
-        fstab = None
-
-        def add_to_fstab(fstab, device, access, removable='no', mountpoint='/'):
-            if not fstab:
-                fstab = '[fstab]\n'
-            fstab += 'channel=/dev/%s, mountpoint=%s, access=%s, removable=%s\n' \
-                     % (device, mountpoint, access, removable)
-            return fstab
-
-        channels = []
-        for ch in config['channels']:
-            device = ch['device']
-            type = CHANNEL_TYPE_MAP.get(device)
-            if type is None:
-                if self.is_sysimage_device(device):
-                    type = CHANNEL_TYPE_MAP.get('sysimage')
-                else:
-                    continue
-                    #return HTTPBadRequest(request=req,
-                    #                      body='Could not resolve channel type for: %s'
-                    #                           % ch['device'])
-            access = ch['access']
-            if self.is_sysimage_device(device):
-                fstab = add_to_fstab(fstab, device, 'ro')
-            if access & ACCESS_READABLE:
-                zerovm_inputmnfst += \
-                    'Channel=%s,/dev/%s,%s,0,%s,%s,0,0\n' % \
-                    (ch['lpath'], device, type,
-                     self.zerovm_maxiops, self.zerovm_maxinput)
-            elif access & ACCESS_CDR:
-                zerovm_inputmnfst += \
-                    'Channel=%s,/dev/%s,%s,0,%s,%s,%s,%s\n' % \
-                    (ch['lpath'], device, type,
-                     self.zerovm_maxiops, self.zerovm_maxinput,
-                     self.zerovm_maxiops, self.zerovm_maxoutput)
-                if device in 'image':
-                    fstab = add_to_fstab(fstab, device, 'ro', removable=ch['removable'])
-            elif access & ACCESS_WRITABLE:
-                tag = '0'
-                if not ch['path'] or ch is local_object:
-                    tag = '1'
-                zerovm_inputmnfst += \
-                    'Channel=%s,/dev/%s,%s,%s,0,0,%s,%s\n' % \
-                    (ch['lpath'], device, type, tag,
-                     self.zerovm_maxiops, self.zerovm_maxoutput)
-            elif access & ACCESS_NETWORK:
-                zerovm_inputmnfst += \
-                    'Channel=%s,/dev/%s,%s,0,0,0,%s,%s\n' % \
-                    (ch['lpath'], device, type,
-                     self.zerovm_maxiops, self.zerovm_maxoutput)
-            mode = ch.get('mode', None)
-            if mode:
-                mode_mapping[device] = mode
-            channels.append(device)
-        network_devices = []
-        for conn in config['connect'] + config['bind']:
-            zerovm_inputmnfst += 'Channel=%s\n' % conn
-            dev = conn.split(',', 2)[1][5:]  # len('/dev/') = 5
-            if dev in STD_DEVICES:
-                network_devices.append(dev)
-        for dev in STD_DEVICES:
-            if not dev in channels and not dev in network_devices:
-                if 'stdin' in dev:
-                    zerovm_inputmnfst += \
-                        'Channel=/dev/null,/dev/stdin,0,0,%s,%s,0,0\n' % \
-                        (self.zerovm_maxiops, self.zerovm_maxinput)
-                else:
-                    zerovm_inputmnfst += \
-                        'Channel=/dev/null,/dev/%s,0,0,0,0,%s,%s\n' % \
-                        (dev, self.zerovm_maxiops, self.zerovm_maxoutput)
-        if use_dev_self:
-            zerovm_inputmnfst += \
-                'Channel=%s,/dev/self,3,0,%s,%s,0,0\n' % \
-                (zerovm_nexe, self.zerovm_maxiops, self.zerovm_maxinput)
-        env = None
-        if config.get('env'):
-            env = '[env]\n'
-            if local_object:
-                if local_object['access'] & (ACCESS_READABLE | ACCESS_CDR):
-                    metadata = local_object['meta']
-                    env += ENV_ITEM % ('CONTENT_LENGTH', local_object['size'])
-                    env += ENV_ITEM % ('CONTENT_TYPE',
-                                       quote_for_env(metadata.get('Content-Type',
-                                                                  'application/octet-stream')))
-                    for k, v in metadata.iteritems():
-                        meta = k.upper()
-                        if meta.startswith('X-OBJECT-META-'):
-                            env += ENV_ITEM % ('HTTP_%s' % meta.replace('-', '_'),
-                                               quote_for_env(v))
-                            continue
-                        for hdr in ['X-TIMESTAMP', 'ETAG', 'CONTENT-ENCODING']:
-                            if hdr in meta:
-                                env += ENV_ITEM % ('HTTP_%s' % meta.replace('-', '_'),
-                                                   quote_for_env(v))
-                                break
-                elif local_object['access'] & ACCESS_WRITABLE:
-                    env += ENV_ITEM % ('CONTENT_TYPE',
-                                       quote_for_env(local_object.get('content_type',
-                                                                      'application/octet-stream')))
-                    meta = local_object.get('meta', None)
-                    if meta:
-                        for k, v in meta.iteritems():
-                            env += ENV_ITEM % ('HTTP_X_OBJECT_META_%s' % k.upper().replace('-', '_'),
-                                               quote_for_env(v))
-                env += ENV_ITEM % ('DOCUMENT_ROOT', '/dev/%s' % local_object['device'])
-                config['env']['REQUEST_METHOD'] = 'POST'
-                config['env']['PATH_INFO'] = local_object['path_info']
-            for k, v in config['env'].iteritems():
-                if v:
-                    env += ENV_ITEM % (k, quote_for_env(v))
-        args = '[args]\nargs = %s' % config['name']
-        if config.get('args'):
-            args += ' %s' % config['args']
-        args += '\n'
-        mapping = None
-        if mode_mapping:
-            mapping = '[mapping]\n'
-            for ch_device, mode in mode_mapping.iteritems():
-                mapping += 'channel=/dev/%s, mode=%s\n' % (ch_device, mode)
-
-        fd = open(nvram_file, 'wb')
-        for chunk in [fstab, args, env, mapping]:
-            fd.write(chunk or '')
-        fd.close()
-        zerovm_inputmnfst += \
-            'Channel=%s,/dev/nvram,3,0,%s,%s,%s,%s\n' % \
-            (nvram_file, self.zerovm_maxiops, self.zerovm_maxinput, 0, 0)
-        zerovm_inputmnfst += 'Node=%d\n' \
-                             % (config['id'])
-        if 'name_service' in config:
-            zerovm_inputmnfst += 'NameServer=%s\n' \
-                                 % config['name_service']
-        return zerovm_inputmnfst
-
     def zerovm_query(self, req):
         """Handle zerovm execution requests for the Swift Object Server."""
 
@@ -620,7 +467,7 @@ class ObjectQueryMiddleware(object):
             return Response(status='507 %s is not mounted' % device,
                             headers=nexe_headers)
         if 'content-length' in req.headers \
-                and int(req.headers['content-length']) > self.zerovm_maxinput:
+                and int(req.headers['content-length']) > self.parser_config['limits']['rbytes']:
             return HTTPRequestEntityTooLarge(body='RPC request too large',
                                              request=req,
                                              content_type='text/plain',
@@ -663,7 +510,7 @@ class ObjectQueryMiddleware(object):
             perf = "%.3f" % (time.time() - start)
             for chunk in read_iter:
                 perf = "%s %.3f" % (perf, time.time() - start)
-                if req.body_file.position > self.zerovm_maxinput:
+                if req.body_file.position > self.parser_config['limits']['rbytes']:
                     return HTTPRequestEntityTooLarge(body='RPC request too large',
                                                      request=req,
                                                      content_type='text/plain',
@@ -712,7 +559,7 @@ class ObjectQueryMiddleware(object):
                 if exe_path.image in channels:
                     self._extract_boot_file(channels, exe_path.path, channels[exe_path.image], zerovm_tmp)
                 elif not daemon_sock:
-                    sysimage_path = self.zerovm_sysimage_devices.get(exe_path.image, None)
+                    sysimage_path = self.parser.get_sysimage(exe_path.image)
                     if sysimage_path:
                         if self._extract_boot_file(channels, exe_path.path, sysimage_path, zerovm_tmp):
                             zerovm_valid = True
@@ -749,7 +596,7 @@ class ObjectQueryMiddleware(object):
                                 input_file_size = disk_file.get_data_file_size()
                             except (DiskFileError, DiskFileNotExist):
                                 return HTTPNotFound(request=req, headers=nexe_headers)
-                            if input_file_size > self.zerovm_maxinput:
+                            if input_file_size > self.parser_config['limits']['rbytes']:
                                 return HTTPRequestEntityTooLarge(body='Data object too large',
                                                                  request=req,
                                                                  content_type='text/plain',
@@ -768,8 +615,8 @@ class ObjectQueryMiddleware(object):
                         disk_file.channel_device = '/dev/%s' % ch['device']
                         local_object = ch
                         local_object['path_info'] = disk_file.name
-                if self.is_sysimage_device(ch['device']):
-                    ch['lpath'] = self.zerovm_sysimage_devices[ch['device']]
+                if self.parser.is_sysimage_device(ch['device']):
+                    ch['lpath'] = self.parser.get_sysimage(ch['device'])
                 elif ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
                     if not ch.get('lpath'):
                         if not chan_path or is_image_path(chan_path):
@@ -781,7 +628,7 @@ class ObjectQueryMiddleware(object):
                     if not os.path.exists(writable_tmpdir):
                         mkdirs(writable_tmpdir)
                     (output_fd, output_fn) = mkstemp(dir=writable_tmpdir)
-                    fallocate(output_fd, self.zerovm_maxoutput)
+                    fallocate(output_fd, self.parser_config['limits']['wbytes'])
                     os.close(output_fd)
                     ch['lpath'] = output_fn
                     channels[ch['device']] = output_fn
@@ -797,11 +644,11 @@ class ObjectQueryMiddleware(object):
                                       zerovm_inputmnfst_fn):
                 (output_fd, nvram_file) = mkstemp()
                 os.close(output_fd)
-                zerovm_inputmnfst = self.prepare_zerovm_files(config,
-                                                              nvram_file,
-                                                              local_object,
-                                                              zerovm_nexe,
-                                                              False if daemon_sock else True)
+                zerovm_inputmnfst = self.parser.prepare_zerovm_files(config,
+                                                                     nvram_file,
+                                                                     local_object,
+                                                                     zerovm_nexe,
+                                                                     False if daemon_sock else True)
                 #print json.dumps(config, sort_keys=True, indent=2)
                 #print zerovm_inputmnfst
                 #print open(nvram_file).read()
@@ -820,7 +667,7 @@ class ObjectQueryMiddleware(object):
                         thrd = thrdpool.spawn(self.send_to_socket, sock, zerovm_inputmnfst)
                     except IOError:
                         self._cleanup_daemon(daemon_sock)
-                        sysimage_path = self.zerovm_sysimage_devices.get(exe_path.image, None)
+                        sysimage_path = self.parser.get_sysimage(exe_path.image)
                         if not sysimage_path:
                             return HTTPInternalServerError(body='System image does not exist: %s'
                                                                 % exe_path.image)
@@ -1127,10 +974,10 @@ class ObjectQueryMiddleware(object):
                     'Channel=/dev/null,/dev/stdout,0,0,0,0,1,1\n'
                     'Channel=/dev/null,/dev/stderr,0,0,0,0,1,1\n'
                     % (
-                        self.zerovm_manifest_ver,
+                        self.parser_config['manifest']['Version'],
                         disk_file.data_file,
-                        self.zerovm_timeout,
-                        self.zerovm_maxnexemem
+                        self.parser_config['manifest']['Timeout'],
+                        self.parser_config['manifest']['Memory']
                     ))
                 while zerovm_inputmnfst:
                     written = self.os_interface.write(zerovm_inputmnfst_fd,

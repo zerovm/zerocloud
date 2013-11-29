@@ -3,7 +3,26 @@ import traceback
 from swift import gettext_ as _
 from zerocloud.common import SwiftPath, ZvmNode, ZvmChannel, is_zvm_path, \
     ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, parse_location, ACCESS_RANDOM, \
-    has_control_chars, DEVICE_MAP, is_swift_path
+    has_control_chars, DEVICE_MAP, is_swift_path, ACCESS_NETWORK
+
+CHANNEL_TYPE_MAP = {
+    'stdin': 0,
+    'stdout': 0,
+    'stderr': 0,
+    'input': 3,
+    'output': 3,
+    'debug': 0,
+    'image': 1,
+    'sysimage': 3
+}
+ENV_ITEM = 'name=%s, value=%s\n'
+STD_DEVICES = ['stdin', 'stdout', 'stderr']
+
+
+# quotes commas as \x2c for [env] stanza in nvram file
+# see ZRT docs
+def quote_for_env(val):
+    return re.sub(r',', '\\x2c', str(val))
 
 
 class ClusterConfigParsingError(Exception):
@@ -142,10 +161,12 @@ class ClusterConfigParser(object):
 
         :raises ClusterConfigParsingError: on all errors
         """
+        self.nodes = {}
+        self.node_id = 1
         try:
             connect_devices = {}
             for node in cluster_config:
-                zvm_node = ClusterConfigParser.create_node(node)
+                zvm_node = _create_node(node)
                 node_count = node.get('count', 1)
                 if isinstance(node_count, int) and node_count > 0:
                     pass
@@ -158,7 +179,7 @@ class ClusterConfigParser(object):
 
                 if file_list:
                     for f in file_list:
-                        channel = ClusterConfigParser.create_channel(
+                        channel = _create_channel(
                             f, zvm_node,
                             default_content_type=self.default_content_type)
                         if is_zvm_path(channel.path):
@@ -265,49 +286,6 @@ class ClusterConfigParser(object):
                              content_type=content_type)
         return new_node
 
-    @classmethod
-    def create_channel(cls, channel, node, default_content_type=None):
-        device = channel.get('device')
-        if has_control_chars(device):
-            raise ClusterConfigParsingError(_('Bad device name: %s in %s') % (device, node.name))
-        path = parse_location(channel.get('path'))
-        if not device:
-            raise ClusterConfigParsingError(_('Must specify device for file in %s') % node.name)
-        access = DEVICE_MAP.get(device, -1)
-        mode = channel.get('mode', None)
-        meta = channel.get('meta', {})
-        content_type = channel.get('content_type', default_content_type)
-        if access & ACCESS_READABLE and path:
-            if not is_swift_path(path):
-                raise ClusterConfigParsingError(_('Readable device must be a swift object'))
-            if not path.account or not path.container:
-                raise ClusterConfigParsingError(_('Invalid path %s in %s')
-                                                % (path.url, node.name))
-        return ZvmChannel(device, access, path=path,
-                          content_type=content_type, meta_data=meta, mode=mode)
-
-    @classmethod
-    def create_node(cls, node_config):
-        name = node_config.get('name')
-        if not name:
-            raise ClusterConfigParsingError(_('Must specify node name'))
-        if has_control_chars(name):
-            raise ClusterConfigParsingError(_('Invalid node name'))
-        nexe = node_config.get('exec')
-        if not nexe:
-            raise ClusterConfigParsingError(_('Must specify exec stanza for %s') % name)
-        exe = parse_location(nexe.get('path'))
-        if not exe:
-            raise ClusterConfigParsingError(_('Must specify executable path for %s') % name)
-        if is_zvm_path(exe):
-            raise ClusterConfigParsingError(_('Executable path cannot be a zvm path in %s') % name)
-        args = nexe.get('args')
-        env = nexe.get('env')
-        if has_control_chars('%s %s %s' % (exe.url, args, env)):
-            raise ClusterConfigParsingError(_('Invalid nexe property for %s') % name)
-        replicate = node_config.get('replicate', 1)
-        return ZvmNode(0, name, exe, args, env, replicate)
-
     def _add_connection(self, node, bind_name, src_device=None, dst_device=None):
         if not dst_device:
             dst_device = '/dev/in/' + node.name
@@ -347,6 +325,8 @@ class ClusterConfigParser(object):
         :param node: ZvmNode object we build strings for
         :param node_count: total count of nodes, including replicated ones
         """
+        if not self.nodes:
+            return
         tmp = []
         for (dst, dst_dev) in node.bind:
             dst_id = self.nodes.get(dst).id
@@ -383,7 +363,177 @@ class ClusterConfigParser(object):
         node.connect = tmp
 
     def is_sysimage_device(self, device_name):
+        """
+        Checks if the particular device name is in sysimage devices dict
+
+        :param device_name: name of the device
+        :returns True if device is in dict, False otherwise
+        """
         return device_name in self.sysimage_devices.keys()
+
+    def get_sysimage(self, device_name):
+        """
+        Gets real file path for particular sysimage device name
+
+        :param device_name: name of the device
+        :returns file path if device is in dict, None otherwise
+        """
+        return self.sysimage_devices.get(device_name, None)
+
+    def prepare_zerovm_files(self, config, nvram_file, local_object, zerovm_nexe, use_dev_self=True):
+        """
+        Prepares all the files needed for zerovm session run
+
+        :param config: single node config in deserialized format
+        :param nvram_file: nvram file name to write nvram data to
+        :param local_object: specific channel from config that is a local channel, can be None
+        :param zerovm_nexe: path to nexe binary file
+        :param use_dev_self: whether we map nexe binary as /dev/self or not
+
+        :returns zerovm manifest data as string
+        """
+        zerovm_inputmnfst = (
+            'Version=%s\n'
+            'Program=%s\n'
+            'Timeout=%s\n'
+            'Memory=%s,0\n'
+            % (
+                self.parser_config['manifest']['Version'],
+                zerovm_nexe or '/dev/null',
+                self.parser_config['manifest']['Timeout'],
+                self.parser_config['manifest']['Memory']
+            ))
+        mode_mapping = {}
+        fstab = None
+
+        def add_to_fstab(fstab, device, access, removable='no', mountpoint='/'):
+            if not fstab:
+                fstab = '[fstab]\n'
+            fstab += 'channel=/dev/%s, mountpoint=%s, access=%s, removable=%s\n' \
+                     % (device, mountpoint, access, removable)
+            return fstab
+
+        channels = []
+        for ch in config['channels']:
+            device = ch['device']
+            type = CHANNEL_TYPE_MAP.get(device)
+            if type is None:
+                if self.is_sysimage_device(device):
+                    type = CHANNEL_TYPE_MAP.get('sysimage')
+                else:
+                    continue
+            access = ch['access']
+            if self.is_sysimage_device(device):
+                fstab = add_to_fstab(fstab, device, 'ro')
+            if access & ACCESS_READABLE:
+                zerovm_inputmnfst += \
+                    'Channel=%s,/dev/%s,%s,0,%s,%s,0,0\n' % \
+                    (ch['lpath'], device, type,
+                     self.parser_config['limits']['reads'], self.parser_config['limits']['rbytes'])
+            elif access & ACCESS_CDR:
+                zerovm_inputmnfst += \
+                    'Channel=%s,/dev/%s,%s,0,%s,%s,%s,%s\n' % \
+                    (ch['lpath'], device, type,
+                     self.parser_config['limits']['reads'], self.parser_config['limits']['rbytes'],
+                     self.parser_config['limits']['writes'], self.parser_config['limits']['wbytes'])
+                if device in 'image':
+                    fstab = add_to_fstab(fstab, device, 'ro', removable=ch['removable'])
+            elif access & ACCESS_WRITABLE:
+                tag = '0'
+                if not ch['path'] or ch is local_object:
+                    tag = '1'
+                zerovm_inputmnfst += \
+                    'Channel=%s,/dev/%s,%s,%s,0,0,%s,%s\n' % \
+                    (ch['lpath'], device, type, tag,
+                     self.parser_config['limits']['writes'], self.parser_config['limits']['wbytes'])
+            elif access & ACCESS_NETWORK:
+                zerovm_inputmnfst += \
+                    'Channel=%s,/dev/%s,%s,0,0,0,%s,%s\n' % \
+                    (ch['lpath'], device, type,
+                     self.parser_config['limits']['writes'], self.parser_config['limits']['wbytes'])
+            mode = ch.get('mode', None)
+            if mode:
+                mode_mapping[device] = mode
+            channels.append(device)
+        network_devices = []
+        for conn in config['connect'] + config['bind']:
+            zerovm_inputmnfst += 'Channel=%s\n' % conn
+            dev = conn.split(',', 2)[1][5:]  # len('/dev/') = 5
+            if dev in STD_DEVICES:
+                network_devices.append(dev)
+        for dev in STD_DEVICES:
+            if not dev in channels and not dev in network_devices:
+                if 'stdin' in dev:
+                    zerovm_inputmnfst += \
+                        'Channel=/dev/null,/dev/stdin,0,0,%s,%s,0,0\n' % \
+                        (self.parser_config['limits']['reads'], self.parser_config['limits']['rbytes'])
+                else:
+                    zerovm_inputmnfst += \
+                        'Channel=/dev/null,/dev/%s,0,0,0,0,%s,%s\n' % \
+                        (dev, self.parser_config['limits']['writes'], self.parser_config['limits']['wbytes'])
+        if use_dev_self:
+            zerovm_inputmnfst += \
+                'Channel=%s,/dev/self,3,0,%s,%s,0,0\n' % \
+                (zerovm_nexe, self.parser_config['limits']['reads'], self.parser_config['limits']['rbytes'])
+        env = None
+        if config.get('env'):
+            env = '[env]\n'
+            if local_object:
+                if local_object['access'] & (ACCESS_READABLE | ACCESS_CDR):
+                    metadata = local_object['meta']
+                    env += ENV_ITEM % ('CONTENT_LENGTH', local_object['size'])
+                    env += ENV_ITEM % ('CONTENT_TYPE',
+                                       quote_for_env(metadata.get('Content-Type',
+                                                                  'application/octet-stream')))
+                    for k, v in metadata.iteritems():
+                        meta = k.upper()
+                        if meta.startswith('X-OBJECT-META-'):
+                            env += ENV_ITEM % ('HTTP_%s' % meta.replace('-', '_'),
+                                               quote_for_env(v))
+                            continue
+                        for hdr in ['X-TIMESTAMP', 'ETAG', 'CONTENT-ENCODING']:
+                            if hdr in meta:
+                                env += ENV_ITEM % ('HTTP_%s' % meta.replace('-', '_'),
+                                                   quote_for_env(v))
+                                break
+                elif local_object['access'] & ACCESS_WRITABLE:
+                    env += ENV_ITEM % ('CONTENT_TYPE',
+                                       quote_for_env(local_object.get('content_type',
+                                                                      'application/octet-stream')))
+                    meta = local_object.get('meta', None)
+                    if meta:
+                        for k, v in meta.iteritems():
+                            env += ENV_ITEM % ('HTTP_X_OBJECT_META_%s' % k.upper().replace('-', '_'),
+                                               quote_for_env(v))
+                env += ENV_ITEM % ('DOCUMENT_ROOT', '/dev/%s' % local_object['device'])
+                config['env']['REQUEST_METHOD'] = 'POST'
+                config['env']['PATH_INFO'] = local_object['path_info']
+            for k, v in config['env'].iteritems():
+                if v:
+                    env += ENV_ITEM % (k, quote_for_env(v))
+        args = '[args]\nargs = %s' % config['name']
+        if config.get('args'):
+            args += ' %s' % config['args']
+        args += '\n'
+        mapping = None
+        if mode_mapping:
+            mapping = '[mapping]\n'
+            for ch_device, mode in mode_mapping.iteritems():
+                mapping += 'channel=/dev/%s, mode=%s\n' % (ch_device, mode)
+
+        fd = open(nvram_file, 'wb')
+        for chunk in [fstab, args, env, mapping]:
+            fd.write(chunk or '')
+        fd.close()
+        zerovm_inputmnfst += \
+            'Channel=%s,/dev/nvram,3,0,%s,%s,%s,%s\n' % \
+            (nvram_file, self.parser_config['limits']['reads'], self.parser_config['limits']['rbytes'], 0, 0)
+        zerovm_inputmnfst += 'Node=%d\n' \
+                             % (config['id'])
+        if 'name_service' in config:
+            zerovm_inputmnfst += 'NameServer=%s\n' \
+                                 % config['name_service']
+        return zerovm_inputmnfst
 
 
 def _add_connected_device(devices, channel, zvm_node):
@@ -415,3 +565,46 @@ def _extract_stored_wildcards(path, node):
                                           'resolved into output path %s')
                                         % path)
     return new_url
+
+
+def _create_node(node_config):
+    name = node_config.get('name')
+    if not name:
+        raise ClusterConfigParsingError(_('Must specify node name'))
+    if has_control_chars(name):
+        raise ClusterConfigParsingError(_('Invalid node name'))
+    nexe = node_config.get('exec')
+    if not nexe:
+        raise ClusterConfigParsingError(_('Must specify exec stanza for %s') % name)
+    exe = parse_location(nexe.get('path'))
+    if not exe:
+        raise ClusterConfigParsingError(_('Must specify executable path for %s') % name)
+    if is_zvm_path(exe):
+        raise ClusterConfigParsingError(_('Executable path cannot be a zvm path in %s') % name)
+    args = nexe.get('args')
+    env = nexe.get('env')
+    if has_control_chars('%s %s %s' % (exe.url, args, env)):
+        raise ClusterConfigParsingError(_('Invalid nexe property for %s') % name)
+    replicate = node_config.get('replicate', 1)
+    return ZvmNode(0, name, exe, args, env, replicate)
+
+
+def _create_channel(channel, node, default_content_type=None):
+    device = channel.get('device')
+    if has_control_chars(device):
+        raise ClusterConfigParsingError(_('Bad device name: %s in %s') % (device, node.name))
+    path = parse_location(channel.get('path'))
+    if not device:
+        raise ClusterConfigParsingError(_('Must specify device for file in %s') % node.name)
+    access = DEVICE_MAP.get(device, -1)
+    mode = channel.get('mode', None)
+    meta = channel.get('meta', {})
+    content_type = channel.get('content_type', default_content_type)
+    if access & ACCESS_READABLE and path:
+        if not is_swift_path(path):
+            raise ClusterConfigParsingError(_('Readable device must be a swift object'))
+        if not path.account or not path.container:
+            raise ClusterConfigParsingError(_('Invalid path %s in %s')
+                                            % (path.url, node.name))
+    return ZvmChannel(device, access, path=path,
+                      content_type=content_type, meta_data=meta, mode=mode)

@@ -86,21 +86,7 @@ POST_TEXT_OBJECT_SYSTEM_MAP = r'''
     }]
 '''
 
-CHANNEL_TYPE_MAP = {
-    'stdin': 0,
-    'stdout': 0,
-    'stderr': 0,
-    'input': 3,
-    'output': 3,
-    'debug': 0,
-    'image': 1,
-    'sysimage': 3
-}
-
-
 MD5HASH_LENGTH = len(md5('').hexdigest())
-ENV_ITEM = 'name=%s, value=%s\n'
-STD_DEVICES = ['stdin', 'stdout', 'stderr']
 REPORT_LENGTH = 6
 REPORT_VALIDATOR = 0
 REPORT_DAEMON = 1
@@ -157,12 +143,6 @@ def update_metadata(request, meta_data):
         elif meta_size > MAX_META_OVERALL_SIZE:
             return 'Total metadata too large; max %d' % MAX_META_OVERALL_SIZE
         request.headers['x-object-meta-%s' % key] = value
-
-
-# quotes commas as \x2c for [env] stanza in nvram file
-# see ZRT docs
-def quote_for_env(val):
-    return re.sub(r',', '\\x2c', str(val))
 
 
 def can_run_as_daemon(node_conf, daemon_conf):
