@@ -1853,7 +1853,7 @@ return json.dumps(con_list)
         req = Request.blank('/a', environ={'REQUEST_METHOD': 'POST'},
                             headers={'Content-Type': 'application/json'})
         try:
-            pqm.app.parser.parse(conf, request=req)
+            pqm.app.parser.parse(conf, False, request=req)
         except ClusterConfigParsingError:
             self.assertTrue(False, msg='ClusterConfigParsingError is raised')
         self.assertEqual(len(pqm.app.parser.nodes), 5)

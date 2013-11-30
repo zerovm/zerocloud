@@ -54,8 +54,10 @@ class ClusterConfigParser(object):
         self.list_account = list_account_callback
         self.list_container = list_container_callback
         self.nodes = {}
+        self.node_list = []
         self.default_content_type = default_content_type
         self.node_id = 1
+        self.total_count = 0
         self.parser_config = parser_config
 
     def find_objects(self, path, **kwargs):
@@ -152,17 +154,19 @@ class ClusterConfigParser(object):
         else:
             raise ClusterConfigParsingError(_('Non existing node in connect string for node %s') % node_name)
 
-    def parse(self, cluster_config, **kwargs):
+    def parse(self, cluster_config, add_user_image, account_name=None, replica_count=1, **kwargs):
         """
         Parse deserialized config and build separate job configs per node
 
         :param cluster_config: deserialized JSON cluster map
+        :param add_user_image: True if we need to add user image channel to all nodes
         :param **kwargs: optional arguments for list_container, list_account callbacks
 
         :raises ClusterConfigParsingError: on all errors
         """
         self.nodes = {}
         self.node_id = 1
+        self.node_list = []
         try:
             connect_devices = {}
             for node in cluster_config:
@@ -279,6 +283,16 @@ class ClusterConfigParser(object):
                 else:
                     continue
             self._add_all_connections(node_name, connection_list, src_devices)
+        for node_name in sorted(self.nodes.keys()):
+            self.node_list.append(self.nodes[node_name])
+        if add_user_image:
+            for node in self.node_list:
+                    node.add_new_channel('image', ACCESS_CDR, removable='yes')
+        if account_name:
+            self.resolve_path_info(account_name, replica_count)
+        self.total_count = 0
+        for n in self.node_list:
+            self.total_count += n.replicate
 
     def _add_new_channel(self, node, channel, index=0, path=None, content_type=None):
         new_node = self._get_new_node(node, index=index)
@@ -318,15 +332,15 @@ class ClusterConfigParser(object):
         else:
             raise ClusterConfigParsingError('Non-existing node in connect %s' % bind_name)
 
-    def build_connect_string(self, node, node_count):
+    def build_connect_string(self, node):
         """
         Builds connect strings from connection information stored in job config
 
         :param node: ZvmNode object we build strings for
-        :param node_count: total count of nodes, including replicated ones
         """
         if not self.nodes:
             return
+        node_count = len(self.node_list)
         tmp = []
         for (dst, dst_dev) in node.bind:
             dst_id = self.nodes.get(dst).id
@@ -535,6 +549,20 @@ class ClusterConfigParser(object):
                                  % config['name_service']
         return zerovm_inputmnfst
 
+    def resolve_path_info(self, account_name, replica_count):
+        default_path_info = '/%s' % account_name
+        for node in self.node_list:
+            top_channel = node.channels[0]
+            if top_channel and is_swift_path(top_channel.path):
+                if top_channel.access & (ACCESS_READABLE | ACCESS_CDR):
+                    node.path_info = top_channel.path.path
+                elif top_channel.access & ACCESS_WRITABLE and node.replicate > 0:
+                    node.path_info = top_channel.path.path
+                    node.replicate = replica_count
+                else:
+                    node.path_info = default_path_info
+            if node.replicate == 0:
+                node.replicate = 1
 
 def _add_connected_device(devices, channel, zvm_node):
     if not devices.get(zvm_node.name, None):
