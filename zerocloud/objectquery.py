@@ -486,11 +486,11 @@ class ObjectQueryMiddleware(object):
             return HTTPBadRequest(body='Cannot find pool %s' % pool,
                                   request=req, content_type='text/plain',
                                   headers=nexe_headers)
-        if thrdpool.free() <= 0 and thrdpool.waiting() >= queue:
-            return HTTPServiceUnavailable(body='Slot not available',
-                                          request=req, content_type='text/plain',
-                                          headers=nexe_headers)
-        holder = thrdpool.spawn(self._placeholder)
+        #if thrdpool.free() <= 0 and thrdpool.waiting() >= queue:
+        #    return HTTPServiceUnavailable(body='Slot not available',
+        #                                  request=req, content_type='text/plain',
+        #                                  headers=nexe_headers)
+        #holder = thrdpool.spawn(self._placeholder)
         zerovm_valid = False
         if req.headers.get('x-zerovm-valid', 'false').lower() in TRUE_VALUES:
             zerovm_valid = True
@@ -652,7 +652,7 @@ class ObjectQueryMiddleware(object):
                 #print json.dumps(config, sort_keys=True, indent=2)
                 #print zerovm_inputmnfst
                 #print open(nvram_file).read()
-                holder.kill()
+                #holder.kill()
                 if thrdpool.free() <= 0 and thrdpool.waiting() >= queue:
                     return HTTPServiceUnavailable(body='Slot not available',
                                                   request=req, content_type='text/plain',
