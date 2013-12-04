@@ -532,6 +532,9 @@ class ObjectQueryMiddleware(object):
                     info = untar_stream.get_next_tarinfo()
             if 'content-length' in req.headers\
                     and int(req.headers['content-length']) != req.body_file.position:
+                self.logger.warning('Client disconnect %s != %d : %s' % (req.headers['content-length'],
+                                                                         req.body_file.position,
+                                                                         str(req.headers)))
                 return HTTPClientDisconnect(request=req,
                                             headers=nexe_headers)
             perf = "%s %.3f" % (perf, time.time() - start)
