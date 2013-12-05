@@ -119,6 +119,10 @@ class NameService(object):
         self.peers = peers
         self.sock = None
         self.thread = None
+        self.bind_map = {}
+        self.conn_map = {}
+        self.peer_map = {}
+        self.int_pool = GreenPool()
         #print "NameServer got %d peers" % self.peers
 
     def start(self, pool):
@@ -129,11 +133,12 @@ class NameService(object):
         (self.hostaddr, self.port) = self.sock.getsockname()
 
     def _run(self):
-        bind_map = {}
-        conn_map = {}
-        peer_map = {}
+        #bind_map = {}
+        #conn_map = {}
+        #peer_map = {}
         while 1:
             try:
+                start = time.time()
                 message, peer_address = self.sock.recvfrom(65535)
                 offset = 0
                 peer_id = struct.unpack_from(NameService.INT_FMT, message, offset)[0]
@@ -145,27 +150,30 @@ class NameService(object):
                 for i in range(bind_count):
                     connecting_host, port = struct.unpack_from(NameService.INPUT_RECORD_FMT, message, offset)[0:2]
                     offset += NameService.INPUT_RECORD_SIZE
-                    bind_map.setdefault(peer_id, {})[connecting_host] = port
-                conn_map[peer_id] = (connect_count, offset, ctypes.create_string_buffer(message))
-                peer_map.setdefault(peer_id, {})[0] = peer_address[0]
-                peer_map.setdefault(peer_id, {})[1] = peer_address[1]
+                    self.bind_map.setdefault(peer_id, {})[connecting_host] = port
+                self.conn_map[peer_id] = (connect_count, offset, ctypes.create_string_buffer(message))
+                self.peer_map.setdefault(peer_id, {})[0] = peer_address[0]
+                self.peer_map.setdefault(peer_id, {})[1] = peer_address[1]
 
-                if len(peer_map) == self.peers:
-                    for peer_id in peer_map.iterkeys():
+                if len(self.peer_map) == self.peers:
+                    print "Finished name server receive in %.3f seconds" % (time.time() - start)
+                    start = time.time()
+                    for peer_id in self.peer_map.iterkeys():
                         #out = ''
-                        (connect_count, offset, reply) = conn_map[peer_id]
+                        (connect_count, offset, reply) = self.conn_map[peer_id]
                         for i in range(connect_count):
                             connecting_host = struct.unpack_from(NameService.INT_FMT, reply, offset)[0]
-                            port = bind_map[connecting_host][peer_id]
-                            connect_to = peer_map[connecting_host][0]
-                            if connect_to == peer_map[peer_id][0]:  # both on the same host
+                            port = self.bind_map[connecting_host][peer_id]
+                            connect_to = self.peer_map[connecting_host][0]
+                            if connect_to == self.peer_map[peer_id][0]:  # both on the same host
                                 connect_to = '127.0.0.1'
                             struct.pack_into(NameService.OUTPUT_RECORD_FMT, reply, offset,
                                              socket.inet_pton(socket.AF_INET, connect_to), port)
                             offset += NameService.OUTPUT_RECORD_SIZE
                             #out += ' %d -> %d:%d\n' % (connecting_host, peer_id, port)
-                        self.sock.sendto(reply, (peer_map[peer_id][0], peer_map[peer_id][1]))
+                        self.sock.sendto(reply, (self.peer_map[peer_id][0], self.peer_map[peer_id][1]))
                         #print out
+                    print "Finished name server send in %.3f seconds" % (time.time() - start)
             except greenlet.GreenletExit:
                 return
             except Exception:
