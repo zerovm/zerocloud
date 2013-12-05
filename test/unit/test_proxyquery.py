@@ -418,16 +418,16 @@ class TestProxyQuery(unittest.TestCase):
         prosrv = _test_servers[0]
         _obj1srv = _test_servers[5]
         _obj2srv = _test_servers[6]
-        zerovm_sysimage_devices = prosrv.app.parser.sysimage_devices
+        zerovm_sysimage_devices = prosrv.zerovm_sysimage_devices
         zerovm_sysimage_devices1 = _obj1srv.parser.sysimage_devices
         zerovm_sysimage_devices2 = _obj2srv.parser.sysimage_devices
-        prosrv.app.parser.sysimage_devices = {'sysimage1': None}
+        prosrv.zerovm_sysimage_devices = {'sysimage1': None}
         _obj1srv.parser.sysimage_devices = {'sysimage1': sysimage_path}
         _obj2srv.parser.sysimage_devices = {'sysimage1': sysimage_path}
         try:
             yield True
         finally:
-            prosrv.app.parser.sysimage_devices = zerovm_sysimage_devices
+            prosrv.zerovm_sysimage_devices = zerovm_sysimage_devices
             _obj1srv.parser.sysimage_devices = zerovm_sysimage_devices1
             _obj2srv.parser.sysimage_devices = zerovm_sysimage_devices2
             try:
@@ -1852,11 +1852,14 @@ return json.dumps(con_list)
         ]
         req = Request.blank('/a', environ={'REQUEST_METHOD': 'POST'},
                             headers={'Content-Type': 'application/json'})
+        parser = None
         try:
-            pqm.app.parser.parse(conf, False, request=req)
+            parser = ClusterConfigParser(pqm.zerovm_sysimage_devices, pqm.app.zerovm_content_type,
+                                         pqm.app.parser_config, pqm.list_account, pqm.list_container)
+            parser.parse(conf, False, request=req)
         except ClusterConfigParsingError:
             self.assertTrue(False, msg='ClusterConfigParsingError is raised')
-        self.assertEqual(len(pqm.app.parser.nodes), 5)
+        self.assertEqual(len(parser.nodes), 5)
 
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]

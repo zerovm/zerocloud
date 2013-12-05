@@ -245,14 +245,19 @@ class ProxyQueryMiddleware(object):
             except IOError:
                 self.logger.warning('Cannot load daemon config file: %s' % conf_file)
                 continue
+            parser = ClusterConfigParser(self.zerovm_sysimage_devices,
+                                         self.app.zerovm_content_type,
+                                         self.app.parser_config,
+                                         self.list_account,
+                                         self.list_container)
             try:
-                self.app.parser.parse(json_config, False, request=request)
+                parser.parse(json_config, False, request=request)
             except ClusterConfigParsingError, e:
                 self.logger.warning('Daemon config %s error: %s' % (conf_file, str(e)))
                 continue
-            if len(self.app.parser.nodes) != 1:
+            if len(parser.nodes) != 1:
                 self.logger.warning('Bad daemon config %s: too many nodes' % conf_file)
-            for node in self.app.parser.nodes.itervalues():
+            for node in parser.nodes.itervalues():
                 if node.bind or node.connect:
                     self.logger.warning('Bad daemon config %s: network channels are present' % conf_file)
                     continue
@@ -260,7 +265,7 @@ class ProxyQueryMiddleware(object):
                     self.logger.warning('Bad daemon config %s: exe path must be in image file' % conf_file)
                     continue
                 image = None
-                for sysimage in self.app.parser.sysimage_devices.keys():
+                for sysimage in parser.sysimage_devices.keys():
                     if node.exe.image == sysimage:
                         image = sysimage
                         break
@@ -308,7 +313,7 @@ class ProxyQueryMiddleware(object):
         # default content-type for unknown files
         self.app.zerovm_content_type = conf.get('zerovm_default_content_type', 'application/octet-stream')
         # names of sysimage devices, no sysimage devices exist by default
-        zerovm_sysimage_devices = dict([(i.strip(), None)
+        self.zerovm_sysimage_devices = dict([(i.strip(), None)
                                         for i in conf.get('zerovm_sysimage_devices', '').split()
                                         if i.strip()])
         # GET support: container for content-type association storage
@@ -333,10 +338,10 @@ class ProxyQueryMiddleware(object):
             }
         }
         # sysmap json config parser instance
-        self.app.parser = ClusterConfigParser(zerovm_sysimage_devices,
-                                              self.app.zerovm_content_type,
-                                              self.app.parser_config,
-                                              self.list_account, self.list_container)
+        # self.app.parser = ClusterConfigParser(self.zerovm_sysimage_devices,
+        #                                       self.app.zerovm_content_type,
+        #                                       self.app.parser_config,
+        #                                       self.list_account, self.list_container)
         # list of daemons we need to lazy load (first request will start the daemon)
         daemon_list = [i.strip() for i in conf.get('zerovm_daemons', '').split() if i.strip()]
         self.app.zerovm_daemons = self.parse_daemon_config(daemon_list)
@@ -395,15 +400,21 @@ class ProxyQueryMiddleware(object):
         return self.app
 
     def get_controller(self, account, container, obj):
-        return ClusterController(self.app, account, container, obj)
+        return ClusterController(self.app, account, container, obj, self)
 
 
 class ClusterController(ObjectController):
 
-    def __init__(self, app, account_name, container_name, obj_name,
+    def __init__(self, app, account_name, container_name, obj_name, middleware,
                  **kwargs):
         ObjectController.__init__(self, app, account_name, container_name or '', obj_name or '')
+        self.middleware = middleware
         self.command = None
+        self.parser = ClusterConfigParser(self.middleware.zerovm_sysimage_devices,
+                                          self.app.zerovm_content_type,
+                                          self.app.parser_config,
+                                          self.middleware.list_account,
+                                          self.middleware.list_container)
 
     def get_daemon_socket(self, config):
         for daemon_sock, daemon_conf in self.app.zerovm_daemons:
@@ -493,7 +504,7 @@ class ClusterController(ObjectController):
             for ch in node.channels[1:]:
                 if is_swift_path(ch.path) \
                     and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
-                        and not self.app.parser.is_sysimage_device(ch.device):
+                        and not self.parser.is_sysimage_device(ch.device):
                     channels.append(ch)
         return channels
 
@@ -668,7 +679,7 @@ class ClusterController(ObjectController):
 
         req.path_info = '/' + self.account_name
         try:
-            self.app.parser.parse(cluster_config, user_image,
+            self.parser.parse(cluster_config, user_image,
                                   self.account_name, self.app.object_ring.replica_count,
                                   request=req)
         except ClusterConfigParsingError, e:
@@ -676,7 +687,7 @@ class ClusterController(ObjectController):
                 _('ERROR Error parsing config: %s'), cluster_config)
             return HTTPBadRequest(request=req, body=str(e))
 
-        #print json.dumps(self.app.parser.node_list, cls=NodeEncoder, indent=2)
+        #print json.dumps(self.parser.node_list, cls=NodeEncoder, indent=2)
 
         data_sources = []
         addr = self._get_own_address()
@@ -684,8 +695,8 @@ class ClusterController(ObjectController):
             return HTTPServiceUnavailable(
                 body='Cannot find own address, check zerovm_ns_hostname')
         ns_server = None
-        if self.app.parser.total_count > 1:
-            ns_server = NameService(self.app.parser.total_count)
+        if self.parser.total_count > 1:
+            ns_server = NameService(self.parser.total_count)
             if self.app.zerovm_ns_thrdpool.free() <= 0:
                 return HTTPServiceUnavailable(body='Cluster slot not available',
                                               request=req)
@@ -693,7 +704,7 @@ class ClusterController(ObjectController):
             if not ns_server.port:
                 return HTTPServiceUnavailable(body='Cannot bind name service')
         exec_requests = []
-        for node in self.app.parser.node_list:
+        for node in self.parser.node_list:
             nexe_headers = {
                 'x-nexe-system': node.name,
                 'x-nexe-status': 'ZeroVM did not run',
@@ -724,11 +735,11 @@ class ClusterController(ObjectController):
                     return aresp
             if ns_server:
                 node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
-                self.app.parser.build_connect_string(node)
+                self.parser.build_connect_string(node)
                 if node.replicate > 1:
                     for i in range(0, node.replicate - 1):
                         node.replicas.append(deepcopy(node))
-                        node.replicas[i].id = node.id + (i + 1) * len(self.app.parser.node_list)
+                        node.replicas[i].id = node.id + (i + 1) * len(self.parser.node_list)
             node.copy_cgi_env(exec_request)
             resp = node.create_sysmap_resp()
             node.add_data_source(data_sources, resp, 'sysmap')
@@ -769,9 +780,9 @@ class ClusterController(ObjectController):
                 n['node'].size += len(tstream.create_tarinfo(ftype=REGTYPE, name=n['dev'],
                                                              size=data_src.content_length))
                 n['node'].size += TarStream.get_archive_size(data_src.content_length)
-        pile = GreenPile(self.app.parser.total_count)
+        pile = GreenPile(self.parser.total_count)
         conns = self._make_exec_requests(pile, exec_requests)
-        if len(conns) < self.app.parser.total_count:
+        if len(conns) < self.parser.total_count:
             self.app.logger.exception(
                 _('ERROR Cannot find suitable node to execute code on'))
             return HTTPServiceUnavailable(
@@ -788,7 +799,7 @@ class ClusterController(ObjectController):
         #chunked = req.headers.get('transfer-encoding')
         chunked = False
         try:
-            with ContextPool(self.app.parser.total_count) as pool:
+            with ContextPool(self.parser.total_count) as pool:
                 self._spawn_file_senders(conns, pool, req)
                 for data_src in data_sources:
                     data_src.bytes_transferred = 0
