@@ -151,7 +151,7 @@ class NameService(object):
                     connecting_host, port = struct.unpack_from(NameService.INPUT_RECORD_FMT, message, offset)[0:2]
                     offset += NameService.INPUT_RECORD_SIZE
                     self.bind_map.setdefault(peer_id, {})[connecting_host] = port
-                self.conn_map[peer_id] = (connect_count, offset, ctypes.create_string_buffer(message))
+                self.conn_map[peer_id] = (connect_count, offset, ctypes.create_string_buffer(message[:]))
                 self.peer_map.setdefault(peer_id, {})[0] = peer_address[0]
                 self.peer_map.setdefault(peer_id, {})[1] = peer_address[1]
 
