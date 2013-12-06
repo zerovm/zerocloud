@@ -486,10 +486,12 @@ class ObjectQueryMiddleware(object):
             return HTTPBadRequest(body='Cannot find pool %s' % pool,
                                   request=req, content_type='text/plain',
                                   headers=nexe_headers)
-        #if thrdpool.free() <= 0 and thrdpool.waiting() >= queue:
-        #    return HTTPServiceUnavailable(body='Slot not available',
-        #                                  request=req, content_type='text/plain',
-        #                                  headers=nexe_headers)
+        # early reject for "threadpool is full"
+        # checked again below, when the request is received
+        if thrdpool.free() <= 0 and thrdpool.waiting() >= queue:
+            return HTTPServiceUnavailable(body='Slot not available',
+                                          request=req, content_type='text/plain',
+                                          headers=nexe_headers)
         #holder = thrdpool.spawn(self._placeholder)
         zerovm_valid = False
         if req.headers.get('x-zerovm-valid', 'false').lower() in TRUE_VALUES:
