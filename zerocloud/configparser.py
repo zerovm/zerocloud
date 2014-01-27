@@ -251,11 +251,9 @@ class ClusterConfigParser(object):
                                                                   'for device %s') % chan.device)
                             if node_count > 1:
                                 for i in range(1, node_count + 1):
-                                    self._add_new_channel(zvm_node, chan, index=i,
-                                                          content_type=f.get('content_type', 'text/html'))
+                                    self._add_new_channel(zvm_node, chan, index=i)
                             else:
-                                self._add_new_channel(zvm_node, chan,
-                                                      content_type=f.get('content_type', 'text/html'))
+                                self._add_new_channel(zvm_node, chan)
                     for chan in other_list:
                         if self.is_sysimage_device(chan.device):
                             chan.access = ACCESS_RANDOM | ACCESS_READABLE
@@ -627,7 +625,7 @@ def _create_channel(channel, node, default_content_type=None):
     access = DEVICE_MAP.get(device, -1)
     mode = channel.get('mode', None)
     meta = channel.get('meta', {})
-    content_type = channel.get('content_type', default_content_type)
+    content_type = channel.get('content_type', default_content_type if path else 'text/html')
     if access & ACCESS_READABLE and path:
         if not is_swift_path(path):
             raise ClusterConfigParsingError(_('Readable device must be a swift object'))
