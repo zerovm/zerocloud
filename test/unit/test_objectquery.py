@@ -1385,18 +1385,6 @@ time.sleep(10)
             self.assertEqual(resp.status_int, 400)
             self.assertEqual(resp.body, 'Could not resolve channel path: bla-bla')
 
-    def test_QUERY_mount_check(self):
-        self.setup_zerovm_query()
-        orig_mountcheck = getattr(self.obj_controller, 'mount_check')
-        self.obj_controller.mount_check = True
-        req = self.zerovm_object_request()
-        req.headers['etag'] = self._nexescript_etag
-        req.body = self._nexescript
-        resp = req.get_response(self.app)
-
-        self.assertEquals(resp.status_int, 507)
-        setattr(self.obj_controller, 'mount_check', orig_mountcheck)
-
     def test_QUERY_filter_factory(self):
         app = objectquery.filter_factory(self.conf)(FakeApp(self.conf))
         self.assertIsInstance(app, objectquery.ObjectQueryMiddleware)

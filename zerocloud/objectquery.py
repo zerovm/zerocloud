@@ -21,13 +21,13 @@ from swift import gettext_ as _
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
-    HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict
+    HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict, HTTPInsufficientStorage
 from swift.common.utils import normalize_timestamp, fallocate, \
     split_path, get_logger, mkdirs, disable_fallocate, TRUE_VALUES
-from swift.obj.diskfile import DiskWriter
-from swift.obj.server import DiskFile
+from swift.obj.diskfile import DiskFileManager, DiskFile, DiskFileWriter, write_metadata
 from swift.common.constraints import check_mount, check_utf8, check_float
-from swift.common.exceptions import DiskFileError, DiskFileNotExist, DiskFileNoSpace, DiskFileDeviceUnavailable
+from swift.common.exceptions import DiskFileError, DiskFileNotExist, DiskFileNoSpace, DiskFileDeviceUnavailable, \
+    DiskFileQuarantined
 from swift.proxy.controllers.base import update_headers
 from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
     MD5HASH_LENGTH, parse_location, \
@@ -43,22 +43,37 @@ except ImportError:
     import json
 
 
+class ZDiskFileManager(DiskFileManager):
+
+    def __init__(self, conf, logger):
+        super(ZDiskFileManager, self).__init__(conf, logger)
+
+    def get_diskfile(self, device, partition, account, container, obj,
+                     **kwargs):
+        dev_path = self.get_dev_path(device)
+        if not dev_path:
+            raise DiskFileDeviceUnavailable()
+        return ZDiskFile(self, dev_path, self.threadpools[device],
+                         partition, account, container, obj, **kwargs)
+
+
 class ZDiskFile(DiskFile):
 
-    def __init__(self, path, device, partition, account, container, obj, logger,
-                 disk_chunk_size=65536):
-        super(ZDiskFile, self).__init__(path, device, partition, account, container, obj, logger,
-                                        disk_chunk_size=disk_chunk_size)
+    def __init__(self, mgr, path, threadpool, partition, account,
+                 container, obj, _datadir=None):
+        super(ZDiskFile, self).__init__(mgr, path, threadpool,
+                                        partition, account, container, obj, _datadir)
         self.tmppath = None
         self.channel_device = None
-        self.timestamp = None
+        self.new_timestamp = None
 
     @contextmanager
-    def writer(self, fd=None):
-        if not os.path.exists(self.tmpdir):
-            mkdirs(self.tmpdir)
+    def create(self, size=None, fd=None):
+        if not os.path.exists(self._tmpdir):
+            mkdirs(self._tmpdir)
         try:
-            yield DiskWriter(self, fd, self.tmppath, self.threadpool)
+            yield DiskFileWriter(self._name, self._datadir, fd,
+                                 self.tmppath, self._bytes_per_sync, self._threadpool)
         finally:
             try:
                 os.close(fd)
@@ -68,6 +83,21 @@ class ZDiskFile(DiskFile):
                 os.unlink(self.tmppath)
             except OSError:
                 pass
+
+    @property
+    def data_file(self):
+        return self._data_file
+
+    @data_file.setter
+    def data_file(self, data_file):
+        self._data_file = data_file
+
+    @property
+    def name(self):
+        return self._name
+
+    def put_metadata(self, metadata):
+        write_metadata(self._data_file, metadata)
 
 
 class PseudoSocket():
@@ -229,6 +259,13 @@ class ObjectQueryMiddleware(object):
         # obey `disable_fallocate` configuration directive
         if conf.get('disable_fallocate', 'no').lower() in TRUE_VALUES:
             disable_fallocate()
+
+        self._diskfile_mgr = ZDiskFileManager(conf, self.logger)
+
+    def get_disk_file(self, device, partition, account, container, obj,
+                      **kwargs):
+        return self._diskfile_mgr.get_diskfile(
+            device, partition, account, container, obj, **kwargs)
 
     def send_to_socket(self, sock, zerovm_inputmnfst):
         SIZE = 8
@@ -463,9 +500,6 @@ class ObjectQueryMiddleware(object):
             except ValueError, err:
                 return HTTPBadRequest(body=str(err), request=req,
                                       content_type='text/plain')
-        if self.app.mount_check and not check_mount(self.app.devices, device):
-            return Response(status='507 %s is not mounted' % device,
-                            headers=nexe_headers)
         if 'content-length' in req.headers \
                 and int(req.headers['content-length']) > self.parser_config['limits']['rbytes']:
             return HTTPRequestEntityTooLarge(body='RPC request too large',
@@ -497,7 +531,7 @@ class ObjectQueryMiddleware(object):
         if req.headers.get('x-zerovm-valid', 'false').lower() in TRUE_VALUES:
             zerovm_valid = True
         tmpdir = TmpDir(
-            self.app.devices,
+            self._diskfile_mgr.devices,
             device,
             disk_chunk_size=self.app.disk_chunk_size,
             os_interface=self.os_interface
@@ -586,21 +620,18 @@ class ObjectQueryMiddleware(object):
                     ch['lpath'] = channels[ch['device']]
                 elif local_object and chan_path:
                     if chan_path.url in local_object['path']:
-                        disk_file = ZDiskFile(
-                            self.app.devices,
-                            device,
-                            partition,
-                            account,
-                            container,
-                            obj,
-                            self.logger,
-                            disk_chunk_size=self.app.disk_chunk_size,)
-                        disk_file.open()
+                        try:
+                            disk_file = self.get_disk_file(device, partition,
+                                                           account, container, obj)
+                        except DiskFileDeviceUnavailable:
+                            return HTTPInsufficientStorage(drive=device, request=req)
                         if ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
                             try:
-                                input_file_size = disk_file.get_data_file_size()
-                            except (DiskFileError, DiskFileNotExist):
-                                return HTTPNotFound(request=req, headers=nexe_headers)
+                                disk_file.open()
+                            except DiskFileNotExist:
+                                return HTTPNotFound(request=req)
+                            meta = disk_file.get_metadata()
+                            input_file_size = int(meta['Content-Length'])
                             if input_file_size > self.parser_config['limits']['rbytes']:
                                 return HTTPRequestEntityTooLarge(body='Data object too large',
                                                                  request=req,
@@ -608,12 +639,12 @@ class ObjectQueryMiddleware(object):
                                                                  headers=nexe_headers)
                             ch['lpath'] = disk_file.data_file
                             channels[ch['device']] = disk_file.data_file
-                            ch['meta'] = disk_file.get_metadata()
+                            ch['meta'] = meta
                             ch['size'] = input_file_size
                         elif ch['access'] & ACCESS_WRITABLE:
                             try:
-                                disk_file.timestamp = req.headers.get('x-timestamp')
-                                float(disk_file.timestamp)
+                                disk_file.new_timestamp = req.headers.get('x-timestamp')
+                                float(disk_file.new_timestamp)
                             except (KeyError, ValueError, TypeError):
                                 return HTTPBadRequest(body='Locally writable object specified '
                                                            'but no x-timestamp in request')
@@ -629,7 +660,7 @@ class ObjectQueryMiddleware(object):
                                                   body='Could not resolve channel path: %s'
                                                        % ch['path'])
                 elif ch['access'] & ACCESS_WRITABLE:
-                    writable_tmpdir = os.path.join(self.app.devices, device, 'tmp')
+                    writable_tmpdir = os.path.join(self._diskfile_mgr.devices, device, 'tmp')
                     if not os.path.exists(writable_tmpdir):
                         mkdirs(writable_tmpdir)
                     (output_fd, output_fn) = mkstemp(dir=writable_tmpdir)
@@ -938,73 +969,63 @@ class ObjectQueryMiddleware(object):
                 split_path(unquote(req.path), 5, 5, True)
         except ValueError:
             return False
-        if self.app.mount_check and not check_mount(self.app.devices, device):
-            return False
         try:
-            disk_file = DiskFile(
-                self.app.devices,
-                device,
-                partition,
-                account,
-                container,
-                obj,
-                self.logger,
-                disk_chunk_size=self.app.disk_chunk_size,
-            )
+            try:
+                disk_file = self.get_disk_file(device, partition,
+                                               account, container, obj)
+            except DiskFileDeviceUnavailable:
+                return HTTPInsufficientStorage(drive=device, request=req)
         except DiskFileDeviceUnavailable:
             return False
         with disk_file.open():
-            if disk_file.is_deleted() or disk_file.is_expired():
-                return False
             try:
-                nexe_size = disk_file.get_data_file_size()
-            except (DiskFileError, DiskFileNotExist):
-                disk_file.quarantine()
-                return False
-            if nexe_size > self.zerovm_maxnexe:
-                return False
-            tmpdir = TmpDir(
-                self.app.devices,
-                device,
-                disk_chunk_size=self.app.disk_chunk_size,
-                os_interface=self.os_interface
-            )
-            with tmpdir.mkstemp() as (zerovm_inputmnfst_fd, zerovm_inputmnfst_fn):
-                zerovm_inputmnfst = (
-                    'Version=%s\n'
-                    'Program=%s\n'
-                    'Timeout=%s\n'
-                    'Memory=%s,0\n'
-                    'Channel=/dev/null,/dev/stdin, 0,0,1,1,0,0\n'
-                    'Channel=/dev/null,/dev/stdout,0,0,0,0,1,1\n'
-                    'Channel=/dev/null,/dev/stderr,0,0,0,0,1,1\n'
-                    % (
-                        self.parser_config['manifest']['Version'],
-                        disk_file.data_file,
-                        self.parser_config['manifest']['Timeout'],
-                        self.parser_config['manifest']['Memory']
-                    ))
-                while zerovm_inputmnfst:
-                    written = self.os_interface.write(zerovm_inputmnfst_fd,
-                                                      zerovm_inputmnfst)
-                    zerovm_inputmnfst = zerovm_inputmnfst[written:]
+                metadata = disk_file.get_metadata()
+                if int(metadata['Content-Length']) > self.zerovm_maxnexe:
+                    return False
+                tmpdir = TmpDir(
+                    self._diskfile_mgr.devices,
+                    device,
+                    disk_chunk_size=self.app.disk_chunk_size,
+                    os_interface=self.os_interface
+                )
+                with tmpdir.mkstemp() as (zerovm_inputmnfst_fd, zerovm_inputmnfst_fn):
+                    zerovm_inputmnfst = (
+                        'Version=%s\n'
+                        'Program=%s\n'
+                        'Timeout=%s\n'
+                        'Memory=%s,0\n'
+                        'Channel=/dev/null,/dev/stdin, 0,0,1,1,0,0\n'
+                        'Channel=/dev/null,/dev/stdout,0,0,0,0,1,1\n'
+                        'Channel=/dev/null,/dev/stderr,0,0,0,0,1,1\n'
+                        % (
+                            self.parser_config['manifest']['Version'],
+                            disk_file.data_file,
+                            self.parser_config['manifest']['Timeout'],
+                            self.parser_config['manifest']['Memory']
+                        ))
+                    while zerovm_inputmnfst:
+                        written = self.os_interface.write(zerovm_inputmnfst_fd,
+                                                          zerovm_inputmnfst)
+                        zerovm_inputmnfst = zerovm_inputmnfst[written:]
 
-                (thrdpool, queue) = self.zerovm_threadpools['default']
-                thrd = thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, ['-F'])
-                (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
-                if zerovm_stderr:
-                    self.logger.warning('zerovm stderr: ' + zerovm_stderr)
-                if zerovm_retcode == 0:
-                    report = zerovm_stdout.split('\n', 1)
-                    try:
-                        validated = int(report[REPORT_VALIDATOR])
-                    except ValueError:
-                        return False
-                    if validated == 0:
-                        metadata = disk_file.get_metadata()
-                        metadata['Validated'] = metadata['ETag']
-                        disk_file.put_metadata(metadata)
-                        return True
+                    (thrdpool, queue) = self.zerovm_threadpools['default']
+                    thrd = thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, ['-F'])
+                    (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
+                    if zerovm_stderr:
+                        self.logger.warning('zerovm stderr: ' + zerovm_stderr)
+                    if zerovm_retcode == 0:
+                        report = zerovm_stdout.split('\n', 1)
+                        try:
+                            validated = int(report[REPORT_VALIDATOR])
+                        except ValueError:
+                            return False
+                        if validated == 0:
+                            metadata = disk_file.get_metadata()
+                            metadata['Validated'] = metadata['ETag']
+                            disk_file.put_metadata(metadata)
+                            return True
+                    return False
+            except DiskFileNotExist:
                 return False
 
     def is_validated(self, req):
@@ -1013,27 +1034,21 @@ class ObjectQueryMiddleware(object):
                 split_path(unquote(req.path), 5, 5, True)
         except ValueError:
             return False
-        if self.app.mount_check and not check_mount(self.app.devices, device):
-            return False
-        file = DiskFile(
-            self.app.devices,
-            device,
-            partition,
-            account,
-            container,
-            obj,
-            self.logger,
-            disk_chunk_size=self.app.disk_chunk_size,
-        )
-        with file.open():
-            if file.is_deleted():
+        try:
+            disk_file = self.get_disk_file(device, partition,
+                                           account, container, obj)
+        except DiskFileDeviceUnavailable:
+                return HTTPInsufficientStorage(drive=device, request=req)
+        with disk_file.open():
+            try:
+                metadata = disk_file.get_metadata()
+                status = metadata.get('Validated', None)
+                etag = metadata.get('ETag', None)
+                if status and etag and etag == status:
+                    return True
                 return False
-            metadata = file.get_metadata()
-            status = metadata.get('Validated', None)
-            etag = metadata.get('ETag', None)
-            if status and etag and etag == status:
-                return True
-            return False
+            except DiskFileNotExist:
+                return False
 
     def _finalize_local_file(self, local_object, disk_file, nexe_etag,
                              account, container, obj, request, device):
@@ -1055,10 +1070,13 @@ class ObjectQueryMiddleware(object):
         if len(reported_etag) != MD5HASH_LENGTH:
             return HTTPUnprocessableEntity(body='Bad etag for %s: %s'
                                                 % (disk_file.channel_device, reported_etag))
-        old_metatada = disk_file.get_metadata()
-        old_delete_at = int(old_metatada.get('X-Delete-At') or 0)
+        try:
+            old_metadata = disk_file.read_metadata()
+        except (DiskFileNotExist, DiskFileQuarantined):
+            old_metadata = {}
+        old_delete_at = int(old_metadata.get('X-Delete-At') or 0)
         metadata = {
-            'X-Timestamp': disk_file.timestamp,
+            'X-Timestamp': disk_file.new_timestamp,
             'Content-Type': local_object['content_type'],
             'ETag': reported_etag,
             'Content-Length': str(local_object['size'])}
@@ -1091,8 +1109,11 @@ class ObjectQueryMiddleware(object):
                                                     % disk_file.channel_device)
             metadata['ETag'] = new_etag.hexdigest()
         disk_file.tmppath = local_object['lpath']
-        with disk_file.writer(fd=fd) as writer:
-            writer.put(metadata)
+        try:
+            with disk_file.create(fd=fd) as writer:
+                writer.put(metadata)
+        except DiskFileNoSpace:
+            raise HTTPInsufficientStorage(drive=device, request=request)
         if old_delete_at > 0:
             self.app.delete_at_update(
                 'DELETE', old_delete_at, account, container, obj,
@@ -1109,7 +1130,7 @@ class ObjectQueryMiddleware(object):
                 'x-timestamp': metadata['X-Timestamp'],
                 'x-etag': metadata['ETag']}),
             device)
-        disk_file.close()
+        #disk_file.close()
 
     def _cleanup_daemon(self, daemon_sock):
         for pid in self._get_daemon_pid(daemon_sock):

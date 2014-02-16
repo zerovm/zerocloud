@@ -139,8 +139,7 @@ def setup():
     mkdirs(os.path.join(_testdir, 'sda1', 'tmp'))
     mkdirs(os.path.join(_testdir, 'sdb1'))
     mkdirs(os.path.join(_testdir, 'sdb1', 'tmp'))
-    _orig_container_listing_limit = \
-        swift.proxy.controllers.obj.CONTAINER_LISTING_LIMIT
+    _orig_container_listing_limit = swift.common.constraints.CONTAINER_LISTING_LIMIT
     prolis = listen(('localhost', 0))
     acc1lis = listen(('localhost', 0))
     acc2lis = listen(('localhost', 0))
@@ -223,12 +222,14 @@ def setup():
     exp = 'HTTP/1.1 201'
     assert(headers[:len(exp)] == exp)
 
+
 def teardown():
     for server in _test_coros:
         server.kill()
-    swift.proxy.controllers.obj.CONTAINER_LISTING_LIMIT = \
+    swift.common.constraints.CONTAINER_LISTING_LIMIT = \
         _orig_container_listing_limit
     rmtree(os.path.dirname(_testdir))
+
 
 @contextmanager
 def save_globals():
@@ -862,7 +863,7 @@ return resp
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, nexe)
-        req = Request.blank('/open/a/c/exe2?' + urlencode({'content_type':'text/html'}))
+        req = Request.blank('/open/a/c/exe2?' + urlencode({'content_type': 'text/html'}))
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, '<html><body>Test this</body></html>')

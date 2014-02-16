@@ -661,7 +661,6 @@ class ClusterController(ObjectController):
             if len(command_line) > 1:
                 args = command_line[1]
             params = {'exe_path': exe_path}
-            req.path_info_pop()
             if self.container_name and self.object_name:
                 template = POST_TEXT_OBJECT_SYSTEM_MAP
                 location = SwiftPath.init(self.account_name,
@@ -1093,7 +1092,6 @@ class ClusterController(ObjectController):
         elif not run:
             return HTTPNotFound(request=req,
                                 body='No application registered for %s' % content)
-        req.path_info_pop()
         location = SwiftPath.init(self.account_name,
                                   self.container_name,
                                   self.object_name)
