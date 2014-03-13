@@ -68,7 +68,8 @@ Only the following devices can be supplied without `path` property set
     output
     </pre>
 
-    All other devices must have a path attribute
+    All other devices must have a path attribute. There can be
+    *exactly one* output device without a path.
 
     If the device is a 'system image' it also does not have a path,
     its path is predefined in `zerovm_sysimage_devices` configuration directive
