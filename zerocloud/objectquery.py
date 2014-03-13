@@ -10,7 +10,7 @@ from urllib import unquote
 from hashlib import md5
 from tempfile import mkstemp, mkdtemp
 
-from eventlet import GreenPool, sleep, spawn
+from eventlet import sleep
 from eventlet.green import select, subprocess, os, socket
 from eventlet.timeout import Timeout
 from eventlet.green.httplib import HTTPResponse
@@ -36,6 +36,7 @@ from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRIT
 from zerocloud.configparser import ClusterConfigParser
 
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
+import zerocloud.thread_pool as zpool
 
 try:
     import simplejson as json
@@ -183,6 +184,9 @@ class DualReader(object):
 
 class ObjectQueryMiddleware(object):
 
+    DEFAULT_POOL_CONFIG = 'default = WaitPool(10,3); ' \
+                          'cluster = PriorityPool(10,100);'
+
     def __init__(self, app, conf, logger=None):
         self.app = app
         if logger:
@@ -190,8 +194,11 @@ class ObjectQueryMiddleware(object):
         else:
             self.logger = get_logger(conf, log_route='obj-query')
 
-        # path to zerovm executable, better use absolute path here for security reasons
-        self.zerovm_exename = [i.strip() for i in conf.get('zerovm_exename', 'zerovm').split() if i.strip()]
+        # path to zerovm executable, better use absolute path here
+        # for security reasons
+        self.zerovm_exename = [i.strip() for i in
+                               conf.get('zerovm_exename', 'zerovm').split()
+                               if i.strip()]
         # timeout for zerovm between TERM signal and KILL signal
         self.zerovm_kill_timeout = int(conf.get('zerovm_kill_timeout', 1))
         # maximum nexe binary size
@@ -204,21 +211,35 @@ class ObjectQueryMiddleware(object):
         self.zerovm_perf = conf.get('zerovm_perf', 'no').lower() in TRUE_VALUES
         # name-path pairs for sysimage devices on this node
         zerovm_sysimage_devices = {}
-        sysimage_list = [i.strip() for i in conf.get('zerovm_sysimage_devices', '').split() if i.strip()]
+        sysimage_list = [i.strip()
+                         for i in
+                         conf.get('zerovm_sysimage_devices', '').split()
+                         if i.strip()]
         for k, v in zip(*[iter(sysimage_list)]*2):
             zerovm_sysimage_devices[k] = v
-        # threadpolls for advanced scheduling in proxy middleware
-        self.zerovm_threadpools = {}
+        # thread pools for advanced scheduling in proxy middleware
+        self.zerovm_thread_pools = {}
         threadpool_list = [i.strip()
-                           for i in conf.get('zerovm_threadpools', 'default 10 3 cluster 10 0').split()
+                           for i in
+                           conf.get('zerovm_threadpools',
+                                    self.DEFAULT_POOL_CONFIG).split(';')
                            if i.strip()]
         try:
-            for name, size, queue in zip(*[iter(threadpool_list)]*3):
-                self.zerovm_threadpools[name] = (GreenPool(int(size)), int(queue))
+            for pool in threadpool_list:
+                name, args = [i.strip() for i in pool.split('=')
+                              if i.strip()]
+                func, args = [i.strip(')') for i in args.split('(')
+                              if i.strip(')')]
+                args = [i.strip() for i in args.split(',')
+                        if i.strip()]
+                self.zerovm_thread_pools[name] = getattr(zpool, func)(*args)
         except ValueError:
-            raise ValueError('Cannot parse "zerovm_threadpools" configuration variable')
-        if len(self.zerovm_threadpools) < 1 or not self.zerovm_threadpools.get('default', None):
-            raise ValueError('Invalid "zerovm_threadpools" configuration variable')
+            raise ValueError('Cannot parse "zerovm_threadpools" '
+                             'configuration variable')
+        if len(self.zerovm_thread_pools) < 1 or \
+                not self.zerovm_thread_pools.get('default', None):
+            raise ValueError('Invalid "zerovm_threadpools" '
+                             'configuration variable')
 
         # hardcoded absolute limits for zerovm executable stdout and stderr size
         # we don't want to crush the server
@@ -440,7 +461,7 @@ class ObjectQueryMiddleware(object):
             std.close()
 
     def _create_zerovm_thread(self, zerovm_inputmnfst, zerovm_inputmnfst_fd,
-                              zerovm_inputmnfst_fn, zerovm_valid, thrdpool):
+                              zerovm_inputmnfst_fn, zerovm_valid, thrdpool, job_id):
         while zerovm_inputmnfst:
             written = self.os_interface.write(zerovm_inputmnfst_fd,
                                               zerovm_inputmnfst)
@@ -448,7 +469,8 @@ class ObjectQueryMiddleware(object):
         zerovm_args = None
         if zerovm_valid:
             zerovm_args = ['-s']
-        thrd = thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, zerovm_args)
+        thrd = thrdpool.spawn(job_id, self.execute_zerovm,
+                              zerovm_inputmnfst_fn, zerovm_args)
         return thrd
 
     def _create_exec_error(self, nexe_headers, zerovm_retcode, zerovm_stdout):
@@ -469,6 +491,9 @@ class ObjectQueryMiddleware(object):
         daemon_sock = req.headers.get('x-zerovm-daemon', None)
         if daemon_sock:
             daemon_sock = os.path.join(self.zerovm_sockets_dir, daemon_sock)
+        job_id = req.headers.get('x-zerocloud-id', None)
+        if not job_id:
+            return HTTPInternalServerError(request=req)
         #print "URL: " + req.url
         nexe_headers = {
             'x-nexe-retcode': 0,
@@ -515,18 +540,18 @@ class ObjectQueryMiddleware(object):
                                   content_type='text/plain', headers=nexe_headers)
 
         pool = req.headers.get('x-zerovm-pool', 'default').lower()
-        (thrdpool, queue) = self.zerovm_threadpools.get(pool, None)
+        thrdpool = self.zerovm_thread_pools.get(pool, None)
         if not thrdpool:
             return HTTPBadRequest(body='Cannot find pool %s' % pool,
                                   request=req, content_type='text/plain',
                                   headers=nexe_headers)
-        # early reject for "threadpool is full"
-        # checked again below, when the request is received
-        if thrdpool.free() <= 0 and thrdpool.waiting() >= queue:
+        if not thrdpool.can_spawn(job_id):
+            # if can_spawn() returned True it actually means
+            # that spawn() will always succeed
+            # unless something really bad happened
             return HTTPServiceUnavailable(body='Slot not available',
                                           request=req, content_type='text/plain',
                                           headers=nexe_headers)
-        #holder = thrdpool.spawn(self._placeholder)
         zerovm_valid = False
         if req.headers.get('x-zerovm-valid', 'false').lower() in TRUE_VALUES:
             zerovm_valid = True
@@ -688,11 +713,6 @@ class ObjectQueryMiddleware(object):
                 #print json.dumps(config, sort_keys=True, indent=2)
                 #print zerovm_inputmnfst
                 #print open(nvram_file).read()
-                #holder.kill()
-                if thrdpool.free() <= 0 and thrdpool.waiting() >= queue:
-                    return HTTPServiceUnavailable(body='Slot not available',
-                                                  request=req, content_type='text/plain',
-                                                  headers=nexe_headers)
                 self._debug_before_exec(config, debug_dir, nexe_headers, nvram_file, zerovm_inputmnfst)
                 start = time.time()
                 daemon_status = None
@@ -700,7 +720,8 @@ class ObjectQueryMiddleware(object):
                     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                     try:
                         sock.connect(daemon_sock)
-                        thrd = thrdpool.spawn(self.send_to_socket, sock, zerovm_inputmnfst)
+                        thrd = thrdpool.spawn(job_id, self.send_to_socket,
+                                              sock, zerovm_inputmnfst)
                     except IOError:
                         self._cleanup_daemon(daemon_sock)
                         sysimage_path = self.parser.get_sysimage(exe_path.image)
@@ -717,16 +738,28 @@ class ObjectQueryMiddleware(object):
                         zerovm_inputmnfst += 'Job = %s\n' % daemon_sock
                         #print zerovm_inputmnfst
                         thrd = self._create_zerovm_thread(zerovm_inputmnfst,
-                                                          zerovm_inputmnfst_fd, zerovm_inputmnfst_fn,
-                                                          zerovm_valid, thrdpool)
+                                                          zerovm_inputmnfst_fd,
+                                                          zerovm_inputmnfst_fn,
+                                                          zerovm_valid, thrdpool,
+                                                          job_id)
+                        if thrd is None:
+                            # something strange happened, let's log it
+                            self.logger.warning('Slot not available after '
+                                                'can_spawn() succeeded')
+                            return HTTPServiceUnavailable(body='Slot not available',
+                                                          request=req,
+                                                          content_type='text/plain',
+                                                          headers=nexe_headers)
                         (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
-                        self._debug_after_exec(debug_dir, nexe_headers, zerovm_retcode, zerovm_stderr, zerovm_stdout)
+                        self._debug_after_exec(debug_dir, nexe_headers,
+                                               zerovm_retcode, zerovm_stderr, zerovm_stdout)
                         if zerovm_stderr:
                             self.logger.warning('zerovm stderr: '+zerovm_stderr)
                             zerovm_stdout += zerovm_stderr
                         report = zerovm_stdout.split('\n', REPORT_LENGTH - 1)
                         if len(report) < REPORT_LENGTH or zerovm_retcode > 1:
-                            resp = self._create_exec_error(nexe_headers, zerovm_retcode, zerovm_stdout)
+                            resp = self._create_exec_error(nexe_headers,
+                                                           zerovm_retcode, zerovm_stdout)
                             return req.get_response(resp)
                         else:
                             try:
@@ -739,15 +772,26 @@ class ObjectQueryMiddleware(object):
                             return HTTPInternalServerError(body=zerovm_stdout)
                         try:
                             sock.connect(daemon_sock)
-                            thrd = thrdpool.spawn(self.send_to_socket, sock, zerovm_inputmnfst)
+                            thrd = thrdpool.spawn(job_id, self.send_to_socket,
+                                                  sock, zerovm_inputmnfst)
                         except IOError:
                             return HTTPInternalServerError(body='Cannot connect to daemon even after daemon restart: '
                                                                 'socket %s' % daemon_sock,
                                                            headers=nexe_headers)
                 else:
                     thrd = self._create_zerovm_thread(zerovm_inputmnfst,
-                                                      zerovm_inputmnfst_fd, zerovm_inputmnfst_fn,
-                                                      zerovm_valid, thrdpool)
+                                                      zerovm_inputmnfst_fd,
+                                                      zerovm_inputmnfst_fn,
+                                                      zerovm_valid, thrdpool,
+                                                      job_id)
+                if thrd is None:
+                    # something strange happened, let's log it
+                    self.logger.warning('Slot not available after '
+                                        'can_spawn() succeeded')
+                    return HTTPServiceUnavailable(body='Slot not available',
+                                                  request=req,
+                                                  content_type='text/plain',
+                                                  headers=nexe_headers)
                 (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
                 perf = "%.3f" % (time.time() - start)
                 if self.zerovm_perf:
@@ -872,7 +916,7 @@ class ObjectQueryMiddleware(object):
 
                 response.app_iter = resp_iter(immediate_responses, self.app.network_chunk_size)
                 response.content_length = resp_size
-                return req.get_response(response)
+                return response
 
     def _read_cgi_response(self, ch, nph=True):
         if nph:
@@ -1008,8 +1052,10 @@ class ObjectQueryMiddleware(object):
                                                           zerovm_inputmnfst)
                         zerovm_inputmnfst = zerovm_inputmnfst[written:]
 
-                    (thrdpool, queue) = self.zerovm_threadpools['default']
-                    thrd = thrdpool.spawn(self.execute_zerovm, zerovm_inputmnfst_fn, ['-F'])
+                    thrdpool = self.zerovm_thread_pools['default']
+                    thrd = thrdpool.force_spawn(self.execute_zerovm,
+                                                zerovm_inputmnfst_fn,
+                                                ['-F'])
                     (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
                     if zerovm_stderr:
                         self.logger.warning('zerovm stderr: ' + zerovm_stderr)

@@ -39,6 +39,7 @@ from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
 from zerocloud.configparser import ClusterConfigParser, ClusterConfigParsingError
 from zerocloud.tarstream import StringBuffer, UntarStream, \
     TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile, Path
+from zerocloud.thread_pool import Zuid
 
 
 try:
@@ -307,23 +308,31 @@ class ProxyQueryMiddleware(object):
         # network chunk size for all network ops
         self.app.network_chunk_size = int(conf.get('network_chunk_size', 65536))
         # use newest files when running zerovm executables, default - False
-        self.app.zerovm_uses_newest = conf.get('zerovm_uses_newest', 'f').lower() in TRUE_VALUES
-        # use executable validation info, stored on PUT or POST, to shave some time on zerovm startup
-        self.app.zerovm_prevalidate = conf.get('zerovm_prevalidate', 'f').lower() in TRUE_VALUES
+        self.app.zerovm_uses_newest = conf.get(
+            'zerovm_uses_newest', 'f').lower() in TRUE_VALUES
+        # use executable validation info, stored on PUT or POST,
+        # to shave some time on zerovm startup
+        self.app.zerovm_prevalidate = conf.get(
+            'zerovm_prevalidate', 'f').lower() in TRUE_VALUES
         # use CORS workaround to POST execute commands, default - False
-        self.app.zerovm_use_cors = conf.get('zerovm_use_cors', 'f').lower() in TRUE_VALUES
-        # Accounting: enable or disabe execution accounting data, default - disabled
-        self.app.zerovm_accounting_enabled = conf.get('zerovm_accounting_enabled', 'f').lower() in TRUE_VALUES
+        self.app.zerovm_use_cors = conf.get(
+            'zerovm_use_cors', 'f').lower() in TRUE_VALUES
+        # Accounting: enable or disabe execution accounting data,
+        # default - disabled
+        self.app.zerovm_accounting_enabled = conf.get(
+            'zerovm_accounting_enabled', 'f').lower() in TRUE_VALUES
         # Accounting: system account for storing accounting data
         self.app.cdr_account = conf.get('user_stats_account', 'userstats')
         # Accounting: storage API version
         self.app.version = 'v1'
         # default content-type for unknown files
-        self.app.zerovm_content_type = conf.get('zerovm_default_content_type', 'application/octet-stream')
+        self.app.zerovm_content_type = conf.get(
+            'zerovm_default_content_type', 'application/octet-stream')
         # names of sysimage devices, no sysimage devices exist by default
-        self.zerovm_sysimage_devices = dict([(i.strip(), None)
-                                        for i in conf.get('zerovm_sysimage_devices', '').split()
-                                        if i.strip()])
+        devs = [(i.strip(), None)
+                for i in conf.get('zerovm_sysimage_devices', '').split()
+                if i.strip()]
+        self.zerovm_sysimage_devices = dict(devs)
         # GET support: container for content-type association storage
         self.app.zerovm_registry_path = '.zvm'
         # GET support: API version for "open" command
@@ -353,6 +362,7 @@ class ProxyQueryMiddleware(object):
         # list of daemons we need to lazy load (first request will start the daemon)
         daemon_list = [i.strip() for i in conf.get('zerovm_daemons', '').split() if i.strip()]
         self.app.zerovm_daemons = self.parse_daemon_config(daemon_list)
+        self.uid_generator = Zuid()
 
     @wsgify
     def __call__(self, req):
@@ -400,6 +410,9 @@ class ProxyQueryMiddleware(object):
 #                    if not getattr(handler, 'delay_denial', None):
 #                        return resp(env, start_response)
             start_time = time.time()
+            # each request is assigned a unique k-sorted id
+            # it will be used by QoS code to assign slots/priority
+            req.headers['x-zerocloud-id'] = self.uid_generator.get()
             res = handler(req)
             perf = time.time() - start_time
             if 'x-nexe-cdr-line' in res.headers:
