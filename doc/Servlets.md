@@ -11,7 +11,7 @@ JSON format describing a servlet configuration
             "args":"executable command line", <i>optional</i>
             "env":{    <i>executable environment, optional</i>
                 "key1":"value1",
-                "key2":"value2"  
+                "key2":"value2"
                 }
         },
         "file_list":[ <i>list of devices/files, optional</i>
@@ -51,7 +51,7 @@ JSON format describing a servlet configuration
     image
     debug
     </pre>
-   
+
     _All other device names are invalid_
 
     There are also 'system images' which are devices as well.
@@ -298,4 +298,3 @@ If there are 10 matching objects, there will be 10 mappers, each mapper will hav
     </pre>
 - The own node name can be found by reading `argv[0]` parameter (i.e. executable name).
 Using its own name from `argv[0]` and names of all other connected nodes from traversing /dev/in and /dev/out, each node can have full network map of all nodes it needs to communicate with.
-
