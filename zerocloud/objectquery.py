@@ -689,7 +689,6 @@ class ObjectQueryMiddleware(object):
                     if not os.path.exists(writable_tmpdir):
                         mkdirs(writable_tmpdir)
                     (output_fd, output_fn) = mkstemp(dir=writable_tmpdir)
-                    fallocate(output_fd, self.parser_config['limits']['wbytes'])
                     os.close(output_fd)
                     ch['lpath'] = output_fn
                     channels[ch['device']] = output_fn
