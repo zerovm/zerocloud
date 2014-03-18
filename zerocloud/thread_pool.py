@@ -26,7 +26,7 @@ class Zuid(object):
 
     def get(self):
         self._counter = (self._counter + 1) % COUNTER_LIMIT
-        return '%010x%s%03x' % ((time.time() * 1000), self._id, self._counter)
+        return UID_FORMAT % ((time.time() * 1000), self._id, self._counter)
 
 
 class PoolInterface(object):
