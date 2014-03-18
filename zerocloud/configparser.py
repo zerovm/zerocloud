@@ -561,6 +561,11 @@ class ClusterConfigParser(object):
                     node.path_info = default_path_info
             if node.replicate == 0:
                 node.replicate = 1
+            for chan in node.channels:
+                if hasattr(chan.path, 'account') and chan.path.account == '.':
+                    chan.path.account = account_name
+            if hasattr(node.exe.path, 'account') and node.exe.path.account == '.':
+                    node.exe.path.account = account_name
 
 def _add_connected_device(devices, channel, zvm_node):
     if not devices.get(zvm_node.name, None):
