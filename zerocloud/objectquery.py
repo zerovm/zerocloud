@@ -18,6 +18,7 @@ import errno
 import signal
 
 from swift import gettext_ as _
+import zlib
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
@@ -582,11 +583,18 @@ class ObjectQueryMiddleware(object):
                 info = untar_stream.get_next_tarinfo()
                 while info:
                     if info.offset_data:
-                        channels[info.name] = os.path.join(zerovm_tmp, info.name)
-                        fp = open(channels[info.name], 'ab')
+                        fname = info.name
+                        gzip = None
+                        if fname == 'image.gz':
+                            fname = 'image'
+                            gzip = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                        channels[fname] = os.path.join(zerovm_tmp, fname)
+                        fp = open(channels[fname], 'ab')
                         untar_stream.to_write = info.size
                         untar_stream.offset_data = info.offset_data
                         for data in untar_stream.untar_file_iter():
+                            if gzip:
+                                data = gzip.decompress(data)
                             fp.write(data)
                             perf = "%s %s:%.3f" % (perf, info.name, time.time() - start)
                         fp.close()

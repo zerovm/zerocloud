@@ -1332,6 +1332,59 @@ time.sleep(10)
                 #self.assertEqual(self.app.logger.log_dict['info'][0][0][0],
                 #    'Zerovm CDR: 0 0 0 0 1 46 2 56 0 0 0 0')
 
+    def test_QUERY_use_gzipped_image(self):
+        self.setup_zerovm_query()
+        req = self.zerovm_object_request()
+        nexefile = StringIO(self._nexescript)
+        conf = ZvmNode(1, 'sort', 'file://usr/bin/sort')
+        conf.add_new_channel('stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
+        conf.add_new_channel('stdout', ACCESS_WRITABLE)
+        conf.add_new_channel('image', ACCESS_CDR)
+        conf = json.dumps(conf, cls=NodeEncoder)
+        sysmap = StringIO(conf)
+        with self.create_tar({'usr/bin/sort': nexefile}) as image_tar:
+            import gzip
+            image_tar_gz = image_tar + '.gz'
+            try:
+                t = open(image_tar, 'rb')
+                gz = gzip.open(image_tar_gz, 'wb')
+                gz.writelines(t)
+                gz.close()
+                t.close()
+                with self.create_tar({'image.gz': open(image_tar_gz, 'rb'),
+                                      'sysmap': sysmap}) as tar:
+                    length = os.path.getsize(tar)
+                    req.body_file = Input(open(tar, 'rb'), length)
+                    req.content_length = length
+                    resp = self.app.zerovm_query(req)
+                    fd, name = mkstemp()
+                    self.assertEqual(resp.status_int, 200)
+                    for chunk in resp.app_iter:
+                        os.write(fd, chunk)
+                    os.close(fd)
+                    self.assertEqual(os.path.getsize(name), resp.content_length)
+                    tar = tarfile.open(name)
+                    names = tar.getnames()
+                    members = tar.getmembers()
+                    self.assertIn('stdout', names)
+                    self.assertEqual(names[-1], 'stdout')
+                    self.assertEqual(members[-1].size, len(self._sortednumbers))
+                    file = tar.extractfile(members[-1])
+                    self.assertEqual(file.read(), self._sortednumbers)
+                    self.assertEqual(resp.headers['x-nexe-retcode'], '0')
+                    self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
+                    self.assertEqual(resp.headers['x-nexe-validation'], '0')
+                    self.assertEqual(resp.headers['x-nexe-system'], 'sort')
+                    timestamp = normalize_timestamp(time())
+                    self.assertEqual(math.floor(float(resp.headers['X-Timestamp'])),
+                                     math.floor(float(timestamp)))
+                    self.assertEquals(resp.headers['content-type'], 'application/x-gtar')
+            finally:
+                try:
+                    os.unlink(image_tar_gz)
+                except OSError:
+                        pass
+
     def test_QUERY_bypass_image_file(self):
         self.setup_zerovm_query()
         req = self.zerovm_object_request()

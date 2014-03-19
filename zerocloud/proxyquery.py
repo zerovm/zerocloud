@@ -615,7 +615,8 @@ class ClusterController(ObjectController):
             cached_body = CachedBody(read_iter)
             user_image = True
             image_resp = Response(app_iter=iter(cached_body),
-                                  headers={'Content-Length': req.headers['content-length']})
+                                  headers={'Content-Length': req.headers['content-length'],
+                                           'Content-Type': req.headers['content-type']})
             image_resp.nodes = []
             untar_stream = UntarStream(cached_body.cache, path_list)
             try:
@@ -1221,8 +1222,11 @@ def _queue_put(conn, data, chunked):
 
 def _send_tar_headers(chunked, data_src):
     for conn in data_src.conns:
+        name = conn['dev']
+        if name == 'image' and data_src.content_type == 'application/x-gzip':
+            name = 'image.gz'
         info = conn['conn'].tar_stream.create_tarinfo(ftype=REGTYPE,
-                                                      name=conn['dev'],
+                                                      name=name,
                                                       size=data_src.content_length)
         for chunk in conn['conn'].tar_stream.serve_chunk(info):
             if not conn['conn'].failed:
