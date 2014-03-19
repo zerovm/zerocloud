@@ -48,6 +48,25 @@ except ImportError:
     import json
 
 
+# Monkey patching Request to support content_type property properly
+def _req_content_type_property():
+    """
+    Set and retrieve Request.content_type
+    Strips off any charset when retrieved
+    """
+    def getter(self):
+        if 'content-type' in self.headers:
+            return self.headers.get('content-type').split(';')[0]
+
+    def setter(self, value):
+        self.headers['content-type'] = value
+
+    return property(getter, setter,
+                    doc="Retrieve and set the request Content-Type header")
+
+Request.content_type = _req_content_type_property()
+
+
 class CachedBody(object):
 
     def __init__(self, read_iter, cache=None, cache_size=STREAM_CACHE_SIZE,
@@ -586,7 +605,7 @@ class ClusterController(ObjectController):
         path_list = [StringBuffer(CLUSTER_CONFIG_FILENAME),
                      StringBuffer(NODE_CONFIG_FILENAME)]
         read_iter = iter(lambda: req.environ['wsgi.input'].read(self.app.network_chunk_size), '')
-        if req.headers['content-type'].split(';')[0].strip() in TAR_MIMES:
+        if req.content_type in TAR_MIMES:
             # we must have Content-Length set for tar-based requests
             # as it will be impossible to stream them otherwise
             if not 'content-length' in req.headers:
@@ -613,7 +632,7 @@ class ClusterController(ObjectController):
                 cluster_config = json.loads(cluster_config)
             except Exception:
                 return HTTPUnprocessableEntity(body='Could not parse system map')
-        elif req.headers['content-type'].split(';')[0].strip() in 'application/json':
+        elif req.content_type in 'application/json':
         # System map was sent as a POST body
             if not cluster_config:
                 for chunk in read_iter:
@@ -883,7 +902,7 @@ class ClusterController(ObjectController):
                     final_body = FinalBody(resp.app_iter)
                     final_response.app_iter = final_body
                     final_response.content_length = resp.content_length
-                    final_response.content_type = resp.content_type
+                    final_response.content_type = resp.headers['content-type']
         if ns_server:
             ns_server.stop()
         if self.app.zerovm_accounting_enabled:
@@ -1086,7 +1105,7 @@ class ClusterController(ObjectController):
         obj_resp = handler(obj_req)
         if not is_success(obj_resp.status_int):
             return obj_resp
-        content = obj_resp.content_type.split(';')[0].strip()
+        content = obj_resp.content_type
         #print content
         if content == 'application/x-nexe':
             run = True
