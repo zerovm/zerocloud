@@ -759,7 +759,7 @@ class ClusterController(ObjectController):
             exec_request.path_info = path_info
             #exec_request.content_length = None
             exec_request.etag = None
-            exec_request.headers['content-type'] = TAR_MIMES[0]
+            exec_request.content_type = TAR_MIMES[0]
             #exec_request.headers['transfer-encoding'] = 'chunked'
             exec_request.headers['x-account-name'] = self.account_name
             exec_request.headers['x-timestamp'] = normalize_timestamp(time.time())
@@ -993,7 +993,7 @@ class ClusterController(ObjectController):
                 untar_stream.to_write = info.size
                 untar_stream.offset_data = info.offset_data
                 dest_req.environ['wsgi.input'] = ExtractedFile(untar_stream)
-                dest_req.headers['content-type'] = chan.content_type
+                dest_req.content_type = chan.content_type
                 error = update_metadata(dest_req, chan.meta)
                 if error:
                     conn.error = error
@@ -1132,7 +1132,7 @@ class ClusterController(ObjectController):
                                  environ=req.environ,
                                  headers=req.headers)
         post_req.method = 'POST'
-        post_req.headers['content-type'] = 'application/json'
+        post_req.content_type = 'application/json'
         exe_resp = None
         if obj_req.method in 'GET':
             exe_resp = obj_resp
