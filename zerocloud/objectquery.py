@@ -594,7 +594,13 @@ class ObjectQueryMiddleware(object):
                         untar_stream.offset_data = info.offset_data
                         for data in untar_stream.untar_file_iter():
                             if gzip:
-                                data = gzip.decompress(data)
+                                try:
+                                    data = gzip.decompress(data)
+                                except zlib.error:
+                                    return HTTPUnprocessableEntity(
+                                        request=req,
+                                        body='Failed to inflate gzipped image',
+                                        headers=nexe_headers)
                             fp.write(data)
                             perf = "%s %s:%.3f" % (perf, info.name, time.time() - start)
                         fp.close()
