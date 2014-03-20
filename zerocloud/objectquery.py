@@ -18,6 +18,7 @@ import errno
 import signal
 
 from swift import gettext_ as _
+import zlib
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
@@ -34,6 +35,7 @@ from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, ACCESS_WRIT
     is_image_path, ACCESS_NETWORK, ACCESS_RANDOM, REPORT_VALIDATOR, REPORT_RETCODE, REPORT_ETAG, \
     REPORT_CDR, REPORT_STATUS, SwiftPath, REPORT_LENGTH, REPORT_DAEMON, NodeEncoder
 from zerocloud.configparser import ClusterConfigParser
+from zerocloud.proxyquery import gunzip_iter
 
 from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
 import zerocloud.thread_pool as zpool
@@ -582,13 +584,26 @@ class ObjectQueryMiddleware(object):
                 info = untar_stream.get_next_tarinfo()
                 while info:
                     if info.offset_data:
-                        channels[info.name] = os.path.join(zerovm_tmp, info.name)
-                        fp = open(channels[info.name], 'ab')
+                        fname = info.name
+                        file_iter = untar_stream.untar_file_iter()
+                        if fname == 'image.gz':
+                            fname = 'image'
+                            file_iter = gunzip_iter(
+                                untar_stream.untar_file_iter(),
+                                self.app.network_chunk_size)
+                        channels[fname] = os.path.join(zerovm_tmp, fname)
+                        fp = open(channels[fname], 'ab')
                         untar_stream.to_write = info.size
                         untar_stream.offset_data = info.offset_data
-                        for data in untar_stream.untar_file_iter():
-                            fp.write(data)
-                            perf = "%s %s:%.3f" % (perf, info.name, time.time() - start)
+                        try:
+                            for data in file_iter:
+                                fp.write(data)
+                                perf = "%s %s:%.3f" % (perf, info.name, time.time() - start)
+                        except zlib.error:
+                            return HTTPUnprocessableEntity(
+                                request=req,
+                                body='Failed to inflate gzipped image',
+                                headers=nexe_headers)
                         fp.close()
                     info = untar_stream.get_next_tarinfo()
             if 'content-length' in req.headers\

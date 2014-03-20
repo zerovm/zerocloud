@@ -415,6 +415,22 @@ class TestProxyQuery(unittest.TestCase):
                 pass
 
     @contextmanager
+    def create_gzip(self, fname):
+        gzfd, gzname = mkstemp()
+        os.close(gzfd)
+        gz = GzipFile(gzname, mode='wb')
+        fd = open(fname, 'rb')
+        gz.write(fd.read())
+        gz.close()
+        try:
+            yield gzname
+        finally:
+            try:
+                os.unlink(gzname)
+            except OSError:
+                pass
+
+    @contextmanager
     def add_sysimage_device(self, sysimage_path):
         prosrv = _test_servers[0]
         _obj1srv = _test_servers[5]
@@ -556,6 +572,35 @@ class TestProxyQuery(unittest.TestCase):
                                            {
                                                'o2': self.get_sorted_numbers()
                                            })
+
+    def test_gzipped_tar(self):
+        self.setup_QUERY()
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout', 'path': 'swift://a/c/o2'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        req = self.zerovm_tar_request()
+        req.headers['content-type'] = 'application/x-gzip'
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            with self.create_gzip(tar) as gzname:
+                req.body_file = open(gzname, 'rb')
+                req.content_length = os.path.getsize(tar)
+                res = req.get_response(prosrv)
+                self.executed_successfully(res)
+                self.check_container_integrity(prosrv,
+                                               '/v1/a/c',
+                                               {
+                                                   'o2': self.get_sorted_numbers()
+                                               })
 
     def test_QUERY_sort_store_stdout_stderr(self):
         self.setup_QUERY()
@@ -916,6 +961,42 @@ return [open(mnfst.image['path']).read(), sorted(id)]
                     {'device': 'stdin', 'path': 'swift://a/c/o'},
                     {'device': 'stdout'},
                     {'device': 'image', 'path': 'swift://a/c/img'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body,
+                         str(['This is image file',
+                              pickle.loads(self.get_sorted_numbers())]))
+
+    def test_QUERY_use_gzipped_image(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe =\
+r'''
+return [open(mnfst.image['path']).read(), sorted(id)]
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        image = 'This is image file'
+        image_gz = StringIO('')
+        gz = GzipFile(mode='wb', fileobj=image_gz)
+        gz.write(image)
+        gz.close()
+        self.create_object(prolis, '/v1/a/c/img.gz', image_gz.getvalue(),
+                           content_type='application/x-gzip')
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe2'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'},
+                    {'device': 'image', 'path': 'swift://a/c/img.gz'}
                 ]
             }
         ]
