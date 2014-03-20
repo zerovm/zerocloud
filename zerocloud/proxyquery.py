@@ -38,7 +38,7 @@ from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
     ZvmChannel, parse_location, is_swift_path, is_image_path, can_run_as_daemon, SwiftPath, NodeEncoder
 from zerocloud.configparser import ClusterConfigParser, ClusterConfigParsingError
 from zerocloud.tarstream import StringBuffer, UntarStream, \
-    TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile, Path
+    TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile, Path, ReadError
 from zerocloud.thread_pool import Zuid
 
 
@@ -618,9 +618,14 @@ class ClusterController(ObjectController):
                                   headers={'Content-Length': req.headers['content-length']})
             image_resp.nodes = []
             untar_stream = UntarStream(cached_body.cache, path_list)
-            for chunk in untar_stream:
-                req.bytes_transferred += len(chunk)
-                etag.update(chunk)
+            try:
+                for chunk in untar_stream:
+                    req.bytes_transferred += len(chunk)
+                    etag.update(chunk)
+            except ReadError:
+                return HTTPUnprocessableEntity(request=req,
+                                               body='Error reading %s stream'
+                                                    % req.headers['content-type'])
             for buf in path_list:
                 if buf.is_closed:
                     cluster_config = buf.body
