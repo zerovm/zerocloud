@@ -415,6 +415,22 @@ class TestProxyQuery(unittest.TestCase):
                 pass
 
     @contextmanager
+    def create_gzip(self, fname):
+        gzfd, gzname = mkstemp()
+        os.close(gzfd)
+        gz = GzipFile(gzname, mode='wb')
+        fd = open(fname, 'rb')
+        gz.write(fd.read())
+        gz.close()
+        try:
+            yield gzname
+        finally:
+            try:
+                os.unlink(gzname)
+            except OSError:
+                pass
+
+    @contextmanager
     def add_sysimage_device(self, sysimage_path):
         prosrv = _test_servers[0]
         _obj1srv = _test_servers[5]
@@ -556,6 +572,35 @@ class TestProxyQuery(unittest.TestCase):
                                            {
                                                'o2': self.get_sorted_numbers()
                                            })
+
+    def test_gzipped_tar(self):
+        self.setup_QUERY()
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout', 'path': 'swift://a/c/o2'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        req = self.zerovm_tar_request()
+        req.headers['content-type'] = 'application/x-gzip'
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            with self.create_gzip(tar) as gzname:
+                req.body_file = open(gzname, 'rb')
+                req.content_length = os.path.getsize(tar)
+                res = req.get_response(prosrv)
+                self.executed_successfully(res)
+                self.check_container_integrity(prosrv,
+                                               '/v1/a/c',
+                                               {
+                                                   'o2': self.get_sorted_numbers()
+                                               })
 
     def test_QUERY_sort_store_stdout_stderr(self):
         self.setup_QUERY()

@@ -12,6 +12,7 @@ import greenlet
 from eventlet import GreenPile, GreenPool, Queue
 from eventlet.green import socket
 from eventlet.timeout import Timeout
+import zlib
 
 from swiftclient.client import quote
 
@@ -21,7 +22,8 @@ from swift.common.http import HTTP_CONTINUE, is_success, \
 from swift.proxy.controllers.base import update_headers, delay_denial, \
     cors_validation
 from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
-    get_remote_client, ContextPool, cache_from_env, normalize_timestamp, GreenthreadSafeIterator
+    get_remote_client, ContextPool, cache_from_env, normalize_timestamp, \
+    GreenthreadSafeIterator
 from swift.proxy.server import ObjectController, ContainerController, \
     AccountController
 from swift.common.bufferedhttp import http_connect
@@ -35,7 +37,8 @@ from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
     CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
     merge_headers, update_metadata, DEFAULT_EXE_SYSTEM_MAP, STREAM_CACHE_SIZE, \
-    ZvmChannel, parse_location, is_swift_path, is_image_path, can_run_as_daemon, SwiftPath, NodeEncoder
+    ZvmChannel, parse_location, is_swift_path, is_image_path, can_run_as_daemon, \
+    SwiftPath, NodeEncoder
 from zerocloud.configparser import ClusterConfigParser, ClusterConfigParsingError
 from zerocloud.tarstream import StringBuffer, UntarStream, \
     TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile, Path, ReadError
@@ -604,7 +607,13 @@ class ClusterController(ObjectController):
         req.bytes_transferred = 0
         path_list = [StringBuffer(CLUSTER_CONFIG_FILENAME),
                      StringBuffer(NODE_CONFIG_FILENAME)]
-        read_iter = iter(lambda: req.environ['wsgi.input'].read(self.app.network_chunk_size), '')
+        rdata = req.environ['wsgi.input']
+        read_iter = iter(lambda: rdata.read(self.app.network_chunk_size), '')
+        orig_content_type = req.content_type
+        if req.content_type in ['application/x-gzip']:
+            orig_iter = read_iter
+            read_iter = gunzip_iter(orig_iter, self.app.network_chunk_size)
+            req.content_type = TAR_MIMES[0]
         if req.content_type in TAR_MIMES:
             # we must have Content-Length set for tar-based requests
             # as it will be impossible to stream them otherwise
@@ -612,7 +621,12 @@ class ClusterController(ObjectController):
                 return HTTPBadRequest(request=req,
                                       body='Must specify Content-Length')
             # buffer first blocks of tar file and search for the system map
-            cached_body = CachedBody(read_iter)
+            try:
+                cached_body = CachedBody(read_iter)
+            except zlib.error:
+                return HTTPUnprocessableEntity(request=req,
+                                               body='Error reading %s stream'
+                                                    % orig_content_type)
             user_image = True
             image_resp = Response(app_iter=iter(cached_body),
                                   headers={'Content-Length': req.headers['content-length'],
@@ -1274,6 +1288,28 @@ def _get_local_address(node):
     s.shutdown(socket.SHUT_RDWR)
     s.close()
     return result
+
+
+def gunzip_iter(data_iter, chunk_size):
+    dec = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    unc_data = ''
+    for chunk in data_iter:
+        while dec.unconsumed_tail:
+            while len(unc_data) < chunk_size and dec.unconsumed_tail:
+                unc_data += dec.decompress(dec.unconsumed_tail,
+                                           chunk_size - len(unc_data))
+            if len(unc_data) == chunk_size:
+                yield unc_data
+                unc_data = ''
+            if unc_data and dec.unconsumed_tail:
+                chunk += dec.unconsumed_tail
+                break
+        unc_data += dec.decompress(chunk, chunk_size - len(unc_data))
+        if len(unc_data) == chunk_size:
+            yield unc_data
+            unc_data = ''
+    if unc_data:
+        yield unc_data
 
 
 def filter_factory(global_conf, **local_conf):
