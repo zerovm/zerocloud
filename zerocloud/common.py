@@ -168,11 +168,15 @@ class ObjPath:
         self.path = path
 
     def __eq__(self, other):
+        if not isinstance(other, ObjPath):
+            return False
         if self.url == other.url:
             return True
         return False
 
     def __ne__(self, other):
+        if not isinstance(other, ObjPath):
+            return True
         if self.url != other.url:
             return True
         return False
