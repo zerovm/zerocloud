@@ -95,6 +95,13 @@ REPORT_ETAG = 3
 REPORT_CDR = 4
 REPORT_STATUS = 5
 
+RE_ILLEGAL = u'([\u0000-\u0008\u000b-\u000c\u000e-\u001f\ufffe-\uffff])' + \
+             u'|' + \
+             u'([%s-%s][^%s-%s])|([^%s-%s][%s-%s])|([%s-%s]$)|(^[%s-%s])' % \
+             (unichr(0xd800), unichr(0xdbff), unichr(0xdc00), unichr(0xdfff),
+              unichr(0xd800), unichr(0xdbff), unichr(0xdc00), unichr(0xdfff),
+              unichr(0xd800), unichr(0xdbff), unichr(0xdc00), unichr(0xdfff),)
+
 
 def merge_headers(current, new):
     if hasattr(new, 'keys'):
@@ -113,12 +120,6 @@ def merge_headers(current, new):
 
 def has_control_chars(line):
     if line:
-        RE_ILLEGAL = u'([\u0000-\u0008\u000b-\u000c\u000e-\u001f\ufffe-\uffff])' + \
-                     u'|' + \
-                     u'([%s-%s][^%s-%s])|([^%s-%s][%s-%s])|([%s-%s]$)|(^[%s-%s])' % \
-                     (unichr(0xd800), unichr(0xdbff), unichr(0xdc00), unichr(0xdfff),
-                      unichr(0xd800), unichr(0xdbff), unichr(0xdc00), unichr(0xdfff),
-                      unichr(0xd800), unichr(0xdbff), unichr(0xdc00), unichr(0xdfff),)
         if re.search(RE_ILLEGAL, line):
             return True
         if re.search(r"[\x01-\x1F\x7F]", line):
