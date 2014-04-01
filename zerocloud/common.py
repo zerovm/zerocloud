@@ -55,7 +55,7 @@ POST_TEXT_ACCOUNT_SYSTEM_MAP = r'''
         "name": "script",
         "exec": {
             "path": "{.exe_path}",
-            "args": "script"
+            "args": "{.args}script"
         },
         "file_list": [
             {
@@ -71,7 +71,7 @@ POST_TEXT_OBJECT_SYSTEM_MAP = r'''
         "name": "script",
         "exec": {
             "path": "{.exe_path}",
-            "args": "script"
+            "args": "{.args}script"
         },
         "file_list": [
             {
