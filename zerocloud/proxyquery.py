@@ -7,7 +7,7 @@ import time
 import datetime
 import uuid
 from hashlib import md5
-from random import shuffle, randrange
+from random import randrange
 import greenlet
 from eventlet import GreenPile, GreenPool, Queue
 from eventlet.green import socket
@@ -33,13 +33,14 @@ from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
     HTTPClientDisconnect, wsgify
-from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, \
+from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, \
     CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
-    merge_headers, update_metadata, DEFAULT_EXE_SYSTEM_MAP, STREAM_CACHE_SIZE, \
-    ZvmChannel, parse_location, is_swift_path, is_image_path, can_run_as_daemon, \
-    SwiftPath, NodeEncoder
-from zerocloud.configparser import ClusterConfigParser, ClusterConfigParsingError
+    merge_headers, update_metadata, DEFAULT_EXE_SYSTEM_MAP, \
+    STREAM_CACHE_SIZE, ZvmChannel, parse_location, is_swift_path, \
+    is_image_path, can_run_as_daemon, SwiftPath, NodeEncoder
+from zerocloud.configparser import ClusterConfigParser, \
+    ClusterConfigParsingError
 from zerocloud.tarstream import StringBuffer, UntarStream, \
     TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile, Path, ReadError
 from zerocloud.thread_pool import Zuid
@@ -164,39 +165,54 @@ class NameService(object):
                 start = time.time()
                 message, peer_address = self.sock.recvfrom(65535)
                 offset = 0
-                peer_id = struct.unpack_from(NameService.INT_FMT, message, offset)[0]
+                peer_id = struct.unpack_from(NameService.INT_FMT, message,
+                                             offset)[0]
                 offset += NameService.INT_SIZE
-                bind_count = struct.unpack_from(NameService.INT_FMT, message, offset)[0]
+                bind_count = struct.unpack_from(NameService.INT_FMT, message,
+                                                offset)[0]
                 offset += NameService.INT_SIZE
-                connect_count = struct.unpack_from(NameService.INT_FMT, message, offset)[0]
+                connect_count = struct.unpack_from(NameService.INT_FMT,
+                                                   message, offset)[0]
                 offset += NameService.INT_SIZE
                 for i in range(bind_count):
-                    connecting_host, port = struct.unpack_from(NameService.INPUT_RECORD_FMT, message, offset)[0:2]
+                    connecting_host, port = struct.unpack_from(
+                        NameService.INPUT_RECORD_FMT, message, offset)[0:2]
                     offset += NameService.INPUT_RECORD_SIZE
-                    self.bind_map.setdefault(peer_id, {})[connecting_host] = port
-                self.conn_map[peer_id] = (connect_count, offset, ctypes.create_string_buffer(message[:]))
+                    self.bind_map.setdefault(peer_id, {})[connecting_host] = \
+                        port
+                self.conn_map[peer_id] = (connect_count,
+                                          offset,
+                                          ctypes.create_string_buffer(
+                                              message[:]))
                 self.peer_map.setdefault(peer_id, {})[0] = peer_address[0]
                 self.peer_map.setdefault(peer_id, {})[1] = peer_address[1]
 
                 if len(self.peer_map) == self.peers:
-                    print "Finished name server receive in %.3f seconds" % (time.time() - start)
+                    print "Finished name server receive in %.3f seconds" \
+                          % (time.time() - start)
                     start = time.time()
                     for peer_id in self.peer_map.iterkeys():
                         #out = ''
                         (connect_count, offset, reply) = self.conn_map[peer_id]
                         for i in range(connect_count):
-                            connecting_host = struct.unpack_from(NameService.INT_FMT, reply, offset)[0]
+                            connecting_host = struct.unpack_from(
+                                NameService.INT_FMT, reply, offset)[0]
                             port = self.bind_map[connecting_host][peer_id]
                             connect_to = self.peer_map[connecting_host][0]
-                            if connect_to == self.peer_map[peer_id][0]:  # both on the same host
+                            if connect_to == self.peer_map[peer_id][0]:
+                                # both on the same host
                                 connect_to = '127.0.0.1'
-                            struct.pack_into(NameService.OUTPUT_RECORD_FMT, reply, offset,
-                                             socket.inet_pton(socket.AF_INET, connect_to), port)
+                            struct.pack_into(NameService.OUTPUT_RECORD_FMT,
+                                             reply, offset,
+                                             socket.inet_pton(socket.AF_INET,
+                                                              connect_to),
+                                             port)
                             offset += NameService.OUTPUT_RECORD_SIZE
-                            #out += ' %d -> %d:%d\n' % (connecting_host, peer_id, port)
-                        self.sock.sendto(reply, (self.peer_map[peer_id][0], self.peer_map[peer_id][1]))
+                        self.sock.sendto(reply, (self.peer_map[peer_id][0],
+                                                 self.peer_map[peer_id][1]))
                         #print out
-                    print "Finished name server send in %.3f seconds" % (time.time() - start)
+                    print "Finished name server send in %.3f seconds" \
+                          % (time.time() - start)
             except greenlet.GreenletExit:
                 return
             except Exception:
@@ -231,10 +247,12 @@ class ProxyQueryMiddleware(object):
                 if not mask or mask.match(item['name']):
                     ret.append(item['name'])
             marker = data[-1]['name']
-            data = self.list_account(account, mask=None, marker=marker, request=request)
+            data = self.list_account(account, mask=None, marker=marker,
+                                     request=request)
         return ret
 
-    def list_container(self, account, container, mask=None, marker=None, request=None):
+    def list_container(self, account, container, mask=None, marker=None,
+                       request=None):
         new_req = request.copy_get()
         new_req.path_info = '/' + quote(account) + '/' + quote(container)
         new_req.query_string = 'format=json'
@@ -258,7 +276,8 @@ class ProxyQueryMiddleware(object):
                     ret.append(item['name'])
             marker = data[-1]['name']
             data = self.list_container(account, container,
-                                       mask=None, marker=marker, request=request)
+                                       mask=None, marker=marker,
+                                       request=request)
         return ret
 
     def parse_daemon_config(self, daemon_list):
@@ -268,13 +287,15 @@ class ProxyQueryMiddleware(object):
         socks = {}
         for sock, conf_file in zip(*[iter(daemon_list)] * 2):
             if socks.get(sock, None):
-                self.logger.warning('Duplicate daemon config for uuid %s' % sock)
+                self.logger.warning('Duplicate daemon config for uuid %s'
+                                    % sock)
                 continue
             socks[sock] = 1
             try:
                 json_config = json.load(open(conf_file))
             except IOError:
-                self.logger.warning('Cannot load daemon config file: %s' % conf_file)
+                self.logger.warning('Cannot load daemon config file: %s'
+                                    % conf_file)
                 continue
             parser = ClusterConfigParser(self.zerovm_sysimage_devices,
                                          self.app.zerovm_content_type,
@@ -284,16 +305,22 @@ class ProxyQueryMiddleware(object):
             try:
                 parser.parse(json_config, False, request=request)
             except ClusterConfigParsingError, e:
-                self.logger.warning('Daemon config %s error: %s' % (conf_file, str(e)))
+                self.logger.warning('Daemon config %s error: %s'
+                                    % (conf_file, str(e)))
                 continue
             if len(parser.nodes) != 1:
-                self.logger.warning('Bad daemon config %s: too many nodes' % conf_file)
+                self.logger.warning('Bad daemon config %s: too many nodes'
+                                    % conf_file)
             for node in parser.nodes.itervalues():
                 if node.bind or node.connect:
-                    self.logger.warning('Bad daemon config %s: network channels are present' % conf_file)
+                    self.logger.warning('Bad daemon config %s: '
+                                        'network channels are present'
+                                        % conf_file)
                     continue
                 if not is_image_path(node.exe):
-                    self.logger.warning('Bad daemon config %s: exe path must be in image file' % conf_file)
+                    self.logger.warning('Bad daemon config %s: '
+                                        'exe path must be in image file'
+                                        % conf_file)
                     continue
                 image = None
                 for sysimage in parser.sysimage_devices.keys():
@@ -301,11 +328,14 @@ class ProxyQueryMiddleware(object):
                         image = sysimage
                         break
                 if not image:
-                    self.logger.warning('Bad daemon config %s: exe is not in sysimage device' % conf_file)
+                    self.logger.warning('Bad daemon config %s: '
+                                        'exe is not in sysimage device'
+                                        % conf_file)
                     continue
                 node.channels = sorted(node.channels, key=lambda ch: ch.device)
                 result.append((sock, node))
-                self.logger.info('Loaded daemon config %s with UUID %s' % (conf_file, sock))
+                self.logger.info('Loaded daemon config %s with UUID %s'
+                                 % (conf_file, sock))
         return result
 
     def __init__(self, app, conf, logger=None):
@@ -328,7 +358,8 @@ class ProxyQueryMiddleware(object):
         # max time to wait for upload to finish, used in POST requests
         self.app.max_upload_time = int(conf.get('max_upload_time', 86400))
         # network chunk size for all network ops
-        self.app.network_chunk_size = int(conf.get('network_chunk_size', 65536))
+        self.app.network_chunk_size = int(conf.get('network_chunk_size',
+                                                   65536))
         # use newest files when running zerovm executables, default - False
         self.app.zerovm_uses_newest = conf.get(
             'zerovm_uses_newest', 'f').lower() in TRUE_VALUES
@@ -362,17 +393,21 @@ class ProxyQueryMiddleware(object):
         # GET support: API version for "open with" command
         self.app.zerovm_openwith_version = 'open-with'
         # GET support: allowed commands
-        self.app.zerovm_allowed_commands = [self.app.zerovm_open_version, self.app.zerovm_openwith_version]
+        self.app.zerovm_allowed_commands = [self.app.zerovm_open_version,
+                                            self.app.zerovm_openwith_version]
         # GET support: cache config files for this amount of seconds
         self.app.zerovm_cache_config_timeout = 60
         self.app.parser_config = {
             'limits': {
-                # total maximum iops for channel read or write operations, per zerovm session
+                # total maximum iops for channel read or write operations
+                # per zerovm session
                 'reads': int(conf.get('zerovm_maxiops', 1024 * 1048576)),
                 'writes': int(conf.get('zerovm_maxiops', 1024 * 1048576)),
-                # total maximum bytes for a channel write operations, per zerovm session
+                # total maximum bytes for a channel write operations
+                # per zerovm session
                 'rbytes': int(conf.get('zerovm_maxoutput', 1024 * 1048576)),
-                # total maximum bytes for a channel read operations, per zerovm session
+                # total maximum bytes for a channel read operations
+                # per zerovm session
                 'wbytes': int(conf.get('zerovm_maxinput', 1024 * 1048576))
             }
         }
@@ -380,9 +415,12 @@ class ProxyQueryMiddleware(object):
         # self.app.parser = ClusterConfigParser(self.zerovm_sysimage_devices,
         #                                       self.app.zerovm_content_type,
         #                                       self.app.parser_config,
-        #                                       self.list_account, self.list_container)
-        # list of daemons we need to lazy load (first request will start the daemon)
-        daemon_list = [i.strip() for i in conf.get('zerovm_daemons', '').split() if i.strip()]
+        #                                       self.list_account,
+        #                                       self.list_container)
+        # list of daemons we need to lazy load
+        # (first request will start the daemon)
+        daemon_list = [i.strip() for i in
+                       conf.get('zerovm_daemons', '').split() if i.strip()]
         self.app.zerovm_daemons = self.parse_daemon_config(daemon_list)
         self.uid_generator = Zuid()
 
@@ -419,11 +457,13 @@ class ProxyQueryMiddleware(object):
                 controller.command = path_parts['version']
                 req.path_info_pop()
             if not self.app.zerovm_execute in req.headers:
-                req.headers[self.app.zerovm_execute] = self.app.zerovm_execute_ver
+                req.headers[self.app.zerovm_execute] = \
+                    self.app.zerovm_execute_ver
             try:
                 handler = getattr(controller, req.method)
             except AttributeError:
-                return HTTPPreconditionFailed(request=req, body='Bad HTTP method')
+                return HTTPPreconditionFailed(request=req,
+                                              body='Bad HTTP method')
 #            if 'swift.authorize' in req.environ:
 #                resp = req.environ['swift.authorize'](req)
 #                if not resp:
@@ -438,7 +478,8 @@ class ProxyQueryMiddleware(object):
             res = handler(req)
             perf = time.time() - start_time
             if 'x-nexe-cdr-line' in res.headers:
-                res.headers['x-nexe-cdr-line'] = '%.3f, %s' % (perf, res.headers['x-nexe-cdr-line'])
+                res.headers['x-nexe-cdr-line'] = \
+                    '%.3f, %s' % (perf, res.headers['x-nexe-cdr-line'])
             return res
         return self.app
 
@@ -450,14 +491,18 @@ class ClusterController(ObjectController):
 
     def __init__(self, app, account_name, container_name, obj_name, middleware,
                  **kwargs):
-        ObjectController.__init__(self, app, account_name, container_name or '', obj_name or '')
+        ObjectController.__init__(self, app,
+                                  account_name,
+                                  container_name or '',
+                                  obj_name or '')
         self.middleware = middleware
         self.command = None
-        self.parser = ClusterConfigParser(self.middleware.zerovm_sysimage_devices,
-                                          self.app.zerovm_content_type,
-                                          self.app.parser_config,
-                                          self.middleware.list_account,
-                                          self.middleware.list_container)
+        self.parser = ClusterConfigParser(
+            self.middleware.zerovm_sysimage_devices,
+            self.app.zerovm_content_type,
+            self.app.parser_config,
+            self.middleware.list_account,
+            self.middleware.list_container)
 
     def get_daemon_socket(self, config):
         for daemon_sock, daemon_conf in self.app.zerovm_daemons:
@@ -488,47 +533,77 @@ class ClusterController(ObjectController):
         for exec_request in exec_requests:
             node = exec_request.node
             try:
-                account, container, obj = split_path(node.path_info, 3, 3, True)
-                partition, nodes = self.app.object_ring.get_nodes(account, container, obj)
-                node_iter = GreenthreadSafeIterator(self.iter_nodes_local_first(self.app.object_ring, partition))
+                account, container, obj = \
+                    split_path(node.path_info, 3, 3, True)
+                partition, nodes = self.app.object_ring.get_nodes(account,
+                                                                  container,
+                                                                  obj)
+                node_iter = GreenthreadSafeIterator(
+                    self.iter_nodes_local_first(self.app.object_ring,
+                                                partition))
                 exec_request.path_info = node.path_info
                 if node.replicate > 1:
                     container_info = self.container_info(account, container)
                     container_partition = container_info['partition']
                     containers = container_info['nodes']
-                    exec_headers = self._backend_requests(exec_request, node.replicate,
-                                                          container_partition, containers)
+                    exec_headers = self._backend_requests(exec_request,
+                                                          node.replicate,
+                                                          container_partition,
+                                                          containers)
                     if node.skip_validation:
                         for hdr in exec_headers:
                             hdr['x-zerovm-valid'] = 'true'
                     i = 0
-                    pile.spawn(self._connect_exec_node, node_iter, partition,
-                               exec_request, self.app.logger.thread_locals, node,
+                    pile.spawn(self._connect_exec_node,
+                               node_iter,
+                               partition,
+                               exec_request,
+                               self.app.logger.thread_locals,
+                               node,
                                exec_headers[i])
                     for repl_node in node.replicas:
                         i += 1
-                        pile.spawn(self._connect_exec_node, node_iter, partition,
-                                   exec_request, self.app.logger.thread_locals, repl_node,
+                        pile.spawn(self._connect_exec_node,
+                                   node_iter,
+                                   partition,
+                                   exec_request,
+                                   self.app.logger.thread_locals,
+                                   repl_node,
                                    exec_headers[i])
                 else:
                     if node.skip_validation:
                         exec_request.headers['x-zerovm-valid'] = 'true'
-                    pile.spawn(self._connect_exec_node, node_iter, partition,
-                               exec_request, self.app.logger.thread_locals, node,
+                    pile.spawn(self._connect_exec_node,
+                               node_iter,
+                               partition,
+                               exec_request,
+                               self.app.logger.thread_locals,
+                               node,
                                exec_request.headers)
             except ValueError:
                 partition = self.get_random_partition()
-                node_iter = self.iter_nodes_local_first(self.app.object_ring, partition)
+                node_iter = self.iter_nodes_local_first(self.app.object_ring,
+                                                        partition)
                 if node.skip_validation:
                     exec_request.headers['x-zerovm-valid'] = 'true'
-                pile.spawn(self._connect_exec_node, node_iter, partition,
-                           exec_request, self.app.logger.thread_locals, node,
+                pile.spawn(self._connect_exec_node,
+                           node_iter,
+                           partition,
+                           exec_request,
+                           self.app.logger.thread_locals,
+                           node,
                            exec_request.headers)
                 for repl_node in node.replicas:
                     partition = self.get_random_partition()
-                    node_iter = self.iter_nodes_local_first(self.app.object_ring, partition)
-                    pile.spawn(self._connect_exec_node, node_iter, partition,
-                               exec_request, self.app.logger.thread_locals, repl_node,
+                    node_iter = \
+                        self.iter_nodes_local_first(self.app.object_ring,
+                                                    partition)
+                    pile.spawn(self._connect_exec_node,
+                               node_iter,
+                               partition,
+                               exec_request,
+                               self.app.logger.thread_locals,
+                               repl_node,
                                exec_request.headers)
         return [conn for conn in pile if conn]
 
@@ -551,7 +626,8 @@ class ClusterController(ObjectController):
                     channels.append(ch)
         return channels
 
-    def _create_request_for_remote_object(self, data_sources, channel, exe_resp, req, nexe_headers, node):
+    def _create_request_for_remote_object(self, data_sources, channel,
+                                          exe_resp, req, nexe_headers, node):
         source_resp = None
         load_from = channel.path.path
         for resp in data_sources:
@@ -582,17 +658,20 @@ class ClusterController(ObjectController):
                 if source_resp.status_int >= 300:
                     update_headers(source_resp, nexe_headers)
                     source_resp.body = 'Error %s while fetching %s' \
-                                       % (source_resp.status, source_req.path_info)
+                                       % (source_resp.status,
+                                          source_req.path_info)
                     return source_resp
             source_resp.nodes = []
             data_sources.append(source_resp)
         node.last_data = source_resp
         source_resp.nodes.append({'node': node, 'dev': channel.device})
-        if source_resp.headers.get('x-zerovm-valid', None) and 'boot' in channel.device:
+        if source_resp.headers.get('x-zerovm-valid', None) \
+                and 'boot' in channel.device:
             node.skip_validation = True
         for repl_node in node.replicas:
             repl_node.last_data = source_resp
-            source_resp.nodes.append({'node': repl_node, 'dev': channel.device})
+            source_resp.nodes.append({'node': repl_node,
+                                      'dev': channel.device})
 
     @delay_denial
     @cors_validation
@@ -628,9 +707,11 @@ class ClusterController(ObjectController):
                                                body='Error reading %s stream'
                                                     % orig_content_type)
             user_image = True
-            image_resp = Response(app_iter=iter(cached_body),
-                                  headers={'Content-Length': req.headers['content-length'],
-                                           'Content-Type': req.headers['content-type']})
+            image_resp = Response(
+                app_iter=iter(cached_body),
+                headers={
+                    'Content-Length': req.headers['content-length'],
+                    'Content-Type': req.headers['content-type']})
             image_resp.nodes = []
             untar_stream = UntarStream(cached_body.cache, path_list)
             try:
@@ -638,20 +719,23 @@ class ClusterController(ObjectController):
                     req.bytes_transferred += len(chunk)
                     etag.update(chunk)
             except ReadError:
-                return HTTPUnprocessableEntity(request=req,
-                                               body='Error reading %s stream'
-                                                    % req.headers['content-type'])
+                return HTTPUnprocessableEntity(
+                    request=req,
+                    body='Error reading %s stream'
+                         % req.headers['content-type'])
             for buf in path_list:
                 if buf.is_closed:
                     cluster_config = buf.body
                     break
             if not cluster_config:
                 return HTTPBadRequest(request=req,
-                                      body='System boot map was not found in request')
+                                      body='System boot map was not '
+                                           'found in request')
             try:
                 cluster_config = json.loads(cluster_config)
             except Exception:
-                return HTTPUnprocessableEntity(body='Could not parse system map')
+                return HTTPUnprocessableEntity(body='Could not parse '
+                                                    'system map')
         elif req.content_type in 'application/json':
         # System map was sent as a POST body
             if not cluster_config:
@@ -665,7 +749,9 @@ class ClusterController(ObjectController):
                     cluster_config += chunk
                 if 'content-length' in req.headers and \
                    int(req.headers['content-length']) != req.bytes_transferred:
-                    return HTTPClientDisconnect(request=req, body='application/json post unfinished')
+                    return HTTPClientDisconnect(request=req,
+                                                body='application/json '
+                                                     'POST unfinished')
                 etag = etag.hexdigest()
                 if 'etag' in req.headers and\
                    req.headers['etag'].lower() != etag:
@@ -673,7 +759,8 @@ class ClusterController(ObjectController):
             try:
                 cluster_config = json.loads(cluster_config)
             except Exception:
-                return HTTPUnprocessableEntity(body='Could not parse system map')
+                return HTTPUnprocessableEntity(
+                    body='Could not parse system map')
         else:
             # assume the posted data is a script and try to execute
             if not 'content-length' in req.headers:
@@ -694,8 +781,10 @@ class ClusterController(ObjectController):
                 buf += chunk
             if not shebang:
                 return HTTPBadRequest(request=req,
-                                      body='Cannot find shebang (#!) in script')
-            command_line = re.split('\s+', re.sub('^#!\s*(.*)', '\\1', shebang), 1)
+                                      body='Cannot find '
+                                           'shebang (#!) in script')
+            command_line = re.split('\s+',
+                                    re.sub('^#!\s*(.*)', '\\1', shebang), 1)
             sysimage = None
             args = None
             exe_path = command_line[0]
@@ -708,7 +797,8 @@ class ClusterController(ObjectController):
                 if 'image' == location.image:
                     return HTTPBadRequest(request=req,
                                           body='Must supply image name '
-                                               'in shebang url %s' % location.url)
+                                               'in shebang url %s'
+                                               % location.url)
                 sysimage = location.image
             if len(command_line) > 1:
                 args = command_line[1]
@@ -726,21 +816,29 @@ class ClusterController(ObjectController):
             try:
                 cluster_config = json.loads(config)
             except Exception:
-                return HTTPUnprocessableEntity(body='Could not parse system map')
+                return HTTPUnprocessableEntity(body='Could not parse '
+                                                    'system map')
             if sysimage:
                 cluster_config[0]['file_list'].append({'device': sysimage})
-            string_path = Path(REGTYPE, 'script', int(req.headers['content-length']), cached_body)
+            string_path = Path(REGTYPE,
+                               'script',
+                               int(req.headers['content-length']),
+                               cached_body)
             stream = TarStream(path_list=[string_path])
             user_image = True
             image_resp = Response(app_iter=iter(stream),
-                                  headers={'Content-Length': stream.get_total_stream_length()})
+                                  headers={
+                                      'Content-Length':
+                                          stream.get_total_stream_length()})
             image_resp.nodes = []
 
         req.path_info = '/' + self.account_name
         try:
-            self.parser.parse(cluster_config, user_image,
-                                  self.account_name, self.app.object_ring.replica_count,
-                                  request=req)
+            self.parser.parse(cluster_config,
+                              user_image,
+                              self.account_name,
+                              self.app.object_ring.replica_count,
+                              request=req)
         except ClusterConfigParsingError, e:
             self.app.logger.warn(
                 _('ERROR Error parsing config: %s'), cluster_config)
@@ -757,8 +855,9 @@ class ClusterController(ObjectController):
         if self.parser.total_count > 1:
             ns_server = NameService(self.parser.total_count)
             if self.app.zerovm_ns_thrdpool.free() <= 0:
-                return HTTPServiceUnavailable(body='Cluster slot not available',
-                                              request=req)
+                return HTTPServiceUnavailable(
+                    body='Cluster slot not available',
+                    request=req)
             ns_server.start(self.app.zerovm_ns_thrdpool)
             if not ns_server.port:
                 return HTTPServiceUnavailable(body='Cannot bind name service')
@@ -782,7 +881,8 @@ class ClusterController(ObjectController):
             exec_request.content_type = TAR_MIMES[0]
             #exec_request.headers['transfer-encoding'] = 'chunked'
             exec_request.headers['x-account-name'] = self.account_name
-            exec_request.headers['x-timestamp'] = normalize_timestamp(time.time())
+            exec_request.headers['x-timestamp'] = \
+                normalize_timestamp(time.time())
             exec_request.headers['x-zerovm-valid'] = 'false'
             exec_request.headers['x-zerovm-pool'] = 'default'
             if len(node.connect) > 0 or len(node.bind) > 0:
@@ -798,7 +898,8 @@ class ClusterController(ObjectController):
                 if node.replicate > 1:
                     for i in range(0, node.replicate - 1):
                         node.replicas.append(deepcopy(node))
-                        node.replicas[i].id = node.id + (i + 1) * len(self.parser.node_list)
+                        node.replicas[i].id = \
+                            node.id + (i + 1) * len(self.parser.node_list)
             node.copy_cgi_env(exec_request)
             resp = node.create_sysmap_resp()
             node.add_data_source(data_sources, resp, 'sysmap')
@@ -809,17 +910,22 @@ class ClusterController(ObjectController):
             #print json.dumps(node, sort_keys=True, indent=2, cls=NodeEncoder)
             channels = self._get_remote_objects(node)
             for ch in channels:
-                error = self._create_request_for_remote_object(data_sources, ch,
-                                                               exe_resp, req,
-                                                               nexe_headers, node)
+                error = self._create_request_for_remote_object(data_sources,
+                                                               ch,
+                                                               exe_resp,
+                                                               req,
+                                                               nexe_headers,
+                                                               node)
                 if error:
                     return error
             if user_image:
                 node.last_data = image_resp
-                image_resp.nodes.append({'node': node, 'dev': 'image'})
+                image_resp.nodes.append({'node': node,
+                                         'dev': 'image'})
                 for repl_node in node.replicas:
                     repl_node.last_data = image_resp
-                    image_resp.nodes.append({'node': repl_node, 'dev': 'image'})
+                    image_resp.nodes.append({'node': repl_node,
+                                             'dev': 'image'})
             if not getattr(node, 'path_info', None):
                 node.path_info = path_info
             exec_request.node = node
@@ -836,9 +942,12 @@ class ClusterController(ObjectController):
             for n in data_src.nodes:
                 if not getattr(n['node'], 'size', None):
                     n['node'].size = 0
-                n['node'].size += len(tstream.create_tarinfo(ftype=REGTYPE, name=n['dev'],
-                                                             size=data_src.content_length))
-                n['node'].size += TarStream.get_archive_size(data_src.content_length)
+                n['node'].size += len(tstream.create_tarinfo(
+                    ftype=REGTYPE,
+                    name=n['dev'],
+                    size=data_src.content_length))
+                n['node'].size += \
+                    TarStream.get_archive_size(data_src.content_length)
         pile = GreenPile(self.parser.total_count)
         conns = self._make_exec_requests(pile, exec_requests)
         if len(conns) < self.parser.total_count:
@@ -850,7 +959,8 @@ class ClusterController(ObjectController):
         for conn in conns:
             if getattr(conn, 'error', None):
                 return Response(body=conn.error,
-                                status="%d %s" % (conn.resp.status, conn.resp.reason),
+                                status="%d %s" % (conn.resp.status,
+                                                  conn.resp.reason),
                                 headers=conn.nexe_headers)
 
         _attach_connections_to_data_sources(conns, data_sources)
@@ -868,7 +978,9 @@ class ClusterController(ObjectController):
                             try:
                                 data = next(data_src.app_iter)
                             except StopIteration:
-                                error = _finalize_tar_streams(chunked, data_src, req)
+                                error = _finalize_tar_streams(chunked,
+                                                              data_src,
+                                                              req)
                                 if error:
                                     return error
                                 break
@@ -876,7 +988,9 @@ class ClusterController(ObjectController):
                         if error:
                             return error
                     if data_src.bytes_transferred < data_src.content_length:
-                        return HTTPClientDisconnect(request=req, body='data source %s dead' % data_src.__dict__)
+                        return HTTPClientDisconnect(
+                            request=req,
+                            body='data source %s dead' % data_src.__dict__)
                 for conn in conns:
                     if conn.queue.unfinished_tasks:
                         conn.queue.join()
@@ -926,14 +1040,18 @@ class ClusterController(ObjectController):
         if ns_server:
             ns_server.stop()
         if self.app.zerovm_accounting_enabled:
-            self.app.zerovm_ns_thrdpool.spawn_n(self._store_accounting_data, req)
+            self.app.zerovm_ns_thrdpool.spawn_n(self._store_accounting_data,
+                                                req)
         if self.app.zerovm_use_cors and self.container_name:
-            container_info = self.container_info(self.account_name, self.container_name)
+            container_info = self.container_info(self.account_name,
+                                                 self.container_name)
             if container_info.get('cors', None):
                 if container_info['cors'].get('allow_origin', None):
-                    final_response.headers['access-control-allow-origin'] = container_info['cors']['allow_origin']
+                    final_response.headers['access-control-allow-origin'] = \
+                        container_info['cors']['allow_origin']
                 if container_info['cors'].get('expose_headers', None):
-                    final_response.headers['access-control-expose-headers'] = container_info['cors']['expose_headers']
+                    final_response.headers['access-control-expose-headers'] = \
+                        container_info['cors']['expose_headers']
         etag = md5(str(time.time()))
         final_response.headers['Etag'] = etag.hexdigest()
         return final_response
@@ -947,10 +1065,12 @@ class ClusterController(ObjectController):
                 else:
                     server_response = conn.getresponse()
         except (Exception, Timeout):
-            self.exception_occurred(conn.node, _('Object'),
-                                    _('Trying to get final status of POST to %s')
-                                    % request.path_info)
-            conn.error = 'Timeout: trying to get final status of POST to %s' % request.path_info
+            self.exception_occurred(
+                conn.node, _('Object'),
+                _('Trying to get final status of POST to %s')
+                % request.path_info)
+            conn.error = 'Timeout: trying to get final status of POST ' \
+                         'to %s' % request.path_info
             #conn.resp = HTTPClientDisconnect(body=conn.path,
             #    headers=conn.nexe_headers)
             return conn
@@ -963,7 +1083,8 @@ class ClusterController(ObjectController):
         resp = Response(status='%d %s' %
                                (server_response.status,
                                 server_response.reason),
-                        app_iter=iter(lambda: server_response.read(self.app.network_chunk_size), ''),
+                        app_iter=iter(lambda: server_response.read(
+                            self.app.network_chunk_size), ''),
                         headers=dict(server_response.getheaders()))
         conn.resp = resp
         if resp.content_length == 0:
@@ -1039,7 +1160,8 @@ class ClusterController(ObjectController):
         for node in obj_nodes:
             try:
                 with ConnectionTimeout(self.app.conn_timeout):
-                    #if (request.content_length > 0) or 'transfer-encoding' in request_headers:
+                    #if (request.content_length > 0)
+                    # or 'transfer-encoding' in request_headers:
                     #    request_headers['Expect'] = '100-continue'
                     request.headers['Connection'] = 'close'
                     request_headers['Expect'] = '100-continue'
@@ -1065,20 +1187,23 @@ class ClusterController(ObjectController):
                     conn.resp = resp
                     return conn
                 else:
-                    self.app.logger.warn('Obj server failed with: %d %s' % (resp.status, resp.reason))
+                    self.app.logger.warn('Obj server failed with: %d %s'
+                                         % (resp.status, resp.reason))
             except Exception:
                 self.exception_occurred(node, _('Object'),
-                                        _('Expect: 100-continue on %s') % request.path_info)
+                                        _('Expect: 100-continue on %s')
+                                        % request.path_info)
 
     def _store_accounting_data(self, request, connection=None):
         txn_id = request.environ['swift.trans_id']
         acc_object = datetime.datetime.utcnow().strftime('%Y/%m/%d.log')
         if connection:
-            body = '%s %s %s (%s) [%s]\n' % (datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
-                                             txn_id,
-                                             connection.nexe_headers['x-nexe-system'],
-                                             connection.nexe_headers['x-nexe-cdr-line'],
-                                             connection.nexe_headers['x-nexe-status'])
+            body = '%s %s %s (%s) [%s]\n' % (
+                datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+                txn_id,
+                connection.nexe_headers['x-nexe-system'],
+                connection.nexe_headers['x-nexe-cdr-line'],
+                connection.nexe_headers['x-nexe-status'])
             request.cdr_log.append(body)
             self.app.logger.info('zerovm-cdr %s %s %s (%s) [%s]'
                                  % (self.account_name,
@@ -1100,7 +1225,8 @@ class ClusterController(ObjectController):
             resp = append_req.get_response(self.app)
             if resp.status_int >= 300:
                 self.app.logger.warn(
-                    _('ERROR Cannot write stats for account %s'), self.account_name)
+                    _('ERROR Cannot write stats for account %s'),
+                    self.account_name)
 
     @delay_denial
     @cors_validation
@@ -1143,7 +1269,8 @@ class ClusterController(ObjectController):
             template = obj_req.template
         elif not run:
             return HTTPNotFound(request=req,
-                                body='No application registered for %s' % content)
+                                body='No application registered for %s'
+                                     % content)
         location = SwiftPath.init(self.account_name,
                                   self.container_name,
                                   self.object_name)
@@ -1182,11 +1309,14 @@ class ClusterController(ObjectController):
                 req.template += chunk
                 if self.app.zerovm_maxconfig < len(req.template):
                     req.template = None
-                    return HTTPRequestEntityTooLarge(request=config_req,
-                                                     body='Config file at %s is too large' % config_path)
+                    return HTTPRequestEntityTooLarge(
+                        request=config_req,
+                        body='Config file at %s is too large' % config_path)
         if memcache_client and req.template:
-            memcache_client.set(memcache_key, req.template,
-                                time=float(self.app.zerovm_cache_config_timeout))
+            memcache_client.set(
+                memcache_key,
+                req.template,
+                time=float(self.app.zerovm_cache_config_timeout))
 
 
 def _load_channel_data(node, extracted_file):
@@ -1239,9 +1369,10 @@ def _send_tar_headers(chunked, data_src):
         name = conn['dev']
         if name == 'image' and data_src.content_type == 'application/x-gzip':
             name = 'image.gz'
-        info = conn['conn'].tar_stream.create_tarinfo(ftype=REGTYPE,
-                                                      name=name,
-                                                      size=data_src.content_length)
+        info = conn['conn'].tar_stream.create_tarinfo(
+            ftype=REGTYPE,
+            name=name,
+            size=data_src.content_length)
         for chunk in conn['conn'].tar_stream.serve_chunk(info):
             if not conn['conn'].failed:
                 _queue_put(conn, chunk, chunked)
