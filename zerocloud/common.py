@@ -1,8 +1,8 @@
 from copy import deepcopy
 import re
 from hashlib import md5
-from swift.common.constraints import MAX_META_NAME_LENGTH, MAX_META_VALUE_LENGTH, \
-    MAX_META_COUNT, MAX_META_OVERALL_SIZE
+from swift.common.constraints import MAX_META_NAME_LENGTH, \
+    MAX_META_VALUE_LENGTH, MAX_META_COUNT, MAX_META_OVERALL_SIZE
 from swift.common.swob import Response
 from swift.common.utils import split_path
 
@@ -285,7 +285,8 @@ def is_cache_path(location):
 
 
 class ZvmNode(object):
-    def __init__(self, id=None, name=None, exe=None, args=None, env=None, replicate=1):
+    def __init__(self, id=None, name=None, exe=None, args=None, env=None,
+                 replicate=1):
         self.id = id
         self.name = name
         self.exe = exe
@@ -315,10 +316,13 @@ class ZvmNode(object):
             channel.content_type = content_type
         self.channels.append(channel)
 
-    def add_new_channel(self, device=None, access=None, path=None, content_type='application/octet-stream',
-                        meta_data=None, mode=None, removable='no', mountpoint='/'):
+    def add_new_channel(self, device=None, access=None, path=None,
+                        content_type='application/octet-stream',
+                        meta_data=None, mode=None, removable='no',
+                        mountpoint='/'):
         channel = ZvmChannel(device, access, path,
-                             content_type=content_type, meta_data=meta_data, mode=mode,
+                             content_type=content_type,
+                             meta_data=meta_data, mode=mode,
                              removable=removable, mountpoint=mountpoint)
         self.channels.append(channel)
 
@@ -341,9 +345,11 @@ class ZvmNode(object):
         self.env['REMOTE_USER'] = request.remote_user
         self.env['HTTP_USER_AGENT'] = request.user_agent
         self.env['QUERY_STRING'] = request.query_string
-        self.env['SERVER_NAME'] = request.environ.get('SERVER_NAME', 'localhost')
+        self.env['SERVER_NAME'] = \
+            request.environ.get('SERVER_NAME', 'localhost')
         self.env['SERVER_PORT'] = request.environ.get('SERVER_PORT', '80')
-        self.env['SERVER_PROTOCOL'] = request.environ.get('SERVER_PROTOCOL', 'HTTP/1.0')
+        self.env['SERVER_PROTOCOL'] = \
+            request.environ.get('SERVER_PROTOCOL', 'HTTP/1.0')
         self.env['SERVER_SOFTWARE'] = 'zerocloud'
         self.env['GATEWAY_INTERFACE'] = 'CGI/1.1'
         self.env['SCRIPT_NAME'] = self.exe
@@ -351,8 +357,10 @@ class ZvmNode(object):
         self.env['REQUEST_METHOD'] = 'GET'
         self.env['HTTP_REFERER'] = request.referer
         self.env['HTTP_ACCEPT'] = request.headers.get('accept')
-        self.env['HTTP_ACCEPT_ENCODING'] = request.headers.get('accept-encoding')
-        self.env['HTTP_ACCEPT_LANGUAGE'] = request.headers.get('accept-language')
+        self.env['HTTP_ACCEPT_ENCODING'] = \
+            request.headers.get('accept-encoding')
+        self.env['HTTP_ACCEPT_LANGUAGE'] = \
+            request.headers.get('accept-language')
 
     def create_sysmap_resp(self):
         sysmap = json.dumps(self, cls=NodeEncoder)
