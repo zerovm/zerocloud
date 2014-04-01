@@ -447,7 +447,7 @@ class ObjectQueryMiddleware(object):
                 os.makedirs(debug_dir)
             except OSError as exc:
                 if exc.errno == errno.EEXIST \
-                    and os.path.isdir(debug_dir):
+                        and os.path.isdir(debug_dir):
                     pass
                 else:
                     raise
@@ -563,9 +563,9 @@ class ObjectQueryMiddleware(object):
             except ValueError, err:
                 return HTTPBadRequest(body=str(err), request=req,
                                       content_type='text/plain')
+        rbytes = self.parser_config['limits']['rbytes']
         if 'content-length' in req.headers \
-                and int(req.headers['content-length']) > \
-                        self.parser_config['limits']['rbytes']:
+                and int(req.headers['content-length']) > rbytes:
             return HTTPRequestEntityTooLarge(body='RPC request too large',
                                              request=req,
                                              content_type='text/plain',
@@ -616,8 +616,7 @@ class ObjectQueryMiddleware(object):
             perf = "%.3f" % (time.time() - start)
             for chunk in read_iter:
                 perf = "%s %.3f" % (perf, time.time() - start)
-                if req.body_file.position > \
-                        self.parser_config['limits']['rbytes']:
+                if req.body_file.position > rbytes:
                     return HTTPRequestEntityTooLarge(
                         body='RPC request too large',
                         request=req,
@@ -655,8 +654,7 @@ class ObjectQueryMiddleware(object):
                         fp.close()
                     info = untar_stream.get_next_tarinfo()
             if 'content-length' in req.headers \
-                    and int(req.headers['content-length']) != \
-                            req.body_file.position:
+                    and int(req.content_length) != req.body_file.position:
                 self.logger.warning('Client disconnect %s != %d : %s'
                                     % (req.headers['content-length'],
                                        req.body_file.position,
@@ -704,9 +702,9 @@ class ObjectQueryMiddleware(object):
                 return HTTPBadRequest(request=req,
                                       body='No executable found in request')
             is_master = True
-            if config.get('replicate', 1) > 1 \
-                    and len(config.get('replicas', [])) < \
-                            (config.get('replicate', 1) - 1):
+            replicate = config.get('replicate', 1)
+            if replicate > 1 \
+                    and len(config.get('replicas', [])) < (replicate - 1):
                 is_master = False
             response_channels = []
             local_object = {}
@@ -735,8 +733,7 @@ class ObjectQueryMiddleware(object):
                                 return HTTPNotFound(request=req)
                             meta = disk_file.get_metadata()
                             input_file_size = int(meta['Content-Length'])
-                            if input_file_size > \
-                                    self.parser_config['limits']['rbytes']:
+                            if input_file_size > rbytes:
                                 return HTTPRequestEntityTooLarge(
                                     body='Data object too large',
                                     request=req,
@@ -973,8 +970,8 @@ class ObjectQueryMiddleware(object):
                                                      name=ch['device'],
                                                      size=ch['size'])
                     #print [ch['device'], ch['size'], ch['lpath']]
-                    resp_size += len(info) + \
-                                 TarStream.get_archive_size(ch['size'])
+                    tar_size = TarStream.get_archive_size(ch['size'])
+                    resp_size += len(info) + tar_size
                     ch['info'] = info
                     immediate_responses.append(ch)
                 if local_object and local_object['access'] & ACCESS_WRITABLE:

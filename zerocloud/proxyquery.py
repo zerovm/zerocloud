@@ -825,11 +825,11 @@ class ClusterController(ObjectController):
                                int(req.headers['content-length']),
                                cached_body)
             stream = TarStream(path_list=[string_path])
+            stream_length = stream.get_total_stream_length()
             user_image = True
             image_resp = Response(app_iter=iter(stream),
                                   headers={
-                                      'Content-Length':
-                                          stream.get_total_stream_length()})
+                                      'Content-Length': stream_length})
             image_resp.nodes = []
 
         req.path_info = '/' + self.account_name
@@ -1257,7 +1257,8 @@ class ClusterController(ObjectController):
             run = True
         elif run:
             # speedup did not succeed...
-            for chunk in obj_resp.app_iter:
+            # still need to read the whole response
+            for _junk in obj_resp.app_iter:
                 pass
             obj_req.method = 'HEAD'
             run = False
