@@ -803,6 +803,8 @@ class ClusterController(ObjectController):
             if len(command_line) > 1:
                 args = command_line[1]
             params = {'exe_path': exe_path}
+            if args:
+                params['args'] = args.strip() + " "
             if self.container_name and self.object_name:
                 template = POST_TEXT_OBJECT_SYSTEM_MAP
                 location = SwiftPath.init(self.account_name,
