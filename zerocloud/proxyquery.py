@@ -1065,7 +1065,7 @@ class ClusterController(ObjectController):
                 else:
                     server_response = conn.getresponse()
         except (Exception, Timeout):
-            self.exception_occurred(
+            self.app.exception_occurred(
                 conn.node, _('Object'),
                 _('Trying to get final status of POST to %s')
                 % request.path_info)
@@ -1181,7 +1181,8 @@ class ClusterController(ObjectController):
                     conn.resp = resp
                     return conn
                 elif resp.status == HTTP_INSUFFICIENT_STORAGE:
-                    self.error_limit(node, _('ERROR Insufficient Storage'))
+                    self.app.error_limit(node,
+                                         _('ERROR Insufficient Storage'))
                 elif is_client_error(resp.status):
                     conn.error = resp.read()
                     conn.resp = resp
@@ -1190,9 +1191,9 @@ class ClusterController(ObjectController):
                     self.app.logger.warn('Obj server failed with: %d %s'
                                          % (resp.status, resp.reason))
             except Exception:
-                self.exception_occurred(node, _('Object'),
-                                        _('Expect: 100-continue on %s')
-                                        % request.path_info)
+                self.app.exception_occurred(node, _('Object'),
+                                            _('Expect: 100-continue on %s')
+                                            % request.path_info)
 
     def _store_accounting_data(self, request, connection=None):
         txn_id = request.environ['swift.trans_id']
