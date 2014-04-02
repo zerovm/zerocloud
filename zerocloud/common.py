@@ -363,8 +363,8 @@ class ZvmNode(object):
             request.headers.get('accept-language')
 
     def create_sysmap_resp(self):
-        sysmap = json.dumps(self, cls=NodeEncoder)
-        # print json.dumps(self, cls=NodeEncoder, indent=2)
+        sysmap = self.dumps()
+        # print self.dumps(indent=2)
         sysmap_iter = iter([sysmap])
         return Response(app_iter=sysmap_iter,
                         headers={'Content-Length': str(len(sysmap))})
@@ -382,6 +382,9 @@ class ZvmNode(object):
         new_match = mask.match(path.path)
         self.wildcards = map(lambda idx: new_match.group(idx),
                              range(1, new_match.lastindex + 1))
+
+    def dumps(self, indent=None):
+        return json.dumps(self, cls=NodeEncoder, indent=indent)
 
 
 class ZvmChannel(object):
