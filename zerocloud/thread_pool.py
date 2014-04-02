@@ -82,4 +82,3 @@ class WaitPool(PoolInterface):
 
     def _spawn(self, function, *args, **kwargs):
         return self._pool.spawn(function, *args, **kwargs)
-

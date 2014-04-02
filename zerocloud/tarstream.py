@@ -1,25 +1,22 @@
-#---------
-# Imports
-#---------
+# ---------
+#  Imports
+# ---------
 import sys
 import os
-import shutil
 import stat
-import errno
 import time
 import struct
-import copy
 import re
-import operator
 
 try:
-    import grp, pwd
+    import grp
+    import pwd
 except ImportError:
     grp = pwd = None
 
-#---------------------------------------------------------
-# tar constants
-#---------------------------------------------------------
+# ---------------------------------------------------------
+#  tar constants
+# ---------------------------------------------------------
 NUL = "\0"                      # the null character
 BLOCKSIZE = 512                 # length of processing blocks
 RECORDSIZE = BLOCKSIZE * 20     # length of records
@@ -53,10 +50,10 @@ GNU_FORMAT = 1                  # GNU tar format
 PAX_FORMAT = 2                  # POSIX.1-2001 (pax) format
 DEFAULT_FORMAT = GNU_FORMAT
 
-#---------------------------------------------------------
-# tarfile constants
-#---------------------------------------------------------
-# File types that tarfile supports:
+# ---------------------------------------------------------
+#  tarfile constants
+# ---------------------------------------------------------
+#  File types that tarfile supports:
 SUPPORTED_TYPES = (REGTYPE, AREGTYPE, LNKTYPE,
                    SYMTYPE, DIRTYPE, FIFOTYPE,
                    CONTTYPE, CHRTYPE, BLKTYPE,
@@ -86,9 +83,9 @@ PAX_NUMBER_FIELDS = {
     "size": int
 }
 
-#---------------------------------------------------------
-# Bits used in the mode field, values in octal.
-#---------------------------------------------------------
+# ---------------------------------------------------------
+#  Bits used in the mode field, values in octal.
+# ---------------------------------------------------------
 S_IFLNK = 0120000        # symbolic link
 S_IFREG = 0100000        # regular file
 S_IFBLK = 0060000        # block device
@@ -110,16 +107,16 @@ TOREAD = 0004           # read by other
 TOWRITE = 0002           # write by other
 TOEXEC = 0001           # execute/search by other
 
-#---------------------------------------------------------
-# initialization
-#---------------------------------------------------------
+# ---------------------------------------------------------
+#  initialization
+# ---------------------------------------------------------
 ENCODING = sys.getfilesystemencoding()
 if ENCODING is None:
     ENCODING = sys.getdefaultencoding()
 
-#---------------------------------------------------------
-# Some useful functions
-#---------------------------------------------------------
+# ---------------------------------------------------------
+#  Some useful functions
+# ---------------------------------------------------------
 
 
 def stn(s, length):
@@ -214,8 +211,10 @@ def calc_chksums(buf):
        the high bit set. So we calculate two checksums, unsigned and
        signed.
     """
-    unsigned_chksum = 256 + sum(struct.unpack("148B", buf[:148]) + struct.unpack("356B", buf[156:512]))
-    signed_chksum = 256 + sum(struct.unpack("148b", buf[:148]) + struct.unpack("356b", buf[156:512]))
+    unsigned_chksum = 256 + sum(struct.unpack("148B", buf[:148]) +
+                                struct.unpack("356B", buf[156:512]))
+    signed_chksum = 256 + sum(struct.unpack("148b", buf[:148]) +
+                              struct.unpack("356b", buf[156:512]))
     return unsigned_chksum, signed_chksum
 
 
@@ -268,7 +267,8 @@ class TarInfo(object):
     linkpath = property(_getlinkpath, _setlinkpath)
 
     def __repr__(self):
-        return "<%s %r at %#x>" % (self.__class__.__name__,self.name,id(self))
+        return "<%s %r at %#x>" % (self.__class__.__name__,
+                                   self.name, id(self))
 
     def get_info(self, encoding, errors):
         """Return the TarInfo's attributes as a dictionary.
@@ -332,7 +332,8 @@ class TarInfo(object):
 
         buf = ""
         if len(info["linkname"]) > LENGTH_LINK:
-            buf += self._create_gnu_long_header(info["linkname"], GNUTYPE_LONGLINK)
+            buf += self._create_gnu_long_header(info["linkname"],
+                                                GNUTYPE_LONGLINK)
 
         if len(info["name"]) > LENGTH_NAME:
             buf += self._create_gnu_long_header(info["name"], GNUTYPE_LONGNAME)
@@ -350,8 +351,9 @@ class TarInfo(object):
         # Test string fields for values that exceed the field length or cannot
         # be represented in ASCII encoding.
         for name, hname, length in (
-            ("name", "path", LENGTH_NAME), ("linkname", "linkpath", LENGTH_LINK),
-            ("uname", "uname", 32), ("gname", "gname", 32)):
+                ("name", "path", LENGTH_NAME),
+                ("linkname", "linkpath", LENGTH_LINK),
+                ("uname", "uname", 32), ("gname", "gname", 32)):
 
             if hname in pax_headers:
                 # The pax header has priority.
@@ -371,7 +373,8 @@ class TarInfo(object):
 
         # Test number fields for values that exceed the field limit or values
         # that like to be stored as float.
-        for name, digits in (("uid", 8), ("gid", 8), ("size", 12), ("mtime", 12)):
+        for name, digits in (("uid", 8), ("gid", 8), ("size", 12),
+                             ("mtime", 12)):
             if name in pax_headers:
                 # The pax header has priority. Avoid overflow.
                 info[name] = 0
@@ -423,7 +426,7 @@ class TarInfo(object):
             itn(info.get("gid", 0), 8, format),
             itn(info.get("size", 0), 12, format),
             itn(info.get("mtime", 0), 12, format),
-            "        ", # checksum field
+            "        ",  # checksum field
             info.get("type", REGTYPE),
             stn(info.get("linkname", ""), 100),
             stn(info.get("magic", POSIX_MAGIC), 8),
@@ -558,7 +561,8 @@ class TarInfo(object):
 
         # Patch the TarInfo object with saved global
         # header information.
-        self._apply_pax_info(untar_stream.pax_headers, untar_stream.encoding, untar_stream.errors)
+        self._apply_pax_info(untar_stream.pax_headers, untar_stream.encoding,
+                             untar_stream.errors)
 
         return self
 
@@ -692,8 +696,9 @@ class TarInfo(object):
 
         if self.type in (XHDTYPE, SOLARIS_XHDTYPE):
             # Patch the TarInfo object with the extended header info.
-            next._apply_pax_info(pax_headers, untar_stream.encoding, untar_stream.errors)
-            #next.offset = self.offset
+            next._apply_pax_info(pax_headers, untar_stream.encoding,
+                                 untar_stream.errors)
+            # next.offset = self.offset
 
             if "size" in pax_headers:
                 # If the extended header replaces the size field,
@@ -1209,16 +1214,18 @@ class UntarStream(object):
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print 'Usage: tarstream.py cf|xf <tar source> <tar dest> <filtered files>'
+        print ('Usage: tarstream.py cf|xf <tar source> <tar dest> '
+               '<filtered files>')
         exit()
     op = sys.argv.pop(1)
     src = sys.argv.pop(1)
     dst = sys.argv.pop(1)
     path_list = sys.argv[1:]
-    chunk_size=65536
+    chunk_size = 65536
 
     if op not in ['cf', 'xf']:
-        print 'Usage: tarstream.py cf|xf <tar source> <tar dest> <filtered files>'
+        print ('Usage: tarstream.py cf|xf <tar source> <tar dest> '
+               '<filtered files>')
     src_iter = None
     if src not in '-':
         src_iter = RegFile(src, chunk_size)

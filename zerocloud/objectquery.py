@@ -36,7 +36,7 @@ from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, \
     ACCESS_WRITABLE, MD5HASH_LENGTH, parse_location, is_image_path, \
     ACCESS_NETWORK, ACCESS_RANDOM, REPORT_VALIDATOR, REPORT_RETCODE, \
     REPORT_ETAG, REPORT_CDR, REPORT_STATUS, SwiftPath, REPORT_LENGTH, \
-    REPORT_DAEMON, NodeEncoder
+    REPORT_DAEMON
 from zerocloud.configparser import ClusterConfigParser
 from zerocloud.proxyquery import gunzip_iter
 
@@ -530,7 +530,7 @@ class ObjectQueryMiddleware(object):
         job_id = req.headers.get('x-zerocloud-id', None)
         if not job_id:
             return HTTPInternalServerError(request=req)
-        #print "URL: " + req.url
+        # print "URL: " + req.url
         nexe_headers = {
             'x-nexe-retcode': 0,
             'x-nexe-status': 'Zerovm did not run',
@@ -679,7 +679,7 @@ class ObjectQueryMiddleware(object):
                                       body='No system map found in request')
 
             nexe_headers['x-nexe-system'] = config.get('name', '')
-            #print json.dumps(config, cls=NodeEncoder, indent=2)
+            # print json.dumps(config, cls=NodeEncoder, indent=2)
             zerovm_nexe = None
             exe_path = parse_location(config['exe'])
             if is_image_path(exe_path):
@@ -777,7 +777,7 @@ class ObjectQueryMiddleware(object):
                     if is_master:
                         if not chan_path:
                             response_channels.append(ch)
-                        elif not ch is local_object:
+                        elif ch is not local_object:
                             response_channels.insert(0, ch)
                 elif ch['access'] & ACCESS_NETWORK:
                     ch['lpath'] = chan_path.path
@@ -793,9 +793,9 @@ class ObjectQueryMiddleware(object):
                                                      zerovm_nexe,
                                                      False
                                                      if daemon_sock else True)
-                #print json.dumps(config, sort_keys=True, indent=2)
-                #print zerovm_inputmnfst
-                #print open(nvram_file).read()
+                # print json.dumps(config, sort_keys=True, indent=2)
+                # print zerovm_inputmnfst
+                # print open(nvram_file).read()
                 self._debug_before_exec(config, debug_dir,
                                         nexe_headers, nvram_file,
                                         zerovm_inputmnfst)
@@ -828,7 +828,7 @@ class ObjectQueryMiddleware(object):
                                                    'Program=%s' % zerovm_nexe,
                                                    zerovm_inputmnfst)
                         zerovm_inputmnfst += 'Job = %s\n' % daemon_sock
-                        #print zerovm_inputmnfst
+                        # print zerovm_inputmnfst
                         thrd = self._create_zerovm_thread(
                             zerovm_inputmnfst,
                             zerovm_inputmnfst_fd,
@@ -969,7 +969,7 @@ class ObjectQueryMiddleware(object):
                     info = tar_stream.create_tarinfo(ftype=REGTYPE,
                                                      name=ch['device'],
                                                      size=ch['size'])
-                    #print [ch['device'], ch['size'], ch['lpath']]
+                    # print [ch['device'], ch['size'], ch['lpath']]
                     tar_size = TarStream.get_archive_size(ch['size'])
                     resp_size += len(info) + tar_size
                     ch['info'] = info
@@ -1012,7 +1012,7 @@ class ObjectQueryMiddleware(object):
                                                   name='sysmap',
                                                   size=len(sysmap_dump))
                     resp_size += len(sysmap_info) + \
-                                 TarStream.get_archive_size(len(sysmap_dump))
+                        TarStream.get_archive_size(len(sysmap_dump))
 
                 def resp_iter(channels, chunk_size):
                     tstream = TarStream(chunk_size=chunk_size)
@@ -1249,10 +1249,8 @@ class ObjectQueryMiddleware(object):
                              account, container, obj, request, device):
         data = nexe_etag.split(' ')
         if data[0].startswith('/'):
-            mem_etag = None
             channel_etag = data
         else:
-            mem_etag = data[0]
             channel_etag = data[1:]
         reported_etag = None
         for dev, etag in zip(*[iter(channel_etag)]*2):
@@ -1332,7 +1330,7 @@ class ObjectQueryMiddleware(object):
                 'x-timestamp': metadata['X-Timestamp'],
                 'x-etag': metadata['ETag']}),
             device)
-        #disk_file.close()
+        # disk_file.close()
 
     def _cleanup_daemon(self, daemon_sock):
         for pid in self._get_daemon_pid(daemon_sock):

@@ -370,7 +370,7 @@ class ClusterConfigParser(object):
             i = 1
             bind_node = self.nodes.get(bind_name + '-1')
             while bind_node:
-                if not bind_node is node:
+                if bind_node is not node:
                     bind_node.bind.append((node.name, dst_device))
                     if not src_device:
                         node.connect.append(('%s-%d' % (bind_name, i),
@@ -540,7 +540,7 @@ class ClusterConfigParser(object):
             if dev in STD_DEVICES:
                 network_devices.append(dev)
         for dev in STD_DEVICES:
-            if not dev in channels and not dev in network_devices:
+            if dev not in channels and dev not in network_devices:
                 if 'stdin' in dev:
                     zerovm_inputmnfst += \
                         'Channel=/dev/null,/dev/stdin,0,0,%s,%s,0,0\n' % \

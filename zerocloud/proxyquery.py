@@ -38,7 +38,7 @@ from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
     merge_headers, update_metadata, DEFAULT_EXE_SYSTEM_MAP, \
     STREAM_CACHE_SIZE, ZvmChannel, parse_location, is_swift_path, \
-    is_image_path, can_run_as_daemon, SwiftPath, NodeEncoder
+    is_image_path, can_run_as_daemon, SwiftPath
 from zerocloud.configparser import ClusterConfigParser, \
     ClusterConfigParsingError
 from zerocloud.tarstream import StringBuffer, UntarStream, \
@@ -147,7 +147,7 @@ class NameService(object):
         self.conn_map = {}
         self.peer_map = {}
         self.int_pool = GreenPool()
-        #print "NameServer got %d peers" % self.peers
+        # print "NameServer got %d peers" % self.peers
 
     def start(self, pool):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -157,9 +157,9 @@ class NameService(object):
         (self.hostaddr, self.port) = self.sock.getsockname()
 
     def _run(self):
-        #bind_map = {}
-        #conn_map = {}
-        #peer_map = {}
+        # bind_map = {}
+        # conn_map = {}
+        # peer_map = {}
         while 1:
             try:
                 start = time.time()
@@ -192,7 +192,7 @@ class NameService(object):
                           % (time.time() - start)
                     start = time.time()
                     for peer_id in self.peer_map.iterkeys():
-                        #out = ''
+                        # out = ''
                         (connect_count, offset, reply) = self.conn_map[peer_id]
                         for i in range(connect_count):
                             connecting_host = struct.unpack_from(
@@ -210,7 +210,7 @@ class NameService(object):
                             offset += NameService.OUTPUT_RECORD_SIZE
                         self.sock.sendto(reply, (self.peer_map[peer_id][0],
                                                  self.peer_map[peer_id][1]))
-                        #print out
+                        # print out
                     print "Finished name server send in %.3f seconds" \
                           % (time.time() - start)
             except greenlet.GreenletExit:
@@ -456,7 +456,7 @@ class ProxyQueryMiddleware(object):
             if path_parts['version']:
                 controller.command = path_parts['version']
                 req.path_info_pop()
-            if not self.app.zerovm_execute in req.headers:
+            if self.app.zerovm_execute not in req.headers:
                 req.headers[self.app.zerovm_execute] = \
                     self.app.zerovm_execute_ver
             try:
@@ -648,8 +648,8 @@ class ClusterController(ObjectController):
                     split_path(load_from, 1, 3, True)
                 container_info = self.container_info(acct, src_container_name)
                 source_req.acl = container_info['read_acl']
-                #if 'boot' in ch.device:
-                #    source_req.acl = container_info['exec_acl']
+                # if 'boot' in ch.device:
+                #     source_req.acl = container_info['exec_acl']
                 source_resp = \
                     ObjectController(self.app,
                                      acct,
@@ -696,7 +696,7 @@ class ClusterController(ObjectController):
         if req.content_type in TAR_MIMES:
             # we must have Content-Length set for tar-based requests
             # as it will be impossible to stream them otherwise
-            if not 'content-length' in req.headers:
+            if 'content-length' not in req.headers:
                 return HTTPBadRequest(request=req,
                                       body='Must specify Content-Length')
             # buffer first blocks of tar file and search for the system map
@@ -737,7 +737,7 @@ class ClusterController(ObjectController):
                 return HTTPUnprocessableEntity(body='Could not parse '
                                                     'system map')
         elif req.content_type in 'application/json':
-        # System map was sent as a POST body
+            # System map was sent as a POST body
             if not cluster_config:
                 for chunk in read_iter:
                     req.bytes_transferred += len(chunk)
@@ -763,7 +763,7 @@ class ClusterController(ObjectController):
                     body='Could not parse system map')
         else:
             # assume the posted data is a script and try to execute
-            if not 'content-length' in req.headers:
+            if 'content-length' not in req.headers:
                 return HTTPBadRequest(request=req,
                                       body='Must specify Content-Length')
             cached_body = CachedBody(read_iter)
@@ -793,7 +793,7 @@ class ClusterController(ObjectController):
                 return HTTPBadRequest(request=req,
                                       body='Bad interpreter %s' % exe_path)
             if is_image_path(location):
-                #print location.image
+                # print location.image
                 if 'image' == location.image:
                     return HTTPBadRequest(request=req,
                                           body='Must supply image name '
@@ -846,7 +846,7 @@ class ClusterController(ObjectController):
                 _('ERROR Error parsing config: %s'), cluster_config)
             return HTTPBadRequest(request=req, body=str(e))
 
-        #print json.dumps(self.parser.node_list, cls=NodeEncoder, indent=2)
+        # print json.dumps(self.parser.node_list, cls=NodeEncoder, indent=2)
 
         data_sources = []
         addr = self._get_own_address()
@@ -878,10 +878,10 @@ class ClusterController(ObjectController):
                                          environ=req.environ,
                                          headers=req.headers)
             exec_request.path_info = path_info
-            #exec_request.content_length = None
+            # exec_request.content_length = None
             exec_request.etag = None
             exec_request.content_type = TAR_MIMES[0]
-            #exec_request.headers['transfer-encoding'] = 'chunked'
+            # exec_request.headers['transfer-encoding'] = 'chunked'
             exec_request.headers['x-account-name'] = self.account_name
             exec_request.headers['x-timestamp'] = \
                 normalize_timestamp(time.time())
@@ -909,7 +909,7 @@ class ClusterController(ObjectController):
                 repl_node.copy_cgi_env(exec_request)
                 resp = repl_node.create_sysmap_resp()
                 repl_node.add_data_source(data_sources, resp, 'sysmap')
-            #print json.dumps(node, sort_keys=True, indent=2, cls=NodeEncoder)
+            # print json.dumps(node, sort_keys=True, indent=2, cls=NodeEncoder)
             channels = self._get_remote_objects(node)
             for ch in channels:
                 error = self._create_request_for_remote_object(data_sources,
@@ -967,7 +967,7 @@ class ClusterController(ObjectController):
 
         _attach_connections_to_data_sources(conns, data_sources)
 
-        #chunked = req.headers.get('transfer-encoding')
+        # chunked = req.headers.get('transfer-encoding')
         chunked = False
         try:
             with ContextPool(self.parser.total_count) as pool:
@@ -1025,7 +1025,7 @@ class ClusterController(ObjectController):
                 conn.nexe_headers['x-nexe-error'] = \
                     conn.error.replace('\n', '')
 
-            #print [final_response.headers, conn.nexe_headers]
+            # print [final_response.headers, conn.nexe_headers]
             self._store_accounting_data(req, conn)
             merge_headers(final_response.headers, conn.nexe_headers)
             if resp and resp.headers.get('x-zerovm-daemon', None):
@@ -1073,8 +1073,8 @@ class ClusterController(ObjectController):
                 % request.path_info)
             conn.error = 'Timeout: trying to get final status of POST ' \
                          'to %s' % request.path_info
-            #conn.resp = HTTPClientDisconnect(body=conn.path,
-            #    headers=conn.nexe_headers)
+            # conn.resp = HTTPClientDisconnect(body=conn.path,
+            #     headers=conn.nexe_headers)
             return conn
         if server_response.status != 200:
             conn.error = '%d %s %s' % \
@@ -1102,7 +1102,7 @@ class ClusterController(ObjectController):
             untar_stream.update_buffer(data)
             info = untar_stream.get_next_tarinfo()
             while info:
-                #print [info.name, info.size, info.offset, info.offset_data]
+                # print [info.name, info.size, info.offset, info.offset_data]
                 if 'sysmap' == info.name:
                     untar_stream.to_write = info.size
                     untar_stream.offset_data = info.offset_data
@@ -1162,9 +1162,9 @@ class ClusterController(ObjectController):
         for node in obj_nodes:
             try:
                 with ConnectionTimeout(self.app.conn_timeout):
-                    #if (request.content_length > 0)
-                    # or 'transfer-encoding' in request_headers:
-                    #    request_headers['Expect'] = '100-continue'
+                    # if (request.content_length > 0)
+                    #  or 'transfer-encoding' in request_headers:
+                    #     request_headers['Expect'] = '100-continue'
                     request.headers['Connection'] = 'close'
                     request_headers['Expect'] = '100-continue'
                     request_headers['Content-Length'] = str(cnode.size)
@@ -1242,7 +1242,7 @@ class ClusterController(ObjectController):
             obj_req.environ['QUERY_STRING'] = ''
         run = False
         if self.object_name[-len('.nexe'):] == '.nexe':
-            #let's get a small speedup as it's quite possibly an executable
+            # let's get a small speedup as it's quite possibly an executable
             obj_req.method = 'GET'
             run = True
         controller = ObjectController(
@@ -1255,7 +1255,7 @@ class ClusterController(ObjectController):
         if not is_success(obj_resp.status_int):
             return obj_resp
         content = obj_resp.content_type
-        #print content
+        # print content
         if content == 'application/x-nexe':
             run = True
         elif run:
