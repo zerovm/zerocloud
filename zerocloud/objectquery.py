@@ -1249,10 +1249,8 @@ class ObjectQueryMiddleware(object):
                              account, container, obj, request, device):
         data = nexe_etag.split(' ')
         if data[0].startswith('/'):
-            mem_etag = None
             channel_etag = data
         else:
-            mem_etag = data[0]
             channel_etag = data[1:]
         reported_etag = None
         for dev, etag in zip(*[iter(channel_etag)]*2):
