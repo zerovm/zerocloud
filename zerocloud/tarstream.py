@@ -9,7 +9,8 @@ import struct
 import re
 
 try:
-    import grp, pwd
+    import grp
+    import pwd
 except ImportError:
     grp = pwd = None
 
