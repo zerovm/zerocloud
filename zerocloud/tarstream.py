@@ -1,6 +1,6 @@
-#---------
-# Imports
-#---------
+# ---------
+#  Imports
+# ---------
 import sys
 import os
 import stat
@@ -13,9 +13,9 @@ try:
 except ImportError:
     grp = pwd = None
 
-#---------------------------------------------------------
-# tar constants
-#---------------------------------------------------------
+# ---------------------------------------------------------
+#  tar constants
+# ---------------------------------------------------------
 NUL = "\0"                      # the null character
 BLOCKSIZE = 512                 # length of processing blocks
 RECORDSIZE = BLOCKSIZE * 20     # length of records
@@ -49,10 +49,10 @@ GNU_FORMAT = 1                  # GNU tar format
 PAX_FORMAT = 2                  # POSIX.1-2001 (pax) format
 DEFAULT_FORMAT = GNU_FORMAT
 
-#---------------------------------------------------------
-# tarfile constants
-#---------------------------------------------------------
-# File types that tarfile supports:
+# ---------------------------------------------------------
+#  tarfile constants
+# ---------------------------------------------------------
+#  File types that tarfile supports:
 SUPPORTED_TYPES = (REGTYPE, AREGTYPE, LNKTYPE,
                    SYMTYPE, DIRTYPE, FIFOTYPE,
                    CONTTYPE, CHRTYPE, BLKTYPE,
@@ -82,9 +82,9 @@ PAX_NUMBER_FIELDS = {
     "size": int
 }
 
-#---------------------------------------------------------
-# Bits used in the mode field, values in octal.
-#---------------------------------------------------------
+# ---------------------------------------------------------
+#  Bits used in the mode field, values in octal.
+# ---------------------------------------------------------
 S_IFLNK = 0120000        # symbolic link
 S_IFREG = 0100000        # regular file
 S_IFBLK = 0060000        # block device
@@ -106,16 +106,16 @@ TOREAD = 0004           # read by other
 TOWRITE = 0002           # write by other
 TOEXEC = 0001           # execute/search by other
 
-#---------------------------------------------------------
-# initialization
-#---------------------------------------------------------
+# ---------------------------------------------------------
+#  initialization
+# ---------------------------------------------------------
 ENCODING = sys.getfilesystemencoding()
 if ENCODING is None:
     ENCODING = sys.getdefaultencoding()
 
-#---------------------------------------------------------
-# Some useful functions
-#---------------------------------------------------------
+# ---------------------------------------------------------
+#  Some useful functions
+# ---------------------------------------------------------
 
 
 def stn(s, length):
@@ -689,7 +689,7 @@ class TarInfo(object):
         if self.type in (XHDTYPE, SOLARIS_XHDTYPE):
             # Patch the TarInfo object with the extended header info.
             next._apply_pax_info(pax_headers, untar_stream.encoding, untar_stream.errors)
-            #next.offset = self.offset
+            # next.offset = self.offset
 
             if "size" in pax_headers:
                 # If the extended header replaces the size field,

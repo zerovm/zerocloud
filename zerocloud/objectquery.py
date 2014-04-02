@@ -530,7 +530,7 @@ class ObjectQueryMiddleware(object):
         job_id = req.headers.get('x-zerocloud-id', None)
         if not job_id:
             return HTTPInternalServerError(request=req)
-        #print "URL: " + req.url
+        # print "URL: " + req.url
         nexe_headers = {
             'x-nexe-retcode': 0,
             'x-nexe-status': 'Zerovm did not run',
@@ -679,7 +679,7 @@ class ObjectQueryMiddleware(object):
                                       body='No system map found in request')
 
             nexe_headers['x-nexe-system'] = config.get('name', '')
-            #print json.dumps(config, cls=NodeEncoder, indent=2)
+            # print json.dumps(config, cls=NodeEncoder, indent=2)
             zerovm_nexe = None
             exe_path = parse_location(config['exe'])
             if is_image_path(exe_path):
@@ -793,9 +793,9 @@ class ObjectQueryMiddleware(object):
                                                      zerovm_nexe,
                                                      False
                                                      if daemon_sock else True)
-                #print json.dumps(config, sort_keys=True, indent=2)
-                #print zerovm_inputmnfst
-                #print open(nvram_file).read()
+                # print json.dumps(config, sort_keys=True, indent=2)
+                # print zerovm_inputmnfst
+                # print open(nvram_file).read()
                 self._debug_before_exec(config, debug_dir,
                                         nexe_headers, nvram_file,
                                         zerovm_inputmnfst)
@@ -828,7 +828,7 @@ class ObjectQueryMiddleware(object):
                                                    'Program=%s' % zerovm_nexe,
                                                    zerovm_inputmnfst)
                         zerovm_inputmnfst += 'Job = %s\n' % daemon_sock
-                        #print zerovm_inputmnfst
+                        # print zerovm_inputmnfst
                         thrd = self._create_zerovm_thread(
                             zerovm_inputmnfst,
                             zerovm_inputmnfst_fd,
@@ -969,7 +969,7 @@ class ObjectQueryMiddleware(object):
                     info = tar_stream.create_tarinfo(ftype=REGTYPE,
                                                      name=ch['device'],
                                                      size=ch['size'])
-                    #print [ch['device'], ch['size'], ch['lpath']]
+                    # print [ch['device'], ch['size'], ch['lpath']]
                     tar_size = TarStream.get_archive_size(ch['size'])
                     resp_size += len(info) + tar_size
                     ch['info'] = info
@@ -1330,7 +1330,7 @@ class ObjectQueryMiddleware(object):
                 'x-timestamp': metadata['X-Timestamp'],
                 'x-etag': metadata['ETag']}),
             device)
-        #disk_file.close()
+        # disk_file.close()
 
     def _cleanup_daemon(self, daemon_sock):
         for pid in self._get_daemon_pid(daemon_sock):
