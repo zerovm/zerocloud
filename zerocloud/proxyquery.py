@@ -452,13 +452,18 @@ class ProxyQueryMiddleware(object):
             except AttributeError:
                 return HTTPPreconditionFailed(request=req,
                                               body='Bad HTTP method')
-#            if 'swift.authorize' in req.environ:
-#                resp = req.environ['swift.authorize'](req)
-#                if not resp:
-#                    del req.environ['swift.authorize']
-#                else:
-#                    if not getattr(handler, 'delay_denial', None):
-#                        return resp(env, start_response)
+            # we do not deny access based on user account permissions
+            # as users can allow other users to run their code and be billed
+            # accordingly
+            # more than that, accounts can allow anonymous people to run
+            # executables, and these accounts will be billed for that
+            # if 'swift.authorize' in req.environ:
+            #     resp = req.environ['swift.authorize'](req)
+            #     if not resp:
+            #         del req.environ['swift.authorize']
+            #     else:
+            #         if not getattr(handler, 'delay_denial', None):
+            #             return resp
             start_time = time.time()
             # each request is assigned a unique k-sorted id
             # it will be used by QoS code to assign slots/priority
