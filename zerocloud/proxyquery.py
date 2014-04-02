@@ -38,7 +38,7 @@ from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
     merge_headers, update_metadata, DEFAULT_EXE_SYSTEM_MAP, \
     STREAM_CACHE_SIZE, ZvmChannel, parse_location, is_swift_path, \
-    is_image_path, can_run_as_daemon, SwiftPath, NodeEncoder
+    is_image_path, can_run_as_daemon, SwiftPath
 from zerocloud.configparser import ClusterConfigParser, \
     ClusterConfigParsingError
 from zerocloud.tarstream import StringBuffer, UntarStream, \

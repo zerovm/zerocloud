@@ -3,14 +3,10 @@
 #---------
 import sys
 import os
-import shutil
 import stat
-import errno
 import time
 import struct
-import copy
 import re
-import operator
 
 try:
     import grp, pwd

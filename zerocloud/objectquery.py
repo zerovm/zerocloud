@@ -36,7 +36,7 @@ from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, \
     ACCESS_WRITABLE, MD5HASH_LENGTH, parse_location, is_image_path, \
     ACCESS_NETWORK, ACCESS_RANDOM, REPORT_VALIDATOR, REPORT_RETCODE, \
     REPORT_ETAG, REPORT_CDR, REPORT_STATUS, SwiftPath, REPORT_LENGTH, \
-    REPORT_DAEMON, NodeEncoder
+    REPORT_DAEMON
 from zerocloud.configparser import ClusterConfigParser
 from zerocloud.proxyquery import gunzip_iter
 
