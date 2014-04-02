@@ -456,7 +456,7 @@ class ProxyQueryMiddleware(object):
             if path_parts['version']:
                 controller.command = path_parts['version']
                 req.path_info_pop()
-            if not self.app.zerovm_execute in req.headers:
+            if self.app.zerovm_execute not in req.headers:
                 req.headers[self.app.zerovm_execute] = \
                     self.app.zerovm_execute_ver
             try:
@@ -696,7 +696,7 @@ class ClusterController(ObjectController):
         if req.content_type in TAR_MIMES:
             # we must have Content-Length set for tar-based requests
             # as it will be impossible to stream them otherwise
-            if not 'content-length' in req.headers:
+            if 'content-length' not in req.headers:
                 return HTTPBadRequest(request=req,
                                       body='Must specify Content-Length')
             # buffer first blocks of tar file and search for the system map
@@ -763,7 +763,7 @@ class ClusterController(ObjectController):
                     body='Could not parse system map')
         else:
             # assume the posted data is a script and try to execute
-            if not 'content-length' in req.headers:
+            if 'content-length' not in req.headers:
                 return HTTPBadRequest(request=req,
                                       body='Must specify Content-Length')
             cached_body = CachedBody(read_iter)

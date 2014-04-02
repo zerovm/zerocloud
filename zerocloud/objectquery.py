@@ -777,7 +777,7 @@ class ObjectQueryMiddleware(object):
                     if is_master:
                         if not chan_path:
                             response_channels.append(ch)
-                        elif not ch is local_object:
+                        elif ch is not local_object:
                             response_channels.insert(0, ch)
                 elif ch['access'] & ACCESS_NETWORK:
                     ch['lpath'] = chan_path.path
