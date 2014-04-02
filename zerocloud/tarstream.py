@@ -426,7 +426,7 @@ class TarInfo(object):
             itn(info.get("gid", 0), 8, format),
             itn(info.get("size", 0), 12, format),
             itn(info.get("mtime", 0), 12, format),
-            "        ", # checksum field
+            "        ",  # checksum field
             info.get("type", REGTYPE),
             stn(info.get("linkname", ""), 100),
             stn(info.get("magic", POSIX_MAGIC), 8),
