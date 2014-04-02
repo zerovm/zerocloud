@@ -147,7 +147,6 @@ class NameService(object):
         self.conn_map = {}
         self.peer_map = {}
         self.int_pool = GreenPool()
-        # print "NameServer got %d peers" % self.peers
 
     def start(self, pool):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -157,9 +156,6 @@ class NameService(object):
         (self.hostaddr, self.port) = self.sock.getsockname()
 
     def _run(self):
-        # bind_map = {}
-        # conn_map = {}
-        # peer_map = {}
         while 1:
             try:
                 start = time.time()
@@ -192,7 +188,6 @@ class NameService(object):
                           % (time.time() - start)
                     start = time.time()
                     for peer_id in self.peer_map.iterkeys():
-                        # out = ''
                         (connect_count, offset, reply) = self.conn_map[peer_id]
                         for i in range(connect_count):
                             connecting_host = struct.unpack_from(
@@ -210,7 +205,6 @@ class NameService(object):
                             offset += NameService.OUTPUT_RECORD_SIZE
                         self.sock.sendto(reply, (self.peer_map[peer_id][0],
                                                  self.peer_map[peer_id][1]))
-                        # print out
                     print "Finished name server send in %.3f seconds" \
                           % (time.time() - start)
             except greenlet.GreenletExit:
@@ -411,12 +405,6 @@ class ProxyQueryMiddleware(object):
                 'wbytes': int(conf.get('zerovm_maxinput', 1024 * 1048576))
             }
         }
-        # sysmap json config parser instance
-        # self.app.parser = ClusterConfigParser(self.zerovm_sysimage_devices,
-        #                                       self.app.zerovm_content_type,
-        #                                       self.app.parser_config,
-        #                                       self.list_account,
-        #                                       self.list_container)
         # list of daemons we need to lazy load
         # (first request will start the daemon)
         daemon_list = [i.strip() for i in
@@ -648,6 +636,7 @@ class ClusterController(ObjectController):
                     split_path(load_from, 1, 3, True)
                 container_info = self.container_info(acct, src_container_name)
                 source_req.acl = container_info['read_acl']
+                # left here for exec_acl support
                 # if 'boot' in ch.device:
                 #     source_req.acl = container_info['exec_acl']
                 source_resp = \
@@ -793,7 +782,6 @@ class ClusterController(ObjectController):
                 return HTTPBadRequest(request=req,
                                       body='Bad interpreter %s' % exe_path)
             if is_image_path(location):
-                # print location.image
                 if 'image' == location.image:
                     return HTTPBadRequest(request=req,
                                           body='Must supply image name '
@@ -846,7 +834,8 @@ class ClusterController(ObjectController):
                 _('ERROR Error parsing config: %s'), cluster_config)
             return HTTPBadRequest(request=req, body=str(e))
 
-        # print json.dumps(self.parser.node_list, cls=NodeEncoder, indent=2)
+        # for n in self.parser.node_list:
+        #     print n.dumps(indent=2)
 
         data_sources = []
         addr = self._get_own_address()
@@ -878,9 +867,11 @@ class ClusterController(ObjectController):
                                          environ=req.environ,
                                          headers=req.headers)
             exec_request.path_info = path_info
-            # exec_request.content_length = None
             exec_request.etag = None
             exec_request.content_type = TAR_MIMES[0]
+            # chunked encoding handling looks broken in Swift
+            # but let's leave it here, maybe somebody will fix it
+            # exec_request.content_length = None
             # exec_request.headers['transfer-encoding'] = 'chunked'
             exec_request.headers['x-account-name'] = self.account_name
             exec_request.headers['x-timestamp'] = \
@@ -909,7 +900,6 @@ class ClusterController(ObjectController):
                 repl_node.copy_cgi_env(exec_request)
                 resp = repl_node.create_sysmap_resp()
                 repl_node.add_data_source(data_sources, resp, 'sysmap')
-            # print json.dumps(node, sort_keys=True, indent=2, cls=NodeEncoder)
             channels = self._get_remote_objects(node)
             for ch in channels:
                 error = self._create_request_for_remote_object(data_sources,
@@ -967,6 +957,8 @@ class ClusterController(ObjectController):
 
         _attach_connections_to_data_sources(conns, data_sources)
 
+        # chunked encoding handling looks broken in Swift
+        # but let's leave it here, maybe somebody will fix it
         # chunked = req.headers.get('transfer-encoding')
         chunked = False
         try:
@@ -1025,7 +1017,6 @@ class ClusterController(ObjectController):
                 conn.nexe_headers['x-nexe-error'] = \
                     conn.error.replace('\n', '')
 
-            # print [final_response.headers, conn.nexe_headers]
             self._store_accounting_data(req, conn)
             merge_headers(final_response.headers, conn.nexe_headers)
             if resp and resp.headers.get('x-zerovm-daemon', None):
@@ -1073,8 +1064,6 @@ class ClusterController(ObjectController):
                 % request.path_info)
             conn.error = 'Timeout: trying to get final status of POST ' \
                          'to %s' % request.path_info
-            # conn.resp = HTTPClientDisconnect(body=conn.path,
-            #     headers=conn.nexe_headers)
             return conn
         if server_response.status != 200:
             conn.error = '%d %s %s' % \
@@ -1102,7 +1091,6 @@ class ClusterController(ObjectController):
             untar_stream.update_buffer(data)
             info = untar_stream.get_next_tarinfo()
             while info:
-                # print [info.name, info.size, info.offset, info.offset_data]
                 if 'sysmap' == info.name:
                     untar_stream.to_write = info.size
                     untar_stream.offset_data = info.offset_data
@@ -1122,11 +1110,6 @@ class ClusterController(ObjectController):
                     resp.content_length = info.size
                     resp.content_type = chan.content_type
                     return conn
-                # dest_header = unquote(chan.path)
-                # acct = request.path_info.split('/', 2)[1]
-                # dest_header = '/' + acct + dest_header
-                # dest_container_name, dest_obj_name =\
-                #     dest_header.split('/', 3)[2:]
                 dest_req = Request.blank(chan.path.path,
                                          environ=request.environ,
                                          headers=request.headers)
@@ -1162,9 +1145,6 @@ class ClusterController(ObjectController):
         for node in obj_nodes:
             try:
                 with ConnectionTimeout(self.app.conn_timeout):
-                    # if (request.content_length > 0)
-                    #  or 'transfer-encoding' in request_headers:
-                    #     request_headers['Expect'] = '100-continue'
                     request.headers['Connection'] = 'close'
                     request_headers['Expect'] = '100-continue'
                     request_headers['Content-Length'] = str(cnode.size)
@@ -1255,7 +1235,6 @@ class ClusterController(ObjectController):
         if not is_success(obj_resp.status_int):
             return obj_resp
         content = obj_resp.content_type
-        # print content
         if content == 'application/x-nexe':
             run = True
         elif run:
