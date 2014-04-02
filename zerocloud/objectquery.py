@@ -1012,7 +1012,7 @@ class ObjectQueryMiddleware(object):
                                                   name='sysmap',
                                                   size=len(sysmap_dump))
                     resp_size += len(sysmap_info) + \
-                                 TarStream.get_archive_size(len(sysmap_dump))
+                        TarStream.get_archive_size(len(sysmap_dump))
 
                 def resp_iter(channels, chunk_size):
                     tstream = TarStream(chunk_size=chunk_size)

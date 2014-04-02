@@ -737,7 +737,7 @@ class ClusterController(ObjectController):
                 return HTTPUnprocessableEntity(body='Could not parse '
                                                     'system map')
         elif req.content_type in 'application/json':
-        # System map was sent as a POST body
+            # System map was sent as a POST body
             if not cluster_config:
                 for chunk in read_iter:
                     req.bytes_transferred += len(chunk)
