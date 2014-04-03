@@ -1278,10 +1278,9 @@ return open(mnfst.nvram['path']).read()
         res = req.get_response(prosrv)
         self.assertIn('[args]\n'
                       'args = sort\n', res.body)
-        self.assertIn('[mapping]\n'
-                      'channel=/dev/input, mode=file\n'
-                      'channel=/dev/stdout, mode=char\n',
-                      res.body)
+        self.assertIn('[mapping]', res.body)
+        self.assertIn('channel=/dev/input, mode=file', res.body)
+        self.assertIn('channel=/dev/stdout, mode=char', res.body)
 
     def test_QUERY_sort_immediate_stdout_stderr(self):
         self.setup_QUERY()
