@@ -2,9 +2,8 @@ from eventlet.green import os
 from hashlib import md5
 import socket
 import struct
-from sys import argv, exit
+from sys import exit
 import re
-import logging
 import cPickle as pickle
 from time import sleep
 from argparse import ArgumentParser
@@ -16,15 +15,22 @@ except ImportError:
     import json
 
 
-def errdump(zvm_errcode, nexe_validity, nexe_errcode, nexe_etag, nexe_accounting, status_line):
-    print '%d\n0\n%d\n%s\n%s\n%s' % (nexe_validity, nexe_errcode, nexe_etag,
-                                     ' '.join([str(val) for val in nexe_accounting]), status_line)
+def errdump(zvm_errcode, nexe_validity, nexe_errcode, nexe_etag,
+            nexe_accounting, status_line):
+    print '%d\n0\n%d\n%s\n%s\n%s' % (nexe_validity,
+                                     nexe_errcode,
+                                     nexe_etag,
+                                     ' '.join([str(val)
+                                               for val in nexe_accounting]),
+                                     status_line)
     exit(zvm_errcode)
 
 
-def eval_as_function(code, local_vars={}, global_vars=None):
+def eval_as_function(code, local_vars=None, global_vars=None):
     if not global_vars:
         global_vars = globals()
+    if not local_vars:
+        local_vars = {}
     context = {}
     code = re.sub(r"(?m)^", "    ", code)
     code = "def anon(" + ','.join(local_vars.keys()) + "):\n" + code
@@ -49,7 +55,8 @@ if not manifest:
 try:
     inputmnfst = file(manifest, 'r').read().splitlines()
 except IOError:
-    errdump(1, valid, 0, '', accounting, 'Cannot open manifest file: %s' % manifest)
+    errdump(1, valid, 0, '', accounting, 'Cannot open manifest file: %s'
+                                         % manifest)
 
 
 def parse_manifest(inputmnfst):
@@ -123,7 +130,8 @@ status = 'nexe did not run'
 retcode = 0
 
 
-def retrieve_mnfst_field(n, eq=None, min=None, max=None, isint=False, optional=False):
+def retrieve_mnfst_field(n, eq=None, min=None, max=None,
+                         isint=False, optional=False):
     if n not in mnfst_dict:
         if optional:
             return
@@ -132,11 +140,14 @@ def retrieve_mnfst_field(n, eq=None, min=None, max=None, isint=False, optional=F
     if isint:
         v = int(v)
         if min and v < min:
-            errdump(1, valid, 0, '', accounting, '%s = %d is less than expected: %d' % (n, v, min))
+            errdump(1, valid, 0, '', accounting,
+                    '%s = %d is less than expected: %d' % (n, v, min))
         if max and v > max:
-            errdump(1, valid, 0, '', accounting, '%s = %d is more than expected: %d' % (n, v, max))
+            errdump(1, valid, 0, '', accounting,
+                    '%s = %d is more than expected: %d' % (n, v, max))
     if eq and v != eq:
-        errdump(1, valid, 0, '', accounting, '%s = %s and expected %s' % (n, v, eq))
+        errdump(1, valid, 0, '', accounting,
+                '%s = %s and expected %s' % (n, v, eq))
     setattr(mnfst, n.strip(), v)
 
 
@@ -161,7 +172,8 @@ if not getattr(mnfst, 'Etag', None):
 
 channel_list = re.split('\s*,\s*', mnfst.Channel)
 if len(channel_list) % 8 != 0:
-    errdump(1, valid, 0, mnfst.Etag, accounting, 'wrong channel config: %s' % mnfst.Channel)
+    errdump(1, valid, 0, mnfst.Etag, accounting,
+            'wrong channel config: %s' % mnfst.Channel)
 dev_list = channel_list[1::8]
 bind_data = ''
 bind_count = 0
@@ -172,7 +184,8 @@ bind_map = {}
 alias = int(mnfst.Node)
 mnfst.channels = {}
 stddev = {'/dev/stdin': 0, '/dev/stdout': 0, '/dev/stderr': 0}
-for fname, device, type, tag, rd, rd_byte, wr, wr_byte in zip(*[iter(channel_list)]*8):
+for fname, device, type, tag, rd, rd_byte, wr, wr_byte \
+        in zip(*[iter(channel_list)]*8):
     if fname.startswith('tcp:'):
         if ';' in fname:
             socks = fname.split(';')
@@ -186,7 +199,11 @@ for fname, device, type, tag, rd, rd_byte, wr, wr_byte in zip(*[iter(channel_lis
                 s.bind(('', 0))
                 s.listen(1)
                 port = s.getsockname()[1]
-                bind_map[host] = {'name': device, 'port': port, 'proto': proto, 'sock': s}
+                bind_map[host] = {
+                    'name': device,
+                    'port': port,
+                    'proto': proto,
+                    'sock': s}
                 bind_data += struct.pack('!IH', host, int(port))
                 bind_count += 1
             else:
@@ -216,7 +233,8 @@ for fname, device, type, tag, rd, rd_byte, wr, wr_byte in zip(*[iter(channel_lis
         mnfst.nvram = mnfst.channels[device]
 
 if len(stddev) > 0:
-    errdump(1, valid, 0, mnfst.Etag, accounting, 'all standard channels must be present')
+    errdump(1, valid, 0, mnfst.Etag, accounting,
+            'all standard channels must be present')
 request = \
     struct.pack('!I', alias) + \
     struct.pack('!I', bind_count) + \
@@ -302,5 +320,4 @@ err.close()
 if mnfst.err['etag']:
     mnfst.err['etag'] = mnfst.err['etag'].hexdigest()
     mnfst.Etag += ' %s %s' % (mnfst.err['device'], mnfst.err['etag'])
-status = 'ok.'
-errdump(0, valid, retcode, mnfst.Etag, accounting, status)
+errdump(0, valid, retcode, mnfst.Etag, accounting, 'ok.')
