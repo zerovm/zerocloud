@@ -1254,8 +1254,9 @@ return open(mnfst.nvram['path']).read()
         self.assertIn('[args]\n'
                       'args = sort aa bb cc',
                       res.body)
-        self.assertIn('name=key2, value=val2\n'
-                      'name=key1, value=val1',
+        self.assertIn('name=key1, value=val1',
+                      res.body)
+        self.assertIn('name=key2, value=val2',
                       res.body)
 
         conf = [
