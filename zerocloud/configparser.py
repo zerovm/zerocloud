@@ -448,8 +448,31 @@ class ClusterConfigParser(object):
         """
         return self.sysimage_devices.get(device_name, None)
 
-    def prepare_zerovm_files(self, config, nvram_file, local_object,
-                             zerovm_nexe, use_dev_self=True):
+    def prepare_for_daemon(self, config, nvram_file, zerovm_nexe,
+                           local_object, daemon_sock):
+        return self.prepare_zerovm_files(config, nvram_file,
+                                         local_object=local_object,
+                                         zerovm_nexe=zerovm_nexe,
+                                         use_dev_self=False,
+                                         job=daemon_sock)
+
+    def prepare_for_forked(self, config, nvram_file, local_object):
+        return self.prepare_zerovm_files(config, nvram_file,
+                                         local_object=local_object,
+                                         zerovm_nexe=None,
+                                         use_dev_self=False,
+                                         job=None)
+
+    def prepare_for_standalone(self, config, nvram_file, zerovm_nexe,
+                               local_object):
+        return self.prepare_zerovm_files(config, nvram_file,
+                                         local_object=local_object,
+                                         zerovm_nexe=zerovm_nexe,
+                                         use_dev_self=True,
+                                         job=None)
+
+    def prepare_zerovm_files(self, config, nvram_file, local_object=None,
+                             zerovm_nexe=None, use_dev_self=True, job=None):
         """
         Prepares all the files needed for zerovm session run
 
@@ -473,6 +496,8 @@ class ClusterConfigParser(object):
                 self.parser_config['manifest']['Timeout'],
                 self.parser_config['manifest']['Memory']
             ))
+        if job:
+            zerovm_inputmnfst += 'Job=%s\n' % job
         mode_mapping = {}
         fstab = None
 
@@ -481,7 +506,8 @@ class ClusterConfigParser(object):
             if not fstab_string:
                 fstab_string = '[fstab]\n'
             fstab_string += \
-                'channel=/dev/%s, mountpoint=%s, access=%s, removable=%s\n' \
+                'channel=/dev/%s, mountpoint=%s, ' \
+                'access=%s, removable=%s\n' \
                 % (device, mountpoint, access, removable)
             return fstab_string
 
