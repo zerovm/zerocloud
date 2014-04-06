@@ -86,3 +86,15 @@ Each sysimage device is a ZeroVM image in tar file. It makes it simple to use gl
 
 `zerovm_threadpools = default = WaitPool(10,3); cluster = PriorityPool(10,100);` - thread pool configuration, you can check out the various thread pool classes in [thread_pool.py](https://github.com/zerovm/zerocloud/blob/icehouse/zerocloud/thread_pool.py). The format is `name = PoolClass(.....); ....` you can add as many names and pool classes as you want. Right now only `default` and `cluster` pools are usable, `cluster` pool is used for clustered jobs and `default` pool - for any other job.
 
+The following configuration parameters need to be copied from `app:object-server` config, if non-default:
+
+- `devices`
+- `disk_chunk_size`
+- `keep_cache_size`
+- `mb_per_sync`
+- `mount_check`
+- `reclaim_age`
+- `replication_one_per_device`
+- `replication_lock_timeout`
+- `threads_per_disk`
+- `disable_fallocate`
