@@ -786,19 +786,15 @@ class ObjectQueryMiddleware(object):
                                       zerovm_inputmnfst_fn):
                 (output_fd, nvram_file) = mkstemp()
                 os.close(output_fd)
-                zerovm_inputmnfst = \
-                    self.parser.prepare_zerovm_files(config,
-                                                     nvram_file,
-                                                     local_object,
-                                                     zerovm_nexe,
-                                                     False
-                                                     if daemon_sock else True)
-                self._debug_before_exec(config, debug_dir,
-                                        nexe_headers, nvram_file,
-                                        zerovm_inputmnfst)
                 start = time.time()
                 daemon_status = None
                 if daemon_sock:
+                    zerovm_inputmnfst = \
+                        self.parser.prepare_for_forked(config, nvram_file,
+                                                       local_object)
+                    self._debug_before_exec(config, debug_dir,
+                                            nexe_headers, nvram_file,
+                                            zerovm_inputmnfst)
                     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                     try:
                         sock.connect(daemon_sock)
@@ -821,10 +817,15 @@ class ObjectQueryMiddleware(object):
                                      'in system image %s'
                                      % sysimage_path)
                         zerovm_nexe = channels.pop('boot')
-                        zerovm_inputmnfst = re.sub(r'^(?m)Program=.*',
-                                                   'Program=%s' % zerovm_nexe,
-                                                   zerovm_inputmnfst)
-                        zerovm_inputmnfst += 'Job = %s\n' % daemon_sock
+                        zerovm_inputmnfst = \
+                            self.parser.prepare_for_daemon(config,
+                                                           nvram_file,
+                                                           zerovm_nexe,
+                                                           local_object,
+                                                           daemon_sock)
+                        self._debug_before_exec(config, debug_dir,
+                                                nexe_headers, nvram_file,
+                                                zerovm_inputmnfst)
                         thrd = self._create_zerovm_thread(
                             zerovm_inputmnfst,
                             zerovm_inputmnfst_fd,
@@ -867,6 +868,12 @@ class ObjectQueryMiddleware(object):
                                 return req.get_response(resp)
                         if daemon_status != 1:
                             return HTTPInternalServerError(body=zerovm_stdout)
+                        zerovm_inputmnfst = \
+                            self.parser.prepare_for_forked(config, nvram_file,
+                                                           local_object)
+                        self._debug_before_exec(config, debug_dir,
+                                                nexe_headers, nvram_file,
+                                                zerovm_inputmnfst)
                         try:
                             sock.connect(daemon_sock)
                             thrd = thrdpool.spawn(job_id,
@@ -880,6 +887,14 @@ class ObjectQueryMiddleware(object):
                                      'socket %s' % daemon_sock,
                                 headers=nexe_headers)
                 else:
+                    zerovm_inputmnfst = \
+                        self.parser.prepare_for_standalone(config,
+                                                           nvram_file,
+                                                           zerovm_nexe,
+                                                           local_object)
+                    self._debug_before_exec(config, debug_dir,
+                                            nexe_headers, nvram_file,
+                                            zerovm_inputmnfst)
                     thrd = self._create_zerovm_thread(zerovm_inputmnfst,
                                                       zerovm_inputmnfst_fd,
                                                       zerovm_inputmnfst_fn,
