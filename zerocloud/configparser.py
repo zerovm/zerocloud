@@ -13,7 +13,7 @@ CHANNEL_TYPE_MAP = {
     'input': 3,
     'output': 3,
     'debug': 0,
-    'image': 1,
+    'image': 3,
     'sysimage': 3
 }
 ENV_ITEM = 'name=%s, value=%s\n'
