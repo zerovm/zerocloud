@@ -655,6 +655,16 @@ class ClusterConfigParser(object):
     def resolve_path_info(self, account_name, replica_count):
         default_path_info = '/%s' % account_name
         for node in self.node_list:
+            for chan in node.channels:
+                if is_swift_path(chan.path) and chan.path.account == '.':
+                    chan.path = SwiftPath.init(account_name,
+                                               chan.path.container,
+                                               chan.path.obj)
+            if is_swift_path(node.exe) \
+                    and node.exe.account == '.':
+                    node.exe = SwiftPath.init(account_name,
+                                              node.exe.container,
+                                              node.exe.obj)
             top_channel = node.channels[0]
             if top_channel and is_swift_path(top_channel.path):
                 if top_channel.access & (ACCESS_READABLE | ACCESS_CDR):
@@ -667,12 +677,6 @@ class ClusterConfigParser(object):
                     node.path_info = default_path_info
             if node.replicate == 0:
                 node.replicate = 1
-            for chan in node.channels:
-                if hasattr(chan.path, 'account') and chan.path.account == '.':
-                    chan.path.account = account_name
-            if hasattr(node.exe.path, 'account') \
-                    and node.exe.path.account == '.':
-                    node.exe.path.account = account_name
 
 
 def _add_connected_device(devices, channel, zvm_node):
