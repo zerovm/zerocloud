@@ -760,6 +760,33 @@ return 'hello, world'
         self.assertEqual(res.body, 'hello, world')
         self.check_container_integrity(prosrv, '/v1/a/c', {})
 
+    def test_QUERY_relative_path(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe =\
+r'''
+return 'hello, world'
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/hello.nexe', nexe)
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://./c/hello.nexe"},
+                "file_list": [
+                    {"device": "stderr",
+                     "path": "swift://./c/stderr.log"},
+                    {"device": "stdout"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, 'hello, world')
+
     def test_QUERY_cgi_response(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
