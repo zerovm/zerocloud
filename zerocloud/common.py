@@ -286,7 +286,7 @@ def is_cache_path(location):
 
 class ZvmNode(object):
     def __init__(self, id=None, name=None, exe=None, args=None, env=None,
-                 replicate=1):
+                 replicate=1, attach=None):
         self.id = id
         self.name = name
         self.exe = exe
@@ -299,6 +299,7 @@ class ZvmNode(object):
         self.replicas = []
         self.skip_validation = False
         self.wildcards = None
+        self.attach = attach
 
     def copy(self, id, name=None):
         newnode = deepcopy(self)

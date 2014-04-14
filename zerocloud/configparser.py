@@ -333,7 +333,7 @@ class ClusterConfigParser(object):
             self.node_list.append(self.nodes[node_name])
         if add_user_image:
             for node in self.node_list:
-                    node.add_new_channel('image', ACCESS_CDR, removable='yes')
+                node.add_new_channel('image', ACCESS_CDR, removable='yes')
         if account_name:
             self.resolve_path_info(account_name, replica_count)
         self.total_count = 0
@@ -665,7 +665,13 @@ class ClusterConfigParser(object):
                     node.exe = SwiftPath.init(account_name,
                                               node.exe.container,
                                               node.exe.obj)
-            top_channel = node.channels[0]
+            if node.attach == 'default':
+                top_channel = node.channels[0]
+            else:
+                for chan in node.channels:
+                    if node.attach == chan.device:
+                        top_channel = chan
+                        break
             if top_channel and is_swift_path(top_channel.path):
                 if top_channel.access & (ACCESS_READABLE | ACCESS_CDR):
                     node.path_info = top_channel.path.path
@@ -734,7 +740,8 @@ def _create_node(node_config):
         raise ClusterConfigParsingError(
             _('Invalid nexe property for %s') % name)
     replicate = node_config.get('replicate', 1)
-    return ZvmNode(0, name, exe, args, env, replicate)
+    attach = node_config.get('attach', 'default')
+    return ZvmNode(0, name, exe, args, env, replicate, attach)
 
 
 def _create_channel(channel, node, default_content_type=None):

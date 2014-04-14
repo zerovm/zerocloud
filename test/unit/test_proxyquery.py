@@ -1000,6 +1000,105 @@ return [open(mnfst.image['path']).read(), sorted(id)]
                          str(['This is image file',
                               pickle.loads(self.get_sorted_numbers())]))
 
+    def test_QUERY_use_node_attach(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe =\
+r'''
+return [open(mnfst.image['path']).read(), sorted(id)]
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        image = 'This is image file'
+        self.create_object(prolis, '/v1/a/c/img', image)
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe2'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'},
+                    {'device': 'image', 'path': 'swift://a/c/img'}
+                ],
+                'attach': 'stdin'
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body,
+                         str(['This is image file',
+                              pickle.loads(self.get_sorted_numbers())]))
+        # Let's try to "attach" to a device that does not point to any object
+        # Should succeed also, as only the session location will change
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe2'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'},
+                    {'device': 'image', 'path': 'swift://a/c/img'}
+                ],
+                'attach': 'image'
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body,
+                         str(['This is image file',
+                              pickle.loads(self.get_sorted_numbers())]))
+        # Now try proper write-only object
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe2'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'},
+                    {'device': 'image', 'path': 'swift://a/c/img'}
+                ],
+                'attach': 'stdout'
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body,
+                         str(['This is image file',
+                              pickle.loads(self.get_sorted_numbers())]))
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe2'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout', 'path': 'swift://a/c/stdout.log'},
+                    {'device': 'image', 'path': 'swift://a/c/img'}
+                ],
+                'attach': 'stdout'
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        req = self.object_request('/v1/a/c/stdout.log')
+        req.headers['x-newest'] = 'true'
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body,
+                         str(['This is image file',
+                              pickle.loads(self.get_sorted_numbers())]))
+
     def test_QUERY_use_gzipped_image(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
