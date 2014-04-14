@@ -611,12 +611,12 @@ class ClusterController(ObjectController):
         channels = []
         if is_swift_path(node.exe):
             channels.append(ZvmChannel('boot', None, path=node.exe))
-        if len(node.channels) > 1:
-            for ch in node.channels[1:]:
-                if is_swift_path(ch.path) \
+        for ch in node.channels:
+            if is_swift_path(ch.path) \
                     and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
-                        and not self.parser.is_sysimage_device(ch.device):
-                    channels.append(ch)
+                    and not self.parser.is_sysimage_device(ch.device) \
+                    and ch.path.path != getattr(node, 'path_info', None):
+                channels.append(ch)
         return channels
 
     def _create_request_for_remote_object(self, data_sources, channel,
