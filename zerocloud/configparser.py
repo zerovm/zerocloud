@@ -26,6 +26,20 @@ def quote_for_env(val):
     return re.sub(r',', '\\x2c', str(val))
 
 
+class ConfigFetcher(object):
+    def __init__(self, *args):
+        self.arg_list = args
+
+    def fetch_from(self, config):
+        for key in self.arg_list:
+            if key in config:
+                return config.get(key)
+        return None
+
+FILE_LIST = ConfigFetcher('file_list', 'devices')
+DEVICE = ConfigFetcher('device', 'name')
+
+
 class ClusterConfigParsingError(Exception):
     def __init__(self, msg):
         self.msg = msg
@@ -195,7 +209,7 @@ class ClusterConfigParser(object):
                 else:
                     raise ClusterConfigParsingError(
                         _('Invalid node count: %s') % str(node_count))
-                file_list = node.get('file_list')
+                file_list = FILE_LIST.fetch_from(node)
                 read_list = []
                 write_list = []
                 other_list = []
@@ -745,7 +759,7 @@ def _create_node(node_config):
 
 
 def _create_channel(channel, node, default_content_type=None):
-    device = channel.get('device')
+    device = DEVICE.fetch_from(channel)
     if has_control_chars(device):
         raise ClusterConfigParsingError(
             _('Bad device name: %s in %s') % (device, node.name))

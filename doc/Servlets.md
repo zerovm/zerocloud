@@ -14,9 +14,11 @@ JSON format describing a servlet configuration
                 "key2":"value2"
                 }
         },
-        "file_list":[ <i>list of devices/files, optional</i>
+        <del>"file_list":[ <i>list of devices/files, optional</i></del> deprecated
+        "devices":[ <i>list of devices/files, optional</i>
             {
-            <b>"device"</b>:"device name", <b>required</b>
+            <del><b>"device"</b>:"device name", <b>required</b></del> deprecated
+            <b>"name"</b>:"device name", <b>required</b>
             "path":"device file path, URL (see Url.md)", <i>optional</i>
             "content_type": "MIME type of the content", <i>optional, ignored for read-only devices</i>
             "meta": {   <i>metadata for the object, optional, ignored for read-only devices</i>
@@ -39,6 +41,8 @@ JSON format describing a servlet configuration
     ]
 </pre>
 
+- Deprecated keywords are still supported, but can disappear without a trace in any next version
+
 ### Rules
 
 1. Allowed device names are:
@@ -59,7 +63,7 @@ JSON format describing a servlet configuration
     you can use the device names you've set there in servlet config  
     and they are added to the list of allowed device names.  
 
-2. Path property `file_list[i].path` is optional  
+2. Path property `devices[i].path` is optional  
 Only the following devices can be supplied without `path` property set
 
     <pre>
@@ -72,15 +76,15 @@ Only the following devices can be supplied without `path` property set
     If the device is a 'system image' it also does not have a path,
     its path is predefined in `zerovm_sysimage_devices` configuration directive
 
-3. Path property `file_list[i].path` can contain wild-card(s)  
+3. Path property `devices[i].path` can contain wild-card(s)  
 Asterisk `*` character must be used as wild-card  
 Any number of wild-cards is allowed in one path  
 Wild-cards are expanded following the `/.*/` regex rule  
 If path contains wild-card the `count` is ignored  
 `debug` device cannot have a wild-card in path  
 
-4. If all devices in `file_list` do not contain path
-or there are 0 devices in `file_list` a `count` should be supplied  
+4. If all devices in `devices` do not contain path
+or there are 0 devices in `devices` a `count` should be supplied  
 If `count` is not supplied `count: 1` is assumed  
 
 5. If the following devices have wild-cards in path
@@ -224,10 +228,10 @@ If the device is a `swift://` path the session will be started in co-location wi
         {
             "name":"sort",
             "exec":{"path":"swift://my_account/exec/sort.nexe"},
-            "file_list":[
-                {"device":"stdin","path":"swift://my_account/data/binary*.data"},
-                {"device":"stdout","path":"swift://my_account/data/sorted*.data"},
-                {"device":"stderr"}
+            "devices":[
+                {"name":"stdin","path":"swift://my_account/data/binary*.data"},
+                {"name":"stdout","path":"swift://my_account/data/sorted*.data"},
+                {"name":"stderr"}
             ],
             "args":"1048576"
         }
@@ -251,9 +255,9 @@ It will create `swift://my_account/data/sorted*.data` output objects, exactly th
         {
             "name":"mapper",
             "exec":{"path":"swift://my_account/exec/maper.nexe"},
-            "file_list":[
-                {"device":"stdin","path":"swift://my_account/data/binary*.data"},
-                {"device":"stderr"}
+            "devices":[
+                {"name":"stdin","path":"swift://my_account/data/binary*.data"},
+                {"name":"stderr"}
             ],
             "connect":["mapper","reducer"]
     },
@@ -266,9 +270,9 @@ It will create `swift://my_account/data/sorted*.data` output objects, exactly th
         {
             "name":"manager",
             "exec":{"path":"swift://my_account/exec/manager.nexe"},
-            "file_list":[
-                {"device":"stdout","path":"swift://my_account/data/mapred_result.data"},
-                {"device":"stderr"}
+            "devices":[
+                {"name":"stdout","path":"swift://my_account/data/mapred_result.data"},
+                {"name":"stderr"}
             ]
     }
     ]
@@ -278,7 +282,7 @@ It will create `swift://my_account/data/sorted*.data` output objects, exactly th
 - Mappers are connected to mappers (between themselves) and to reducers.
 - Each `connect` means unidirectional connect, i.e. each mapper can send to each other mapper and to each reducer.
 - Each reducer can send only to manager node.
-- Manager node has no `count` and its `file_list` has no wild-cards, means there is exactly _one_ manager node.
+- Manager node has no `count` and its `devices` has no wild-cards, means there is exactly _one_ manager node.
 - There are 5 reducers: `count: 5`.
 - There are N mappers, it depends how many objects match the `swift://my_account/data/binary*.data` wildcard.
 If there are 10 matching objects, there will be 10 mappers, each mapper will have 9 connections to 9 other mappers and 5 connections to each reducer.

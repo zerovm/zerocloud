@@ -1472,6 +1472,31 @@ return open(mnfst.nvram['path']).read()
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, self.get_sorted_numbers())
 
+    def test_QUERY_config_syntax_2(self):
+        self.setup_QUERY()
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'devices': [
+                    {'name': 'stdin', 'path': 'swift://a/c/o'},
+                    {'name': 'stderr'},
+                    {'name': 'stdout', 'path': 'swift://a/c/o2'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, '\nfinished\n')
+        req = self.object_request('/v1/a/c/o2')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, self.get_sorted_numbers())
+
     def test_QUERY_network_resolve(self):
         self.setup_QUERY()
         conf = [
