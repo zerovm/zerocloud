@@ -1281,6 +1281,125 @@ print 'Test'
         self.assertEqual(res.status_int, 400)
         self.assertIn(' aaa/bbb', res.body)
 
+    def test_deferred(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        orig_timeout = prosrv.app.immediate_response_timeout
+        prosrv.app.immediate_response_timeout = 0.5
+        nexe = \
+r'''
+from time import sleep
+sleep(1)
+return 'slept'
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/slow.nexe', nexe)
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {
+                    'path': 'swift://a/c/slow.nexe'
+                },
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        req.headers['x-zerovm-deferred'] = 'auto'
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertIn('swift://a/.zvm/', res.body)
+        url = res.body.strip()
+        from zerocloud.common import SwiftPath
+        path = SwiftPath(url)
+        req = self.object_request('/v1/%s/%s/%s' % (path.account,
+                                                    path.container,
+                                                    path.obj))
+        sleep(0.1)
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 404)
+        sleep(1)
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, 'slept')
+        req = self.object_request('/v1/%s/%s/%s.headers' % (path.account,
+                                                            path.container,
+                                                            path.obj))
+        res = req.get_response(prosrv)
+        # print res.status
+        self.assertEqual(res.status_int, 200)
+        raised = 0
+        try:
+            rep = json.loads(res.body)
+        except Exception:
+            raised += 1
+        self.assertEqual(raised, 0)
+        prosrv.app.immediate_response_timeout = orig_timeout
+
+    def test_deferred_with_obj(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        orig_timeout = prosrv.app.immediate_response_timeout
+        prosrv.app.immediate_response_timeout = 0.5
+        nexe = \
+r'''
+from time import sleep
+sleep(1)
+return 'slept'
+'''[1:-1]
+        self.create_object(prolis, '/v1/a/c/slow.nexe', nexe)
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {
+                    'path': 'swift://a/c/slow.nexe'
+                },
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        req.path_info = '/v1/a/jobs/my_job'
+        req.headers['x-zerovm-deferred'] = 'auto'
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual('swift://a/jobs/my_job', res.body)
+        url = res.body.strip()
+        from zerocloud.common import SwiftPath
+        path = SwiftPath(url)
+        req = self.object_request('/v1/%s/%s/%s' % (path.account,
+                                                    path.container,
+                                                    path.obj))
+        sleep(0.1)
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 404)
+        sleep(1)
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, 'slept')
+        req = self.object_request('/v1/%s/%s/%s.headers' % (path.account,
+                                                            path.container,
+                                                            path.obj))
+        res = req.get_response(prosrv)
+        # print res.status
+        self.assertEqual(res.status_int, 200)
+        raised = 0
+        try:
+            rep = json.loads(res.body)
+        except Exception:
+            raised += 1
+        self.assertEqual(raised, 0)
+        prosrv.app.immediate_response_timeout = orig_timeout
+
     def test_QUERY_use_nvram(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
