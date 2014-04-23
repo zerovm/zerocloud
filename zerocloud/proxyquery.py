@@ -433,8 +433,8 @@ class ProxyQueryMiddleware(object):
         self.app.zerovm_daemons = self.parse_daemon_config(daemon_list)
         self.uid_generator = Zuid()
 
-        self.app.immediate_response_timeout = int(conf.get('interactive_timeout',
-                                                           self.app.node_timeout))
+        self.app.immediate_response_timeout = \
+            int(conf.get('interactive_timeout', self.app.node_timeout))
 
     @wsgify
     def __call__(self, req):
@@ -1105,12 +1105,14 @@ class ClusterController(ObjectController):
                     cont_req.path_info = '/%s/%s' % (path.account,
                                                      path.container)
                     cont_req.method = 'PUT'
-                    cont_resp = ContainerController(self.app,
-                                                    path.account,
-                                                    path.container).PUT(cont_req)
+                    cont_resp = \
+                        ContainerController(self.app,
+                                            path.account,
+                                            path.container).PUT(cont_req)
                     if cont_resp.status_int >= 300:
-                        self.middleware.logger.warn('Failed to create deferred container: %s'
-                                                    % cont_req.url)
+                        self.middleware.logger.warn(
+                            'Failed to create deferred container: %s'
+                            % cont_req.url)
                         return
                 resp.input_iter = iter(resp.app_iter)
 
@@ -1131,8 +1133,9 @@ class ClusterController(ObjectController):
                                                  path.container,
                                                  path.obj).PUT(deferred_put)
                 if deferred_resp.status_int >= 300:
-                    self.middleware.logger.warn('Failed to create deferred object: %s : %s'
-                                                % (deferred_put.url, deferred_resp.status))
+                    self.middleware.logger.warn(
+                        'Failed to create deferred object: %s : %s'
+                        % (deferred_put.url, deferred_resp.status))
                 report = self._create_deferred_report(resp.headers)
                 resp.input_iter = iter([report])
                 deferred_put = Request(req.environ.copy())
@@ -1140,13 +1143,15 @@ class ClusterController(ObjectController):
                 deferred_put.method = 'PUT'
                 deferred_put.environ['wsgi.input'] = resp
                 deferred_put.content_length = len(report)
-                deferred_resp = ObjectController(self.app,
-                                                 path.account,
-                                                 path.container,
-                                                 path.obj + '.headers').PUT(deferred_put)
+                deferred_resp = \
+                    ObjectController(self.app,
+                                     path.account,
+                                     path.container,
+                                     path.obj + '.headers').PUT(deferred_put)
                 if deferred_resp.status_int >= 300:
-                    self.middleware.logger.warn('Failed to create deferred object: %s : %s'
-                                                % (deferred_put.url, deferred_resp.status))
+                    self.middleware.logger.warn(
+                        'Failed to create deferred object: %s : %s'
+                        % (deferred_put.url, deferred_resp.status))
             if self.container_name:
                 container = self.container_name
             else:
@@ -1257,8 +1262,9 @@ class ClusterController(ObjectController):
                     conn.node, _('Object'),
                     _('Trying to get final status of POST to %s')
                     % request.path_info)
-                resp = HTTPRequestTimeout(body='Timeout: trying to get final status of POST '
-                                               'to %s' % request.path_info)
+                resp = HTTPRequestTimeout(
+                    body='Timeout: trying to get final status of POST '
+                         'to %s' % request.path_info)
         return self.process_server_response(conn, request, resp)
 
     def _connect_exec_node(self, obj_nodes, part, request,
