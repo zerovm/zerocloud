@@ -86,6 +86,8 @@ POST_TEXT_OBJECT_SYSTEM_MAP = r'''
     }]
 '''
 
+ACCOUNT_HOME_PATH = ['.', '~']
+
 MD5HASH_LENGTH = len(md5('').hexdigest())
 REPORT_LENGTH = 6
 REPORT_VALIDATOR = 0
@@ -160,6 +162,14 @@ def can_run_as_daemon(node_conf, daemon_conf):
         if n.device not in d.device:
             return False
     return True
+
+
+def expand_account_path(account_name, path):
+    if path.account in ACCOUNT_HOME_PATH:
+        return SwiftPath.init(account_name,
+                              path.container,
+                              path.obj)
+    return path
 
 
 class ObjPath:

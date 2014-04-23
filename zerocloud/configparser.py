@@ -4,7 +4,7 @@ from swift import gettext_ as _
 from zerocloud.common import SwiftPath, ZvmNode, ZvmChannel, is_zvm_path, \
     ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, parse_location, \
     ACCESS_RANDOM, has_control_chars, DEVICE_MAP, is_swift_path, \
-    ACCESS_NETWORK
+    ACCESS_NETWORK, expand_account_path
 
 CHANNEL_TYPE_MAP = {
     'stdin': 0,
@@ -203,6 +203,9 @@ class ClusterConfigParser(object):
             connect_devices = {}
             for node in cluster_config:
                 zvm_node = _create_node(node)
+                if is_swift_path(zvm_node.exe):
+                    zvm_node.exe = expand_account_path(account_name,
+                                                       zvm_node.exe)
                 node_count = node.get('count', 1)
                 if isinstance(node_count, int) and node_count > 0:
                     pass
@@ -224,6 +227,9 @@ class ClusterConfigParser(object):
                                                   channel,
                                                   zvm_node)
                             continue
+                        if is_swift_path(channel.path):
+                            channel.path = expand_account_path(account_name,
+                                                               channel.path)
                         if channel.access < 0:
                             if self.is_sysimage_device(channel.device):
                                 other_list.append(channel)
@@ -669,16 +675,6 @@ class ClusterConfigParser(object):
     def resolve_path_info(self, account_name, replica_count):
         default_path_info = '/%s' % account_name
         for node in self.node_list:
-            for chan in node.channels:
-                if is_swift_path(chan.path) and chan.path.account == '.':
-                    chan.path = SwiftPath.init(account_name,
-                                               chan.path.container,
-                                               chan.path.obj)
-            if is_swift_path(node.exe) \
-                    and node.exe.account == '.':
-                    node.exe = SwiftPath.init(account_name,
-                                              node.exe.container,
-                                              node.exe.obj)
             if node.attach == 'default':
                 top_channel = node.channels[0]
             else:
