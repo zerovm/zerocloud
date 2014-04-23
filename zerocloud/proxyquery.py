@@ -9,7 +9,7 @@ import uuid
 from hashlib import md5
 from random import randrange
 import greenlet
-from eventlet import GreenPile, GreenPool, Queue
+from eventlet import GreenPile, GreenPool, Queue, spawn_n
 from eventlet.green import socket
 from eventlet.timeout import Timeout
 import zlib
@@ -18,9 +18,9 @@ from swiftclient.client import quote
 
 from swift import gettext_ as _
 from swift.common.http import HTTP_CONTINUE, is_success, \
-    HTTP_INSUFFICIENT_STORAGE, is_client_error
+    HTTP_INSUFFICIENT_STORAGE, is_client_error, HTTP_NOT_FOUND
 from swift.proxy.controllers.base import update_headers, delay_denial, \
-    cors_validation
+    cors_validation, get_info
 from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
     get_remote_client, ContextPool, cache_from_env, normalize_timestamp, \
     GreenthreadSafeIterator
@@ -69,6 +69,27 @@ def _req_content_type_property():
                     doc="Retrieve and set the request Content-Type header")
 
 Request.content_type = _req_content_type_property()
+
+
+class GreenPileEx(GreenPile):
+    def __init__(self, size_or_pool=1000):
+        super(GreenPileEx, self).__init__(size_or_pool)
+        self.current = None
+
+    def next(self):
+        """Wait for the next result, suspending the current greenthread until it
+        is available.  Raises StopIteration when there are no more results."""
+        if self.counter == 0 and self.used:
+            raise StopIteration()
+        try:
+            if not self.current:
+                self.current = self.waiters.get()
+            res = self.current.wait()
+            self.current = None
+            return res
+        finally:
+            if not self.current:
+                self.counter -= 1
 
 
 class CachedBody(object):
@@ -412,6 +433,9 @@ class ProxyQueryMiddleware(object):
         self.app.zerovm_daemons = self.parse_daemon_config(daemon_list)
         self.uid_generator = Zuid()
 
+        self.app.immediate_response_timeout = \
+            int(conf.get('interactive_timeout', self.app.node_timeout))
+
     @wsgify
     def __call__(self, req):
         try:
@@ -666,6 +690,50 @@ class ClusterController(ObjectController):
             repl_node.last_data = source_resp
             source_resp.nodes.append({'node': repl_node,
                                       'dev': channel.device})
+
+    def create_final_response(self, conns, req):
+        final_body = None
+        final_response = Response(request=req)
+        req.cdr_log = []
+        for conn in conns:
+            resp = conn.resp
+            if resp:
+                for key in conn.nexe_headers.keys():
+                    if resp.headers.get(key):
+                        conn.nexe_headers[key] = resp.headers.get(key)
+            if conn.error:
+                conn.nexe_headers['x-nexe-error'] = \
+                    conn.error.replace('\n', '')
+
+            self._store_accounting_data(req, conn)
+            merge_headers(final_response.headers, conn.nexe_headers)
+            if resp and resp.headers.get('x-zerovm-daemon', None):
+                final_response.headers['x-nexe-cached'] = 'true'
+            if resp and resp.content_length > 0:
+                if final_body:
+                    final_body.append(resp.app_iter)
+                    final_response.content_length += resp.content_length
+                else:
+                    final_body = FinalBody(resp.app_iter)
+                    final_response.app_iter = final_body
+                    final_response.content_length = resp.content_length
+                    final_response.content_type = resp.headers['content-type']
+        if self.app.zerovm_accounting_enabled:
+            self.app.zerovm_ns_thrdpool.spawn_n(self._store_accounting_data,
+                                                req)
+        if self.app.zerovm_use_cors and self.container_name:
+            container_info = self.container_info(self.account_name,
+                                                 self.container_name)
+            if container_info.get('cors', None):
+                if container_info['cors'].get('allow_origin', None):
+                    final_response.headers['access-control-allow-origin'] = \
+                        container_info['cors']['allow_origin']
+                if container_info['cors'].get('expose_headers', None):
+                    final_response.headers['access-control-expose-headers'] = \
+                        container_info['cors']['expose_headers']
+        etag = md5(str(time.time()))
+        final_response.headers['Etag'] = etag.hexdigest()
+        return final_response
 
     @delay_denial
     @cors_validation
@@ -945,7 +1013,7 @@ class ClusterController(ObjectController):
                     size=data_src.content_length))
                 n['node'].size += \
                     TarStream.get_archive_size(data_src.content_length)
-        pile = GreenPile(self.parser.total_count)
+        pile = GreenPileEx(self.parser.total_count)
         conns = self._make_exec_requests(pile, exec_requests)
         if len(conns) < self.parser.total_count:
             self.app.logger.exception(
@@ -1007,82 +1075,107 @@ class ClusterController(ObjectController):
 
         for conn in conns:
             pile.spawn(self._process_response, conn, req)
+        do_defer = req.headers.get('x-zerovm-deferred', 'never').lower()
+        if do_defer == 'always':
+            defer_timeout = 0
+        elif do_defer == 'auto':
+            defer_timeout = self.app.immediate_response_timeout
+        else:
+            defer_timeout = None
+        conns = []
+        try:
+            with Timeout(seconds=defer_timeout):
+                for conn in pile:
+                    if conn:
+                        conns.append(conn)
+        except Timeout:
 
-        conns = [conn for conn in pile if conn]
-        final_body = None
-        final_response = Response(request=req)
-        req.cdr_log = []
-        for conn in conns:
-            resp = conn.resp
-            if resp:
-                for key in conn.nexe_headers.keys():
-                    if resp.headers.get(key):
-                        conn.nexe_headers[key] = resp.headers.get(key)
-            if conn.error:
-                conn.nexe_headers['x-nexe-error'] = \
-                    conn.error.replace('\n', '')
+            def store_deferred_response(deferred_url):
+                for conn in pile:
+                    if conn:
+                        conns.append(conn)
+                resp = self.create_final_response(conns, req)
+                path = SwiftPath(deferred_url)
+                container_info = get_info(self.app, req.environ.copy(),
+                                          path.account, path.container,
+                                          ret_not_found=True)
+                if container_info['status'] == HTTP_NOT_FOUND:
+                    # try to create the container
+                    cont_req = Request(req.environ.copy())
+                    cont_req.path_info = '/%s/%s' % (path.account,
+                                                     path.container)
+                    cont_req.method = 'PUT'
+                    cont_resp = \
+                        ContainerController(self.app,
+                                            path.account,
+                                            path.container).PUT(cont_req)
+                    if cont_resp.status_int >= 300:
+                        self.middleware.logger.warn(
+                            'Failed to create deferred container: %s'
+                            % cont_req.url)
+                        return
+                resp.input_iter = iter(resp.app_iter)
 
-            self._store_accounting_data(req, conn)
-            merge_headers(final_response.headers, conn.nexe_headers)
-            if resp and resp.headers.get('x-zerovm-daemon', None):
-                final_response.headers['x-nexe-cached'] = 'true'
-            if resp and resp.content_length > 0:
-                if final_body:
-                    final_body.append(resp.app_iter)
-                    final_response.content_length += resp.content_length
-                else:
-                    final_body = FinalBody(resp.app_iter)
-                    final_response.app_iter = final_body
-                    final_response.content_length = resp.content_length
-                    final_response.content_type = resp.headers['content-type']
+                def iter_read(chunk_size=None):
+                    if chunk_size is None:
+                        return ''.join(resp.input_iter)
+                    chunk = next(resp.input_iter)
+                    return chunk
+                resp.read = iter_read
+
+                deferred_put = Request(req.environ.copy())
+                deferred_put.path_info = path.path
+                deferred_put.method = 'PUT'
+                deferred_put.environ['wsgi.input'] = resp
+                deferred_put.content_length = resp.content_length
+                deferred_resp = ObjectController(self.app,
+                                                 path.account,
+                                                 path.container,
+                                                 path.obj).PUT(deferred_put)
+                if deferred_resp.status_int >= 300:
+                    self.middleware.logger.warn(
+                        'Failed to create deferred object: %s : %s'
+                        % (deferred_put.url, deferred_resp.status))
+                report = self._create_deferred_report(resp.headers)
+                resp.input_iter = iter([report])
+                deferred_put = Request(req.environ.copy())
+                deferred_put.path_info = path.path + '.headers'
+                deferred_put.method = 'PUT'
+                deferred_put.environ['wsgi.input'] = resp
+                deferred_put.content_length = len(report)
+                deferred_resp = \
+                    ObjectController(self.app,
+                                     path.account,
+                                     path.container,
+                                     path.obj + '.headers').PUT(deferred_put)
+                if deferred_resp.status_int >= 300:
+                    self.middleware.logger.warn(
+                        'Failed to create deferred object: %s : %s'
+                        % (deferred_put.url, deferred_resp.status))
+            if self.container_name:
+                container = self.container_name
+            else:
+                container = self.app.zerovm_registry_path
+            if self.object_name:
+                obj = self.object_name
+            else:
+                obj = 'job-%s' % uuid.uuid4()
+            deferred_path = SwiftPath.init(self.account_name, container, obj)
+            resp = Response(request=req,
+                            body=deferred_path.url)
+            spawn_n(store_deferred_response, deferred_path.url)
+            if ns_server:
+                ns_server.stop()
+            return resp
         if ns_server:
             ns_server.stop()
-        if self.app.zerovm_accounting_enabled:
-            self.app.zerovm_ns_thrdpool.spawn_n(self._store_accounting_data,
-                                                req)
-        if self.app.zerovm_use_cors and self.container_name:
-            container_info = self.container_info(self.account_name,
-                                                 self.container_name)
-            if container_info.get('cors', None):
-                if container_info['cors'].get('allow_origin', None):
-                    final_response.headers['access-control-allow-origin'] = \
-                        container_info['cors']['allow_origin']
-                if container_info['cors'].get('expose_headers', None):
-                    final_response.headers['access-control-expose-headers'] = \
-                        container_info['cors']['expose_headers']
-        etag = md5(str(time.time()))
-        final_response.headers['Etag'] = etag.hexdigest()
-        return final_response
+        return self.create_final_response(conns, req)
 
-    def _process_response(self, conn, request):
-        conn.error = None
-        try:
-            with Timeout(self.app.node_timeout):
-                if conn.resp:
-                    server_response = conn.resp
-                else:
-                    server_response = conn.getresponse()
-        except (Exception, Timeout):
-            self.app.exception_occurred(
-                conn.node, _('Object'),
-                _('Trying to get final status of POST to %s')
-                % request.path_info)
-            conn.error = 'Timeout: trying to get final status of POST ' \
-                         'to %s' % request.path_info
-            return conn
-        if server_response.status != 200:
-            conn.error = '%d %s %s' % \
-                         (server_response.status,
-                          server_response.reason,
-                          server_response.read())
-            return conn
-        resp = Response(status='%d %s' %
-                               (server_response.status,
-                                server_response.reason),
-                        app_iter=iter(lambda: server_response.read(
-                            self.app.network_chunk_size), ''),
-                        headers=dict(server_response.getheaders()))
+    def process_server_response(self, conn, request, resp):
         conn.resp = resp
+        if resp.status_int >= 300:
+            conn.error = resp.body
+            return conn
         if resp.content_length == 0:
             return conn
         node = conn.cnode
@@ -1143,6 +1236,36 @@ class ClusterController(ObjectController):
         untar_stream = None
         resp.content_length = 0
         return conn
+
+    def _process_response(self, conn, request):
+        conn.error = None
+        if conn.resp:
+            server_response = conn.resp
+            resp = Response(status='%d %s' %
+                                   (server_response.status,
+                                    server_response.reason),
+                            app_iter=iter(lambda: server_response.read(
+                                self.app.network_chunk_size), ''),
+                            headers=dict(server_response.getheaders()))
+        else:
+            try:
+                with Timeout(self.app.node_timeout):
+                    server_response = conn.getresponse()
+                    resp = Response(status='%d %s' %
+                                           (server_response.status,
+                                            server_response.reason),
+                                    app_iter=iter(lambda: server_response.read(
+                                        self.app.network_chunk_size), ''),
+                                    headers=dict(server_response.getheaders()))
+            except (Exception, Timeout):
+                self.app.exception_occurred(
+                    conn.node, _('Object'),
+                    _('Trying to get final status of POST to %s')
+                    % request.path_info)
+                resp = HTTPRequestTimeout(
+                    body='Timeout: trying to get final status of POST '
+                         'to %s' % request.path_info)
+        return self.process_server_response(conn, request, resp)
 
     def _connect_exec_node(self, obj_nodes, part, request,
                            logger_thread_locals, cnode, request_headers):
@@ -1305,6 +1428,10 @@ class ClusterController(ObjectController):
                 memcache_key,
                 req.template,
                 time=float(self.app.zerovm_cache_config_timeout))
+
+    def _create_deferred_report(self, headers):
+        # just dumps headers as a json object for now
+        return json.dumps(dict(headers))
 
 
 def _load_channel_data(node, extracted_file):
