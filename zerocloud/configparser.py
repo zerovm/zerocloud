@@ -48,10 +48,39 @@ class ClusterConfigParsingError(Exception):
         return str(self.msg)
 
 
+def _tcp_string(replication_level, destination_id, node_count, access_type):
+    if access_type & ACCESS_READABLE:
+        suffix = '0'
+    else:
+        suffix = ''
+    proto = ';'.join(map(
+        lambda i: 'tcp:%d:%s' % ((destination_id + i * node_count), suffix),
+        range(replication_level)
+    ))
+    return proto
+
+
+def _opaque_string(replication_level, cluster_id, node_count,
+                   source_id, destination_id, access_type):
+    if access_type & ACCESS_READABLE:
+        suffix = ''
+    else:
+        suffix = '>'
+    proto = ';'.join(map(
+        lambda i: 'opaque:%s%s-%d-%d'
+                  % (suffix, cluster_id,
+                     source_id,
+                     (destination_id + i * node_count)),
+        range(replication_level)
+    ))
+    return proto
+
+
 class ClusterConfigParser(object):
     def __init__(self, sysimage_devices, default_content_type,
                  parser_config,
-                 list_account_callback, list_container_callback):
+                 list_account_callback, list_container_callback,
+                 network_type='tcp'):
         """
         Create a new parser instance
 
@@ -75,6 +104,7 @@ class ClusterConfigParser(object):
         self.node_id = 1
         self.total_count = 0
         self.parser_config = parser_config
+        self.network_type = network_type
 
     def find_objects(self, path, **kwargs):
         """
@@ -406,7 +436,7 @@ class ClusterConfigParser(object):
             raise ClusterConfigParsingError(
                 'Non-existing node in connect %s' % bind_name)
 
-    def build_connect_string(self, node):
+    def build_connect_string(self, node, cluster_id=''):
         """
         Builds connect strings from connection information stored in job config
 
@@ -419,10 +449,12 @@ class ClusterConfigParser(object):
         for (dst, dst_dev) in node.bind:
             dst_id = self.nodes.get(dst).id
             dst_repl = self.nodes.get(dst).replicate
-            proto = ';'.join(map(
-                lambda i: 'tcp:%d:0' % (dst_id + i * node_count),
-                range(dst_repl)
-            ))
+            if self.network_type == 'opaque':
+                proto = _opaque_string(dst_repl, cluster_id, node_count,
+                                       node.id, dst_id, ACCESS_READABLE)
+            else:
+                proto = _tcp_string(dst_repl, dst_id, node_count,
+                                      ACCESS_READABLE)
             tmp.append(
                 ','.join([proto,
                           dst_dev,
@@ -436,10 +468,12 @@ class ClusterConfigParser(object):
         for (dst, dst_dev) in node.connect:
             dst_id = self.nodes.get(dst).id
             dst_repl = self.nodes.get(dst).replicate
-            proto = ';'.join(map(
-                lambda i: 'tcp:%d:' % (dst_id + i * node_count),
-                range(dst_repl)
-            ))
+            if self.network_type == 'opaque':
+                proto = _opaque_string(dst_repl, cluster_id, node_count,
+                                       node.id, dst_id, ACCESS_WRITABLE)
+            else:
+                proto = _tcp_string(dst_repl, dst_id, node_count,
+                                      ACCESS_WRITABLE)
             tmp.append(
                 ','.join([proto,
                           dst_dev,
