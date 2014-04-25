@@ -2299,3 +2299,175 @@ return open(mnfst.nvram['path']).read()
         #     self.assertEqual(node.replicate, 1)
         #     self.assertEqual(node.replicas, [])
         #print json.dumps(controller.nodes, sort_keys=True, indent=2, cls=proxyquery.NodeEncoder)
+
+    def test_opaque_config(self):
+
+        pqm = proxyquery.ProxyQueryMiddleware(
+            self.proxy_app,
+            {'zerovm_sysimage_devices': 'sysimage1 sysimage2'})
+        conf = [
+            {
+                'name': 'script',
+                'exec': {
+                    'path': 'file://boot/lua',
+                    'args': 'my_script.lua'
+                },
+                'file_list': [
+                    {
+                        'device': 'image',
+                        'path': 'swift://a/images/lua.img'
+                    },
+                    {
+                        'device': 'stdin',
+                        'path': 'swift://a/c/input'
+                    },
+                    {
+                        'device': 'sysimage1'
+                    }
+                ],
+                'connect': ['script'],
+                'count':5
+            }
+        ]
+        req = Request.blank('/a', environ={'REQUEST_METHOD': 'POST'},
+                            headers={'Content-Type': 'application/json'})
+        parser = None
+        try:
+            parser = ClusterConfigParser(pqm.zerovm_sysimage_devices,
+                                         pqm.app.zerovm_content_type,
+                                         pqm.app.parser_config,
+                                         pqm.list_account, pqm.list_container,
+                                         network_type='opaque')
+            parser.parse(conf, False, request=req)
+        except ClusterConfigParsingError:
+            self.assertTrue(False, msg='ClusterConfigParsingError is raised')
+        self.assertEqual(len(parser.nodes), 5)
+        for n in parser.node_list:
+            parser.build_connect_string(n, cluster_id='cluster1')
+            self.assertEqual(len(n.bind), 4)
+            for line in n.bind:
+                self.assertNotIn('/dev/in/%s' % n.name, line)
+            self.assertEqual(len(n.connect), 4)
+            for line in n.connect:
+                self.assertNotIn('/dev/in/%s' % n.name, line)
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        self.setup_QUERY()
+        self.create_container(prolis, '/v1/a/terasort')
+        self.create_object(prolis, '/v1/a/terasort/input/1.txt',
+                           self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/terasort/input/2.txt',
+                           self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/terasort/input/3.txt',
+                           self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/terasort/input/4.txt',
+                           self.get_random_numbers())
+        mapper_count = 4
+        reducer_count = 4
+        orig_network_type = prosrv.network_type
+        orig_repl = prosrv.ignore_replication
+        try:
+            prosrv.network_type = 'opaque'
+            prosrv.ignore_replication = True
+            nexe =\
+r'''
+return open(mnfst.nvram['path']).read()
+'''[1:-1]
+            self.create_object(prolis, '/v1/a/terasort/bin/map', nexe)
+            self.create_object(prolis, '/v1/a/terasort/bin/reduce', nexe)
+            conf = [
+                {
+                    "name": "map",
+                    "exec": {
+                        "path": "swift://a/terasort/bin/map",
+                        "env": {
+                            "MAP_NAME": "map",
+                            "REDUCE_NAME": "red",
+                            "MAP_CHUNK_SIZE": "100485700"
+                        }
+                    },
+                    "connect": ["red", "map"],
+                    "file_list": [
+                        {
+                            "device": "stdin",
+                            "path": "swift://a/terasort/input/*.txt"
+                        },
+                        {
+                            "device": "stderr",
+                            "path": "swift://a/terasort/log/*.log",
+                            "content_type": "text/plain"
+                        }
+                    ]
+                },
+                {
+                    "name": "red",
+                    "exec": {
+                        "path": "swift://a/terasort/bin/reduce",
+                        "env": {
+                            "MAP_NAME": "map",
+                            "REDUCE_NAME": "red"
+                        }
+                    },
+                    "file_list": [
+                        {
+                            "device": "stdout",
+                            "path": "swift://a/terasort/output/*.txt",
+                            "content_type": "text/plain"
+                        },
+                        {
+                            "device": "stderr",
+                            "path": "swift://a/terasort/log/*.log",
+                            "content_type": "text/plain"
+                        }
+                    ],
+                    "count": reducer_count
+                }
+            ]
+            jconf = json.dumps(conf)
+            req = self.zerovm_request()
+            req.body = jconf
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            map_in = re.compile('/dev/in/map-\d+, opaque:[\da-h]+-\d+-\d+')
+            map_out = re.compile('/dev/out/map-\d+, opaque:>[\da-h]+-\d+-\d+')
+            red_in = re.compile('/dev/in/red-\d+, opaque:[\da-h]+-\d+-\d+')
+            red_out = re.compile('/dev/out/red-\d+, opaque:>[\da-h]+-\d+-\d+')
+            for i in range(1, mapper_count + 1):
+                req = self.object_request('/v1/a/terasort/log/%d.log' % i)
+                res = req.get_response(prosrv)
+                self.assertEqual(res.status_int, 200)
+                con_list = map_in.findall(res.body)
+                self.assertEqual(len(con_list), mapper_count - 1)
+                for line in con_list:
+                    self.assertNotIn('/dev/in/map-%d' % i, line)
+
+                con_list = map_out.findall(res.body)
+                self.assertEqual(len(con_list), mapper_count - 1)
+                for line in con_list:
+                    self.assertNotIn('/dev/out/map-%d' % i, line)
+
+                con_list = red_in.findall(res.body)
+                self.assertEqual(len(con_list), 0)
+
+                con_list = red_out.findall(res.body)
+                self.assertEqual(len(con_list), reducer_count)
+                for line in con_list:
+                    self.assertNotIn('/dev/out/map-%d' % i, line)
+            for i in range(1, reducer_count + 1):
+                req = self.object_request('/v1/a/terasort/log/red-%d.log' % i)
+                res = req.get_response(prosrv)
+                self.assertEqual(res.status_int, 200)
+                con_list = map_in.findall(res.body)
+                self.assertEqual(len(con_list), mapper_count)
+
+                con_list = map_out.findall(res.body)
+                self.assertEqual(len(con_list), 0)
+
+                con_list = red_in.findall(res.body)
+                self.assertEqual(len(con_list), 0)
+
+                con_list = red_out.findall(res.body)
+                self.assertEqual(len(con_list), 0)
+        finally:
+            prosrv.network_type = orig_network_type
+            prosrv.ignore_replication = orig_repl

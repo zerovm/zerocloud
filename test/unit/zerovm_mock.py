@@ -210,6 +210,8 @@ for fname, device, type, tag, rd, rd_byte, wr, wr_byte \
                 connect_data += struct.pack('!IH', host, 0)
                 connect_count += 1
                 con_list.append(device)
+    elif fname.startswith('opaque:'):
+        con_list.append([fname, device])
     mnfst.channels[device] = {
         'device': device,
         'path': fname,

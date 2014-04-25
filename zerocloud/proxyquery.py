@@ -316,7 +316,8 @@ class ProxyQueryMiddleware(object):
                                          self.app.zerovm_content_type,
                                          self.app.parser_config,
                                          self.list_account,
-                                         self.list_container)
+                                         self.list_container,
+                                         network_type=self.network_type)
             try:
                 parser.parse(json_config, False, request=request)
             except ClusterConfigParsingError, e:
@@ -435,6 +436,12 @@ class ProxyQueryMiddleware(object):
 
         self.app.immediate_response_timeout = \
             int(conf.get('interactive_timeout', self.app.node_timeout))
+        self.network_type = conf.get('zerovm_network_type', 'tcp')
+        self.ignore_replication = conf.get(
+            'zerovm_ignore_replication', 'f').lower() in TRUE_VALUES
+        # opaque network does not support replication right now
+        if self.network_type == 'opaque':
+            self.ignore_replication = True
 
     @wsgify
     def __call__(self, req):
@@ -519,7 +526,8 @@ class ClusterController(ObjectController):
             self.app.zerovm_content_type,
             self.app.parser_config,
             self.middleware.list_account,
-            self.middleware.list_container)
+            self.middleware.list_container,
+            network_type=self.middleware.network_type)
 
     def get_daemon_socket(self, config):
         for daemon_sock, daemon_conf in self.app.zerovm_daemons:
@@ -897,10 +905,14 @@ class ClusterController(ObjectController):
 
         req.path_info = '/' + self.account_name
         try:
+            if self.middleware.ignore_replication:
+                replica_count = 1
+            else:
+                replica_count = self.app.object_ring.replica_count
             self.parser.parse(cluster_config,
                               user_image,
                               self.account_name,
-                              self.app.object_ring.replica_count,
+                              replica_count,
                               request=req)
         except ClusterConfigParsingError, e:
             self.app.logger.warn(
@@ -916,7 +928,7 @@ class ClusterController(ObjectController):
             return HTTPServiceUnavailable(
                 body='Cannot find own address, check zerovm_ns_hostname')
         ns_server = None
-        if self.parser.total_count > 1:
+        if self.parser.total_count > 1 and self.middleware.network_type == 'tcp':
             ns_server = NameService(self.parser.total_count)
             if self.app.zerovm_ns_thrdpool.free() <= 0:
                 return HTTPServiceUnavailable(
@@ -960,7 +972,9 @@ class ClusterController(ObjectController):
                     return aresp
             if ns_server:
                 node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
-                self.parser.build_connect_string(node)
+            if self.parser.total_count > 1:
+                self.parser.build_connect_string(
+                    node, req.headers.get('x-zerocloud-id', ''))
                 if node.replicate > 1:
                     for i in range(0, node.replicate - 1):
                         node.replicas.append(deepcopy(node))
