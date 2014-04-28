@@ -1,4 +1,5 @@
 *.py[co]
 .coverage
+cover/
 .tox
 zerocloud.egg-info
