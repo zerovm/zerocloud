@@ -454,7 +454,7 @@ class ClusterConfigParser(object):
                                        node.id, dst_id, ACCESS_READABLE)
             else:
                 proto = _tcp_string(dst_repl, dst_id, node_count,
-                                      ACCESS_READABLE)
+                                    ACCESS_READABLE)
             tmp.append(
                 ','.join([proto,
                           dst_dev,
@@ -473,7 +473,7 @@ class ClusterConfigParser(object):
                                        node.id, dst_id, ACCESS_WRITABLE)
             else:
                 proto = _tcp_string(dst_repl, dst_id, node_count,
-                                      ACCESS_WRITABLE)
+                                    ACCESS_WRITABLE)
             tmp.append(
                 ','.join([proto,
                           dst_dev,
