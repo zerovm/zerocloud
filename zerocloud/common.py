@@ -205,7 +205,11 @@ class SwiftPath(ObjPath):
 
     @classmethod
     def init(cls, account, container, obj):
-        return cls('swift://%s/%s/%s' % (account, container, obj))
+        if not account:
+            return None
+        return cls('swift://' +
+                   '/'.join(filter(None,
+                                   (account, container, obj))))
 
 
 class ImagePath(ObjPath):
