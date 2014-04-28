@@ -186,7 +186,9 @@ mnfst.channels = {}
 stddev = {'/dev/stdin': 0, '/dev/stdout': 0, '/dev/stderr': 0}
 for fname, device, type, tag, rd, rd_byte, wr, wr_byte \
         in zip(*[iter(channel_list)]*8):
+    net_device = False
     if fname.startswith('tcp:'):
+        net_device = True
         if ';' in fname:
             socks = fname.split(';')
         else:
@@ -211,6 +213,7 @@ for fname, device, type, tag, rd, rd_byte, wr, wr_byte \
                 connect_count += 1
                 con_list.append(device)
     elif fname.startswith('opaque:'):
+        net_device = True
         con_list.append([fname, device])
     mnfst.channels[device] = {
         'device': device,
@@ -222,6 +225,8 @@ for fname, device, type, tag, rd, rd_byte, wr, wr_byte \
         'write': wr,
         'write_bytes': wr_byte
     }
+    if net_device:
+        mnfst.channels[device]['path'] = '/dev/null'
     stddev.pop(device, 0)
     if device == '/dev/stdin' or device == '/dev/input':
         mnfst.input = mnfst.channels[device]
