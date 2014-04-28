@@ -928,7 +928,8 @@ class ClusterController(ObjectController):
             return HTTPServiceUnavailable(
                 body='Cannot find own address, check zerovm_ns_hostname')
         ns_server = None
-        if self.parser.total_count > 1 and self.middleware.network_type == 'tcp':
+        network_is_tcp = self.middleware.network_type == 'tcp'
+        if self.parser.total_count > 1 and network_is_tcp:
             ns_server = NameService(self.parser.total_count)
             if self.app.zerovm_ns_thrdpool.free() <= 0:
                 return HTTPServiceUnavailable(
