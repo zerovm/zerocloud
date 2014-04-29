@@ -427,6 +427,9 @@ class ProxyQueryMiddleware(object):
                 'wbytes': int(conf.get('zerovm_maxinput', 1024 * 1048576))
             }
         }
+        # use direct tcp connections (tcp) or intermediate broker (opaque)
+        self.network_type = conf.get('zerovm_network_type', 'tcp')
+
         # list of daemons we need to lazy load
         # (first request will start the daemon)
         daemon_list = [i.strip() for i in
@@ -436,7 +439,6 @@ class ProxyQueryMiddleware(object):
 
         self.app.immediate_response_timeout = \
             int(conf.get('interactive_timeout', self.app.node_timeout))
-        self.network_type = conf.get('zerovm_network_type', 'tcp')
         self.ignore_replication = conf.get(
             'zerovm_ignore_replication', 'f').lower() in TRUE_VALUES
         # opaque network does not support replication right now
