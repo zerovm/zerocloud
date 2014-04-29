@@ -16,7 +16,6 @@ import zlib
 
 from swiftclient.client import quote
 
-from swift import gettext_ as _
 from swift.common.http import HTTP_CONTINUE, is_success, \
     HTTP_INSUFFICIENT_STORAGE, is_client_error, HTTP_NOT_FOUND
 from swift.proxy.controllers.base import update_headers, delay_denial, \
@@ -916,7 +915,7 @@ class ClusterController(ObjectController):
                               request=req)
         except ClusterConfigParsingError, e:
             self.app.logger.warn(
-                _('ERROR Error parsing config: %s'), cluster_config)
+                'ERROR Error parsing config: %s', cluster_config)
             return HTTPBadRequest(request=req, body=str(e))
 
         # for n in self.parser.node_list:
@@ -1032,7 +1031,7 @@ class ClusterController(ObjectController):
         conns = self._make_exec_requests(pile, exec_requests)
         if len(conns) < self.parser.total_count:
             self.app.logger.exception(
-                _('ERROR Cannot find suitable node to execute code on'))
+                'ERROR Cannot find suitable node to execute code on')
             return HTTPServiceUnavailable(
                 body='Cannot find suitable node to execute code on')
 
@@ -1079,13 +1078,13 @@ class ClusterController(ObjectController):
                     conn.tar_stream = None
         except ChunkReadTimeout, err:
             self.app.logger.warn(
-                _('ERROR Client read timeout (%ss)'), err.seconds)
+                'ERROR Client read timeout (%ss)', err.seconds)
             self.app.logger.increment('client_timeouts')
             return HTTPRequestTimeout(request=req)
         except (Exception, Timeout):
             print traceback.format_exc()
             self.app.logger.exception(
-                _('ERROR Exception causing client disconnect'))
+                'ERROR Exception causing client disconnect')
             return HTTPClientDisconnect(request=req, body='exception')
 
         for conn in conns:
@@ -1274,8 +1273,8 @@ class ClusterController(ObjectController):
                                     headers=dict(server_response.getheaders()))
             except (Exception, Timeout):
                 self.app.exception_occurred(
-                    conn.node, _('Object'),
-                    _('Trying to get final status of POST to %s')
+                    conn.node, 'Object',
+                    'Trying to get final status of POST to %s'
                     % request.path_info)
                 resp = HTTPRequestTimeout(
                     body='Timeout: trying to get final status of POST '
@@ -1307,7 +1306,7 @@ class ClusterController(ObjectController):
                     return conn
                 elif resp.status == HTTP_INSUFFICIENT_STORAGE:
                     self.app.error_limit(node,
-                                         _('ERROR Insufficient Storage'))
+                                         'ERROR Insufficient Storage')
                 elif is_client_error(resp.status):
                     conn.error = resp.read()
                     conn.resp = resp
@@ -1316,8 +1315,8 @@ class ClusterController(ObjectController):
                     self.app.logger.warn('Obj server failed with: %d %s'
                                          % (resp.status, resp.reason))
             except Exception:
-                self.app.exception_occurred(node, _('Object'),
-                                            _('Expect: 100-continue on %s')
+                self.app.exception_occurred(node, 'Object',
+                                            'Expect: 100-continue on %s'
                                             % request.path_info)
 
     def _store_accounting_data(self, request, connection=None):
@@ -1351,7 +1350,7 @@ class ClusterController(ObjectController):
             resp = append_req.get_response(self.app)
             if resp.status_int >= 300:
                 self.app.logger.warn(
-                    _('ERROR Cannot write stats for account %s'),
+                    'ERROR Cannot write stats for account %s',
                     self.account_name)
 
     @delay_denial
