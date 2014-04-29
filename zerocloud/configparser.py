@@ -1,7 +1,5 @@
 import re
 import traceback
-from gettext import gettext as _
-
 from zerocloud.common import SwiftPath, ZvmNode, ZvmChannel, is_zvm_path, \
     ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, parse_location, \
     ACCESS_RANDOM, has_control_chars, DEVICE_MAP, is_swift_path, \
@@ -128,8 +126,8 @@ class ClusterConfigParser(object):
                                                **kwargs)
             except Exception:
                 raise ClusterConfigParsingError(
-                    _('Error querying object server '
-                      'for account: %s') % path.account)
+                    'Error querying object server '
+                    'for account: %s' % path.account)
             if path.obj:
                 obj = path.obj
                 if '*' in obj:
@@ -144,8 +142,8 @@ class ClusterConfigParser(object):
                                                    mask=mask, **kwargs)
                 except Exception:
                     raise ClusterConfigParsingError(
-                        _('Error querying object server '
-                          'for container: %s') % container)
+                        'Error querying object server '
+                        'for container: %s' % container)
                 for obj in obj_list:
                     temp_list.append(SwiftPath.init(path.account,
                                                     container,
@@ -162,10 +160,10 @@ class ClusterConfigParser(object):
                                                     obj))
             except Exception:
                 raise ClusterConfigParsingError(
-                    _('Error querying object server '
-                      'for container: %s') % path.container)
+                    'Error querying object server '
+                    'for container: %s' % path.container)
         if not temp_list:
-            raise ClusterConfigParsingError(_('No objects found in path %s')
+            raise ClusterConfigParsingError('No objects found in path %s'
                                             % path.url)
         return temp_list
 
@@ -211,7 +209,7 @@ class ClusterConfigParser(object):
                     _create_node_name(node_name, j))
         else:
             raise ClusterConfigParsingError(
-                _('Non existing node in connect string for node %s')
+                'Non existing node in connect string for node %s'
                 % node_name)
 
     def parse(self, cluster_config, add_user_image, account_name=None,
@@ -242,7 +240,7 @@ class ClusterConfigParser(object):
                     pass
                 else:
                     raise ClusterConfigParsingError(
-                        _('Invalid node count: %s') % str(node_count))
+                        'Invalid node count: %s' % str(node_count))
                 file_list = FILE_LIST.fetch_from(node)
                 read_list = []
                 write_list = []
@@ -266,7 +264,7 @@ class ClusterConfigParser(object):
                                 other_list.append(channel)
                                 continue
                             raise ClusterConfigParsingError(
-                                _('Unknown device %s in %s')
+                                'Unknown device %s in %s'
                                 % (channel.device, zvm_node.name))
                         if channel.access & ACCESS_READABLE:
                             read_list.insert(0, channel)
@@ -333,16 +331,16 @@ class ClusterConfigParser(object):
                         elif chan.path:
                             if node_count > 1:
                                 raise ClusterConfigParsingError(
-                                    _('Single path %s for multiple node '
-                                      'definition: %s, please use wildcard')
+                                    'Single path %s for multiple node '
+                                    'definition: %s, please use wildcard'
                                     % (chan.path.url, zvm_node.name))
                             self._add_new_channel(zvm_node, chan)
                         else:
                             if 'stdout' not in chan.device \
                                     and 'stderr' not in chan.device:
                                 raise ClusterConfigParsingError(
-                                    _('Immediate response is not available '
-                                      'for device %s') % chan.device)
+                                    'Immediate response is not available '
+                                    'for device %s' % chan.device)
                             if node_count > 1:
                                 for i in range(1, node_count + 1):
                                     self._add_new_channel(zvm_node,
@@ -356,7 +354,7 @@ class ClusterConfigParser(object):
                         else:
                             if not chan.path:
                                 raise ClusterConfigParsingError(
-                                    _('Path is required for device: %s')
+                                    'Path is required for device: %s'
                                     % chan.device)
                         if node_count > 1:
                             for i in range(1, node_count + 1):
@@ -756,8 +754,8 @@ def _extract_stored_wildcards(path, node):
     for wc in node.wildcards:
         new_url = new_url.replace('*', wc, 1)
     if new_url.count('*') > 0:
-        raise ClusterConfigParsingError(_('Wildcards in input cannot be '
-                                          'resolved into output path %s')
+        raise ClusterConfigParsingError('Wildcards in input cannot be '
+                                        'resolved into output path %s'
                                         % path)
     return new_url
 
@@ -765,25 +763,25 @@ def _extract_stored_wildcards(path, node):
 def _create_node(node_config):
     name = node_config.get('name')
     if not name:
-        raise ClusterConfigParsingError(_('Must specify node name'))
+        raise ClusterConfigParsingError('Must specify node name')
     if has_control_chars(name):
-        raise ClusterConfigParsingError(_('Invalid node name'))
+        raise ClusterConfigParsingError('Invalid node name')
     nexe = node_config.get('exec')
     if not nexe:
         raise ClusterConfigParsingError(
-            _('Must specify exec stanza for %s') % name)
+            'Must specify exec stanza for %s' % name)
     exe = parse_location(nexe.get('path'))
     if not exe:
         raise ClusterConfigParsingError(
-            _('Must specify executable path for %s') % name)
+            'Must specify executable path for %s' % name)
     if is_zvm_path(exe):
         raise ClusterConfigParsingError(
-            _('Executable path cannot be a zvm path in %s') % name)
+            'Executable path cannot be a zvm path in %s' % name)
     args = nexe.get('args')
     env = nexe.get('env')
     if has_control_chars('%s %s %s' % (exe.url, args, env)):
         raise ClusterConfigParsingError(
-            _('Invalid nexe property for %s') % name)
+            'Invalid nexe property for %s' % name)
     replicate = node_config.get('replicate', 1)
     attach = node_config.get('attach', 'default')
     return ZvmNode(0, name, exe, args, env, replicate, attach)
@@ -793,11 +791,11 @@ def _create_channel(channel, node, default_content_type=None):
     device = DEVICE.fetch_from(channel)
     if has_control_chars(device):
         raise ClusterConfigParsingError(
-            _('Bad device name: %s in %s') % (device, node.name))
+            'Bad device name: %s in %s' % (device, node.name))
     path = parse_location(channel.get('path'))
     if not device:
         raise ClusterConfigParsingError(
-            _('Must specify device for file in %s') % node.name)
+            'Must specify device for file in %s' % node.name)
     access = DEVICE_MAP.get(device, -1)
     mode = channel.get('mode', None)
     meta = channel.get('meta', {})
@@ -806,9 +804,9 @@ def _create_channel(channel, node, default_content_type=None):
     if access & ACCESS_READABLE and path:
         if not is_swift_path(path):
             raise ClusterConfigParsingError(
-                _('Readable device must be a swift object'))
+                'Readable device must be a swift object')
         if not path.account or not path.container:
-            raise ClusterConfigParsingError(_('Invalid path %s in %s')
+            raise ClusterConfigParsingError('Invalid path %s in %s'
                                             % (path.url, node.name))
     return ZvmChannel(device, access, path=path,
                       content_type=content_type, meta_data=meta, mode=mode)

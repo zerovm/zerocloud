@@ -16,7 +16,6 @@ from eventlet.timeout import Timeout
 from eventlet.green.httplib import HTTPResponse
 import errno
 import signal
-from gettext import gettext as _
 
 import zlib
 from swift.common.swob import Request, Response, HTTPNotFound, \
@@ -1135,8 +1134,8 @@ class ObjectQueryMiddleware(object):
                 else:
                     return self.app(env, start_response)
             except (Exception, Timeout):
-                self.logger.exception(_('ERROR __call__ error with %(method)s'
-                                        ' %(path)s '),
+                self.logger.exception('ERROR __call__ error with %(method)s'
+                                      ' %(path)s ',
                                       {'method': req.method, 'path': req.path})
                 res = HTTPInternalServerError(body=traceback.format_exc())
         trans_time = time.time() - start_time
