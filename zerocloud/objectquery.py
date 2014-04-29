@@ -16,8 +16,8 @@ from eventlet.timeout import Timeout
 from eventlet.green.httplib import HTTPResponse
 import errno
 import signal
+from gettext import gettext as _
 
-from swift import gettext_ as _
 import zlib
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \

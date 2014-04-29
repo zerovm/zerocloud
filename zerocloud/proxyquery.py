@@ -13,10 +13,10 @@ from eventlet import GreenPile, GreenPool, Queue, spawn_n
 from eventlet.green import socket
 from eventlet.timeout import Timeout
 import zlib
+from gettext import gettext as _
 
 from swiftclient.client import quote
 
-from swift import gettext_ as _
 from swift.common.http import HTTP_CONTINUE, is_success, \
     HTTP_INSUFFICIENT_STORAGE, is_client_error, HTTP_NOT_FOUND
 from swift.proxy.controllers.base import update_headers, delay_denial, \

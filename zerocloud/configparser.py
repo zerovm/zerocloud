@@ -1,6 +1,7 @@
 import re
 import traceback
-from swift import gettext_ as _
+from gettext import gettext as _
+
 from zerocloud.common import SwiftPath, ZvmNode, ZvmChannel, is_zvm_path, \
     ACCESS_READABLE, ACCESS_CDR, ACCESS_WRITABLE, parse_location, \
     ACCESS_RANDOM, has_control_chars, DEVICE_MAP, is_swift_path, \
