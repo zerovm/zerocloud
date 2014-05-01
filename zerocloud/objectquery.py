@@ -519,6 +519,14 @@ class ObjectQueryMiddleware(object):
         resp.headers = nexe_headers
         return resp
 
+    def get_writable_tmpdir(self, device):
+        writable_tmpdir = os.path.join(self._diskfile_mgr.devices,
+                                       device,
+                                       'tmp')
+        if not os.path.exists(writable_tmpdir):
+            mkdirs(writable_tmpdir)
+        return writable_tmpdir
+
     def zerovm_query(self, req):
         """Handle zerovm execution requests for the Swift Object Server."""
 
@@ -764,11 +772,7 @@ class ObjectQueryMiddleware(object):
                                                        'channel path: %s'
                                                        % ch['path'])
                 elif ch['access'] & ACCESS_WRITABLE:
-                    writable_tmpdir = os.path.join(self._diskfile_mgr.devices,
-                                                   device,
-                                                   'tmp')
-                    if not os.path.exists(writable_tmpdir):
-                        mkdirs(writable_tmpdir)
+                    writable_tmpdir = self.get_writable_tmpdir(device)
                     (output_fd, output_fn) = mkstemp(dir=writable_tmpdir)
                     os.close(output_fd)
                     ch['lpath'] = output_fn
@@ -1286,7 +1290,8 @@ class ObjectQueryMiddleware(object):
         fd = os.open(local_object['lpath'], os.O_RDONLY)
         if local_object.get('offset', None):
             # need to re-write the file
-            newfd, new_name = mkstemp()
+            tmpdir = self.get_writable_tmpdir(device)
+            newfd, new_name = mkstemp(dir=tmpdir)
             new_etag = md5()
             try:
                 os.lseek(fd, local_object['offset'], os.SEEK_SET)
