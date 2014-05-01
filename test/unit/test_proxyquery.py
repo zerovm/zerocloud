@@ -2428,10 +2428,14 @@ return open(mnfst.nvram['path']).read()
             req.body = jconf
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 200)
-            map_in = re.compile('/dev/in/map-\d+, opaque:[\da-h]+-\d+-\d+')
-            map_out = re.compile('/dev/out/map-\d+, opaque:>[\da-h]+-\d+-\d+')
-            red_in = re.compile('/dev/in/red-\d+, opaque:[\da-h]+-\d+-\d+')
-            red_out = re.compile('/dev/out/red-\d+, opaque:>[\da-h]+-\d+-\d+')
+            map_in = re.compile(
+                '/dev/in/map-\d+, opaque:local\|[\da-h]+-\d+-\d+')
+            map_out = re.compile(
+                '/dev/out/map-\d+, opaque:local\|>[\da-h]+-\d+-\d+')
+            red_in = re.compile(
+                '/dev/in/red-\d+, opaque:local\|[\da-h]+-\d+-\d+')
+            red_out = re.compile(
+                '/dev/out/red-\d+, opaque:local\|>[\da-h]+-\d+-\d+')
             for i in range(1, mapper_count + 1):
                 req = self.object_request('/v1/a/terasort/log/%d.log' % i)
                 res = req.get_response(prosrv)
