@@ -66,8 +66,8 @@ def _opaque_string(replication_level, cluster_id, node_count,
     else:
         suffix = '>'
     proto = ';'.join(map(
-        lambda i: 'opaque:%s%s-%d-%d'
-                  % (suffix, cluster_id,
+        lambda i: 'opaque:local|%s%s-%d-%d'
+                  % (suffix, cluster_id, 
                      source_id,
                      (destination_id + i * node_count)),
         range(replication_level)
@@ -448,6 +448,7 @@ class ClusterConfigParser(object):
         for (dst, dst_dev) in node.bind:
             dst_id = self.nodes.get(dst).id
             dst_repl = self.nodes.get(dst).replicate
+
             if self.network_type == 'opaque':
                 proto = _opaque_string(dst_repl, cluster_id, node_count,
                                        node.id, dst_id, ACCESS_READABLE)
