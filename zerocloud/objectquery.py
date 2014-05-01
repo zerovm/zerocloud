@@ -18,13 +18,16 @@ import errno
 import signal
 
 import zlib
+from os.path import exists
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
     HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict, \
     HTTPInsufficientStorage
 from swift.common.utils import normalize_timestamp, \
-    split_path, get_logger, mkdirs, disable_fallocate, config_true_value
+    split_path, get_logger, mkdirs, disable_fallocate, config_true_value, \
+    hash_path, storage_directory
+from swift.container.backend import ContainerBroker
 from swift.obj.diskfile import DiskFileManager, DiskFile, DiskFileWriter, \
     write_metadata
 from swift.common.constraints import check_utf8
@@ -48,6 +51,7 @@ try:
 except ImportError:
     import json
 
+CONT_DATADIR = 'containers'
 # mapping between return code and its message
 RETCODE_MAP = [
     'OK',              # [0]
@@ -56,6 +60,20 @@ RETCODE_MAP = [
     'Killed',          # [3]
     'Output too long'  # [4]
 ]
+
+
+class LocalObject(object):
+
+    def __init__(self, account, container, obj,
+                 disk_file=None):
+        self.account = account
+        self.container = container
+        self.obj = obj
+        self.swift_path = SwiftPath.init(account, container, obj)
+        self.disk_file = disk_file
+        self.channel = None
+        self.path = None
+        self.has_local_file = True if container or obj else False
 
 
 class ZDiskFileManager(DiskFileManager):
@@ -71,6 +89,26 @@ class ZDiskFileManager(DiskFileManager):
         return ZDiskFile(self, dev_path, self.threadpools[device],
                          partition, account, container, obj, **kwargs)
 
+    def get_container_broker(self, device, partition, account, container,
+                             **kwargs):
+        """
+        Get a DB broker for the container.
+
+        :param device: drive that holds the container
+        :param partition: partition the container is in
+        :param account: account name
+        :param container: container name
+        :returns: ContainerBroker object
+        """
+        hsh = hash_path(account, container)
+        db_dir = storage_directory(CONT_DATADIR, partition, hsh)
+        db_path = os.path.join(self.devices,
+                               device, db_dir, hsh + '.db')
+        kwargs.setdefault('account', account)
+        kwargs.setdefault('container', container)
+        kwargs.setdefault('logger', self.logger)
+        return ContainerBroker(db_path, **kwargs)
+
 
 class ZDiskFile(DiskFile):
 
@@ -85,8 +123,24 @@ class ZDiskFile(DiskFile):
 
     @contextmanager
     def create(self, size=None, fd=None):
-        if not os.path.exists(self._tmpdir):
+        """
+        Context manager to create a file. We create a temporary file first, and
+        then return a DiskFileWriter object to encapsulate the state.
+
+        .. note::
+
+            An implementation is not required to perform on-disk
+            preallocations even if the parameter is specified. But if it does
+            and it fails, it must raise a `DiskFileNoSpace` exception.
+
+        :param size: optional initial size of file to explicitly allocate on
+                     disk
+        :raises DiskFileNoSpace: if a size is specified and allocation fails
+        """
+        if not exists(self._tmpdir):
             mkdirs(self._tmpdir)
+        if fd is None:
+            fd, self.tmppath = mkstemp(dir=self._tmpdir)
         try:
             yield DiskFileWriter(self._name, self._datadir, fd,
                                  self.tmppath, self._bytes_per_sync,
@@ -98,6 +152,7 @@ class ZDiskFile(DiskFile):
                 pass
             try:
                 os.unlink(self.tmppath)
+                self.tmppath = None
             except OSError:
                 pass
 
@@ -127,10 +182,9 @@ class PseudoSocket():
 
 
 class TmpDir(object):
-    def __init__(self, path, device, disk_chunk_size=65536, os_interface=os):
+    def __init__(self, path, device, os_interface=os):
         self.os_interface = os_interface
         self.tmpdir = self.os_interface.path.join(path, device, 'tmp')
-        self.disk_chunk_size = disk_chunk_size
 
     @contextmanager
     def mkstemp(self):
@@ -211,7 +265,7 @@ class ObjectQueryMiddleware(object):
             self.logger = get_logger(conf, log_route='obj-query')
 
         # let's load appropriate server config sections here
-        load_server_conf(conf, ['app:object-server'])
+        load_server_conf(conf, ['app:object-server', 'app:container-server'])
         # path to zerovm executable, better use absolute path here
         # for security reasons
         self.zerovm_exename = [i.strip() for i in
@@ -553,29 +607,13 @@ class ObjectQueryMiddleware(object):
             'x-nexe-system': ''
         }
 
-        zerovm_execute_only = False
-        device = None
-        partition = None
-        account = None
-        container = None
-        obj = None
         try:
-            (device, partition, account) = \
-                split_path(unquote(req.path), 3, 3)
-            # if we run with only the account part in url
-            # there is no local object to work with
-            # we are just executing code and returning the results
-            # over the network
-            zerovm_execute_only = True
-        except ValueError:
-            pass
-        if not zerovm_execute_only:
-            try:
-                (device, partition, account, container, obj) = \
-                    split_path(unquote(req.path), 5, 5, True)
-            except ValueError, err:
-                return HTTPBadRequest(body=str(err), request=req,
-                                      content_type='text/plain')
+            (device, partition, account, container, obj) = \
+                split_path(unquote(req.path), 3, 5, True)
+        except ValueError, err:
+            return HTTPBadRequest(body=str(err), request=req,
+                                  content_type='text/plain')
+        local_object = LocalObject(account, container, obj)
         rbytes = self.parser_config['limits']['rbytes']
         if 'content-length' in req.headers \
                 and int(req.headers['content-length']) > rbytes:
@@ -614,10 +652,8 @@ class ObjectQueryMiddleware(object):
         tmpdir = TmpDir(
             self._diskfile_mgr.devices,
             device,
-            disk_chunk_size=self.disk_chunk_size,
             os_interface=self.os_interface
         )
-        disk_file = None
         start = time.time()
         channels = {}
         with tmpdir.mkdtemp() as zerovm_tmp:
@@ -720,54 +756,84 @@ class ObjectQueryMiddleware(object):
                     and len(config.get('replicas', [])) < (replicate - 1):
                 is_master = False
             response_channels = []
-            local_object = {}
-            if not zerovm_execute_only:
-                local_object['path'] = \
-                    SwiftPath.init(account, container, obj).url
             for ch in config['channels']:
                 chan_path = parse_location(ch['path'])
                 if ch['device'] in channels:
                     ch['lpath'] = channels[ch['device']]
-                elif local_object and chan_path:
-                    if chan_path.url in local_object['path']:
-                        try:
-                            disk_file = self.get_disk_file(device,
-                                                           partition,
-                                                           account,
-                                                           container,
-                                                           obj)
-                        except DiskFileDeviceUnavailable:
-                            return HTTPInsufficientStorage(drive=device,
-                                                           request=req)
-                        if ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
+                elif local_object.has_local_file and chan_path:
+                    if chan_path.url == local_object.swift_path.url:
+                        if chan_path.obj:
                             try:
-                                disk_file.open()
-                            except DiskFileNotExist:
-                                return HTTPNotFound(request=req)
-                            meta = disk_file.get_metadata()
-                            input_file_size = int(meta['Content-Length'])
-                            if input_file_size > rbytes:
-                                return HTTPRequestEntityTooLarge(
-                                    body='Data object too large',
-                                    request=req,
-                                    content_type='text/plain',
-                                    headers=nexe_headers)
-                            ch['lpath'] = disk_file.data_file
-                            channels[ch['device']] = disk_file.data_file
-                            ch['meta'] = meta
-                            ch['size'] = input_file_size
-                        elif ch['access'] & ACCESS_WRITABLE:
-                            try:
-                                disk_file.new_timestamp = \
-                                    req.headers.get('x-timestamp')
-                                float(disk_file.new_timestamp)
-                            except (KeyError, ValueError, TypeError):
+                                local_object.disk_file = \
+                                    self.get_disk_file(device,
+                                                       partition,
+                                                       account,
+                                                       container,
+                                                       obj)
+                            except DiskFileDeviceUnavailable:
+                                return HTTPInsufficientStorage(drive=device,
+                                                               request=req)
+                            if ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
+                                try:
+                                    local_object.disk_file.open()
+                                except DiskFileNotExist:
+                                    return HTTPNotFound(request=req)
+                                meta = local_object.disk_file.get_metadata()
+                                input_file_size = int(meta['Content-Length'])
+                                if input_file_size > rbytes:
+                                    return HTTPRequestEntityTooLarge(
+                                        body='Data object too large',
+                                        request=req,
+                                        content_type='text/plain',
+                                        headers=nexe_headers)
+                                ch['lpath'] = local_object.disk_file.data_file
+                                channels[ch['device']] = \
+                                    local_object.disk_file.data_file
+                                ch['meta'] = meta
+                                ch['size'] = input_file_size
+                            elif ch['access'] & ACCESS_WRITABLE:
+                                try:
+                                    local_object.disk_file.new_timestamp = \
+                                        req.headers.get('x-timestamp')
+                                    float(local_object.disk_file.new_timestamp)
+                                except (KeyError, ValueError, TypeError):
+                                    return HTTPBadRequest(
+                                        body='Locally writable object '
+                                             'specified but no x-timestamp '
+                                             'in request')
+                            local_object.disk_file.channel_device = \
+                                '/dev/%s' % ch['device']
+                            ch['path_info'] = \
+                                local_object.disk_file.name
+                        elif chan_path.container:
+                            if ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
+                                local_object.broker = \
+                                    self._diskfile_mgr.get_container_broker(
+                                        device, partition,
+                                        account, container)
+                                if local_object.broker.is_deleted():
+                                    return HTTPNotFound(headers=nexe_headers,
+                                                        request=req)
+                                input_file_size = \
+                                    self.os_interface.path.getsize(
+                                        local_object.broker.db_file)
+                                if input_file_size > rbytes:
+                                    return HTTPRequestEntityTooLarge(
+                                        body='Data object too large',
+                                        request=req,
+                                        headers=nexe_headers)
+                                ch['lpath'] = local_object.broker.db_file
+                                channels[ch['device']] = \
+                                    local_object.broker.db_file
+                                ch['meta'] = {}
+                                ch['size'] = input_file_size
+                                ch['path_info'] = \
+                                    local_object.swift_path.path
+                            else:
                                 return HTTPBadRequest(
-                                    body='Locally writable object specified '
-                                         'but no x-timestamp in request')
-                        disk_file.channel_device = '/dev/%s' % ch['device']
-                        local_object = ch
-                        local_object['path_info'] = disk_file.name
+                                    body='Containers should be read-only',
+                                    headers=nexe_headers)
+                        local_object.channel = ch
                 if self.parser.is_sysimage_device(ch['device']):
                     ch['lpath'] = self.parser.get_sysimage(ch['device'])
                 elif ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
@@ -786,7 +852,7 @@ class ObjectQueryMiddleware(object):
                     if is_master:
                         if not chan_path:
                             response_channels.append(ch)
-                        elif ch is not local_object:
+                        elif ch is not local_object.channel:
                             response_channels.insert(0, ch)
                 elif ch['access'] & ACCESS_NETWORK:
                     ch['lpath'] = chan_path.path
@@ -800,7 +866,7 @@ class ObjectQueryMiddleware(object):
                 if daemon_sock:
                     zerovm_inputmnfst = \
                         self.parser.prepare_for_forked(config, nvram_file,
-                                                       local_object)
+                                                       local_object.channel)
                     self._debug_before_exec(config, debug_dir,
                                             nexe_headers, nvram_file,
                                             zerovm_inputmnfst)
@@ -827,11 +893,10 @@ class ObjectQueryMiddleware(object):
                                      % sysimage_path)
                         zerovm_nexe = channels.pop('boot')
                         zerovm_inputmnfst = \
-                            self.parser.prepare_for_daemon(config,
-                                                           nvram_file,
-                                                           zerovm_nexe,
-                                                           local_object,
-                                                           daemon_sock)
+                            self.parser.prepare_for_daemon(
+                                config, nvram_file,
+                                zerovm_nexe, local_object.channel,
+                                daemon_sock)
                         self._debug_before_exec(config, debug_dir,
                                                 nexe_headers, nvram_file,
                                                 zerovm_inputmnfst)
@@ -878,8 +943,9 @@ class ObjectQueryMiddleware(object):
                         if daemon_status != 1:
                             return HTTPInternalServerError(body=zerovm_stdout)
                         zerovm_inputmnfst = \
-                            self.parser.prepare_for_forked(config, nvram_file,
-                                                           local_object)
+                            self.parser.prepare_for_forked(
+                                config, nvram_file,
+                                local_object.channel)
                         self._debug_before_exec(config, debug_dir,
                                                 nexe_headers, nvram_file,
                                                 zerovm_inputmnfst)
@@ -897,10 +963,9 @@ class ObjectQueryMiddleware(object):
                                 headers=nexe_headers)
                 else:
                     zerovm_inputmnfst = \
-                        self.parser.prepare_for_standalone(config,
-                                                           nvram_file,
-                                                           zerovm_nexe,
-                                                           local_object)
+                        self.parser.prepare_for_standalone(
+                            config, nvram_file,
+                            zerovm_nexe, local_object.channel)
                     self._debug_before_exec(config, debug_dir,
                                             nexe_headers, nvram_file,
                                             zerovm_inputmnfst)
@@ -987,18 +1052,22 @@ class ObjectQueryMiddleware(object):
                     resp_size += len(info) + tar_size
                     ch['info'] = info
                     immediate_responses.append(ch)
-                if local_object and local_object['access'] & ACCESS_WRITABLE:
-                    local_object['size'] = \
-                        self.os_interface.path.getsize(local_object['lpath'])
-                    if local_object['content_type'].startswith(
+                if local_object.has_local_file \
+                    and local_object.obj \
+                        and local_object.channel['access'] & ACCESS_WRITABLE:
+                    local_object.channel['size'] = \
+                        self.os_interface.path.getsize(
+                            local_object.channel['lpath'])
+                    if local_object.channel['content_type'].startswith(
                             'message/http'):
-                        self._read_cgi_response(local_object, nph=True)
-                    elif local_object['content_type'].startswith(
+                        self._read_cgi_response(local_object.channel, nph=True)
+                    elif local_object.channel['content_type'].startswith(
                             'message/cgi'):
-                        self._read_cgi_response(local_object, nph=False)
+                        self._read_cgi_response(
+                            local_object.channel, nph=False)
                     error = self._finalize_local_file(
-                        local_object,
-                        disk_file,
+                        local_object.channel,
+                        local_object.disk_file,
                         nexe_headers['x-nexe-etag'],
                         account,
                         container,
@@ -1107,7 +1176,7 @@ class ObjectQueryMiddleware(object):
                 elif req.method in ['PUT', 'POST'] \
                         and ('x-zerovm-validate' in req.headers
                              or req.headers.get('content-type', '')
-                             in 'application/x-nexe'):
+                             == 'application/x-nexe'):
                     self.logger.info(
                         '%s Started pre-validation due to: '
                         'content-type: %s, x-zerovm-validate: %s'
@@ -1123,7 +1192,6 @@ class ObjectQueryMiddleware(object):
                         return start_response(status,
                                               response_headers,
                                               exc_info)
-
                     return self.app(env, validate_resp)
                 elif 'x-zerovm-valid' in req.headers and req.method == 'GET':
                     self.logger.info('%s Started validity check due to: '
@@ -1189,7 +1257,6 @@ class ObjectQueryMiddleware(object):
                 tmpdir = TmpDir(
                     self._diskfile_mgr.devices,
                     device,
-                    disk_chunk_size=self.disk_chunk_size,
                     os_interface=self.os_interface
                 )
                 with tmpdir.mkstemp() as (zerovm_inputmnfst_fd,

@@ -13,6 +13,7 @@ from eventlet.green import socket
 from tempfile import mkdtemp
 from shutil import rmtree
 from test import get_config
+from textwrap import dedent
 from swift.common.utils import config_true_value
 from hashlib import md5
 from eventlet import sleep, Timeout
@@ -444,3 +445,7 @@ def create_tar(name_and_file):
             os.unlink(tarname)
         except OSError:
             pass
+
+
+def trim(script):
+    return dedent(script[1:-1])
