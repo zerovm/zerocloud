@@ -67,7 +67,7 @@ def _opaque_string(replication_level, cluster_id, node_count,
         suffix = '>'
     proto = ';'.join(map(
         lambda i: 'opaque:local|%s%s-%d-%d'
-                  % (suffix, cluster_id, 
+                  % (suffix, cluster_id,
                      source_id,
                      (destination_id + i * node_count)),
         range(replication_level)
