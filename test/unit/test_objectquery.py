@@ -1,15 +1,10 @@
 from contextlib import contextmanager
 from StringIO import StringIO
-from dircache import opendir
-import traceback
 import logging
-from posix import rmdir, listdir
-import struct
+from posix import rmdir
 import unittest
 import os
-import random
-import cPickle as pickle
-from time import time, sleep
+from time import time
 from eventlet import GreenPool
 from unittest.case import SkipTest
 from hashlib import md5
@@ -24,7 +19,8 @@ from swift.common import utils
 from swift.common.swob import Request
 from swift.common.utils import mkdirs, normalize_timestamp, get_logger
 from swift.obj.server import ObjectController
-from test.unit import FakeLogger, create_random_numbers, get_sorted_numbers
+from test.unit import FakeLogger, create_random_numbers, get_sorted_numbers, \
+    create_tar
 
 from test_proxyquery import ZEROVM_DEFAULT_MOCK
 from zerocloud.common import ZvmNode, ACCESS_READABLE, ACCESS_WRITABLE, \
@@ -178,27 +174,6 @@ class TestObjectQuery(unittest.TestCase):
         req.headers['x-zerocloud-id'] = self.uid_generator.get()
         return req
 
-    @contextmanager
-    def create_tar(self, name_and_file):
-        tarfd, tarname = mkstemp()
-        os.close(tarfd)
-        tar = tarfile.open(name=tarname, mode='w')
-        for name, f in name_and_file.iteritems():
-            info = tarfile.TarInfo(name)
-            f.seek(0, 2)
-            size = f.tell()
-            info.size = size
-            f.seek(0, 0)
-            tar.addfile(info, f)
-        tar.close()
-        try:
-            yield tarname
-        finally:
-            try:
-                os.unlink(tarname)
-            except OSError:
-                pass
-
     def test_tmpdir_mkstemp_creates_dir(self):
         tmpdir = os.path.join(self.testdir, 'sda1', 'tmp')
         os.rmdir(tmpdir)
@@ -254,7 +229,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -293,7 +268,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -342,7 +317,7 @@ resp = '\n'.join([
 out = str(sorted(id))
 return resp + out
 '''[1:-1])
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -396,7 +371,7 @@ resp = '\n'.join([
 out = str(sorted(id))
 return resp + out
 '''[1:-1])
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -445,7 +420,7 @@ resp = '\\n'.join(['Status: 200 OK', 'Content-Type: application/json', '', ''])
 out = str(sorted(id))
 return resp + out
 '''[1:-1])
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -488,7 +463,7 @@ return resp + out
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -528,7 +503,7 @@ return resp + out
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -578,7 +553,7 @@ return resp + out
                                      'x-zerovm-execute': '1.0',
                                      'x-zerocloud-id': self.uid_generator.get(),
                                      'x-timestamp': timestamp})
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -622,7 +597,7 @@ return resp + out
                                      'x-zerovm-execute': '1.0',
                                      'x-zerocloud-id': self.uid_generator.get(),
                                      'x-timestamp': timestamp})
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -666,7 +641,7 @@ return resp + out
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -695,7 +670,7 @@ return resp + out
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -713,7 +688,7 @@ return resp + out
         conf.add_new_channel('stderr', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -735,7 +710,7 @@ return resp + out
         conf.env = {'KEY_A': 'value_a', 'KEY_B': 'value_b'}
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -751,7 +726,7 @@ return resp + out
         conf.add_new_channel('output', ACCESS_WRITABLE, parse_location('swift://a/c/o2'))
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -768,7 +743,7 @@ return resp + out
         conf.add_new_channel('stderr', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -808,7 +783,7 @@ return resp + out
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -840,7 +815,7 @@ return resp + out
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             fp = open(tar, 'rb')
             length = os.path.getsize(tar)
             req.body_file = Input(SlowBody(fp), length)
@@ -917,7 +892,7 @@ return resp + out
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             fp = open(tar, 'rb')
             etag = md5()
             etag.update(fp.read())
@@ -991,7 +966,7 @@ sys.stderr.write('some shit happened\n')
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -1014,7 +989,7 @@ for i in range(20):
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -1036,7 +1011,7 @@ sys.stderr.write(''.zfill(4096*20))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             orig_timeout = self.app.parser_config['manifest']['Timeout']
             try:
                 self.app.parser_config['manifest']['Timeout'] = 1
@@ -1062,7 +1037,7 @@ sleep(10)
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -1089,7 +1064,7 @@ time.sleep(10)
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -1114,7 +1089,7 @@ time.sleep(10)
         maxreq_factor = 2
         r = range(0, maxreq_factor * 5)
         req = copy(r)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             orig_zerovm_threadpools = self.app.zerovm_thread_pools
             orig_timeout = self.app.parser_config['manifest']['Timeout']
@@ -1172,7 +1147,7 @@ time.sleep(10)
             conf.add_new_channel('stdout', ACCESS_WRITABLE)
             conf = json.dumps(conf, cls=NodeEncoder)
             sysmap = StringIO(conf)
-            with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+            with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
                 self.create_object(create_random_numbers(os.path.getsize(tar) + 2))
                 self.app.parser_config['limits']['rbytes'] = os.path.getsize(tar) + 1
                 req = self.zerovm_object_request()
@@ -1198,7 +1173,7 @@ time.sleep(10)
             conf.add_new_channel('stdout', ACCESS_WRITABLE)
             conf = json.dumps(conf, cls=NodeEncoder)
             sysmap = StringIO(conf)
-            with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+            with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
                 req.content_length = length
@@ -1217,14 +1192,14 @@ time.sleep(10)
         nexefile = StringIO(self._nexescript)
         conf = '{""}'
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
             resp = self.app.zerovm_query(req)
             self.assertEqual(resp.status_int, 400)
             self.assertEqual(resp.body, 'Cannot parse system map')
-        with self.create_tar({'boot': nexefile}) as tar:
+        with create_tar({'boot': nexefile}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -1246,7 +1221,7 @@ time.sleep(10)
             conf.add_new_channel('stdout', ACCESS_WRITABLE)
             conf = json.dumps(conf, cls=NodeEncoder)
             sysmap = StringIO(conf)
-            with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+            with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
                 req.content_length = length
@@ -1283,8 +1258,8 @@ time.sleep(10)
         conf.add_new_channel('image', ACCESS_CDR)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'usr/bin/sort': nexefile}) as image_tar:
-            with self.create_tar({'image': open(image_tar, 'rb'), 'sysmap': sysmap}) as tar:
+        with create_tar({'usr/bin/sort': nexefile}) as image_tar:
+            with create_tar({'image': open(image_tar, 'rb'), 'sysmap': sysmap}) as tar:
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
                 req.content_length = length
@@ -1324,7 +1299,7 @@ time.sleep(10)
         conf.add_new_channel('image', ACCESS_CDR)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'usr/bin/sort': nexefile}) as image_tar:
+        with create_tar({'usr/bin/sort': nexefile}) as image_tar:
             import gzip
             image_tar_gz = image_tar + '.gz'
             try:
@@ -1333,7 +1308,7 @@ time.sleep(10)
                 gz.writelines(t)
                 gz.close()
                 t.close()
-                with self.create_tar({'image.gz': open(image_tar_gz, 'rb'),
+                with create_tar({'image.gz': open(image_tar_gz, 'rb'),
                                       'sysmap': sysmap}) as tar:
                     length = os.path.getsize(tar)
                     req.body_file = Input(open(tar, 'rb'), length)
@@ -1377,8 +1352,8 @@ time.sleep(10)
         conf.add_new_channel('image', ACCESS_CDR)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'usr/bin/sort': StringIO('bla-bla')}) as image_tar:
-            with self.create_tar({'image': open(image_tar, 'rb'), 'sysmap': sysmap, 'boot': nexefile}) as tar:
+        with create_tar({'usr/bin/sort': StringIO('bla-bla')}) as image_tar:
+            with create_tar({'image': open(image_tar, 'rb'), 'sysmap': sysmap, 'boot': nexefile}) as tar:
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
                 req.content_length = length
@@ -1416,7 +1391,7 @@ time.sleep(10)
         conf.add_new_channel('stdin', ACCESS_READABLE, 'bla-bla')
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'sysmap': sysmap, 'boot': nexefile}) as tar:
+        with create_tar({'sysmap': sysmap, 'boot': nexefile}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
@@ -1501,7 +1476,7 @@ time.sleep(10)
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             req.headers['x-zerovm-valid'] = 'true'
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
@@ -1582,7 +1557,7 @@ exit(255)
             conf = ZvmNode(1, 'exit', parse_location('swift://a/c/exe'))
             conf = json.dumps(conf, cls=NodeEncoder)
             sysmap = StringIO(conf)
-            with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+            with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
                 req.content_length = length
