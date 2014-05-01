@@ -24,10 +24,11 @@ from swift.common import utils
 from swift.common.swob import Request
 from swift.common.utils import mkdirs, normalize_timestamp, get_logger
 from swift.obj.server import ObjectController
-from test.unit import FakeLogger
+from test.unit import FakeLogger, create_random_numbers, get_sorted_numbers
 
 from test_proxyquery import ZEROVM_DEFAULT_MOCK
-from zerocloud.common import ZvmNode, ACCESS_READABLE, ACCESS_WRITABLE, NodeEncoder, ACCESS_CDR, \
+from zerocloud.common import ZvmNode, ACCESS_READABLE, ACCESS_WRITABLE, \
+    NodeEncoder, ACCESS_CDR, \
     parse_location, ACCESS_RANDOM, TAR_MIMES
 from zerocloud import objectquery
 from zerocloud.thread_pool import WaitPool, Zuid
@@ -130,10 +131,10 @@ class TestObjectQuery(unittest.TestCase):
         # do not set it lower than 2 * BLOCKSIZE (2 * 512)
         # it will break tar RPC protocol
         self.app.app.network_chunk_size = 2 * 512
-        randomnumbers = self.create_random_numbers(10)
+        randomnumbers = create_random_numbers(10)
         self.create_object(randomnumbers)
         self._nexescript = 'return pickle.dumps(sorted(id))'
-        self._sortednumbers = self.get_sorted_numbers()
+        self._sortednumbers = get_sorted_numbers()
         self._randomnumbers_etag = md5()
         self._randomnumbers_etag.update(randomnumbers)
         self._randomnumbers_etag = self._randomnumbers_etag.hexdigest()
@@ -148,25 +149,6 @@ class TestObjectQuery(unittest.TestCase):
         self._emptyresult_etag = md5()
         self._emptyresult_etag.update(self._emptyresult)
         self._emptyresult_etag = self._emptyresult_etag.hexdigest()
-
-    def create_random_numbers(self, max_num, proto='pickle'):
-        numlist = [i for i in range(max_num)]
-        for i in range(max_num):
-            randindex1 = random.randrange(max_num)
-            randindex2 = random.randrange(max_num)
-            numlist[randindex1], numlist[randindex2] =\
-            numlist[randindex2], numlist[randindex1]
-        if proto == 'binary':
-            return struct.pack('%sI' % len(numlist), *numlist)
-        else:
-            return pickle.dumps(numlist, protocol=0)
-
-    def get_sorted_numbers(self, min_num=0, max_num=10, proto='pickle'):
-        numlist = [i for i in range(min_num,max_num)]
-        if proto == 'binary':
-            return struct.pack('%sI' % len(numlist), *numlist)
-        else:
-            return pickle.dumps(numlist, protocol=0)
 
     def create_object(self, body, path='/sda1/p/a/c/o'):
         timestamp = normalize_timestamp(time())
@@ -1191,7 +1173,7 @@ time.sleep(10)
             conf = json.dumps(conf, cls=NodeEncoder)
             sysmap = StringIO(conf)
             with self.create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
-                self.create_object(self.create_random_numbers(os.path.getsize(tar) + 2))
+                self.create_object(create_random_numbers(os.path.getsize(tar) + 2))
                 self.app.parser_config['limits']['rbytes'] = os.path.getsize(tar) + 1
                 req = self.zerovm_object_request()
                 length = os.path.getsize(tar)
@@ -1201,7 +1183,7 @@ time.sleep(10)
                 self.assertEqual(resp.status_int, 413)
                 self.assertEqual(resp.body, 'Data object too large')
         finally:
-            self.create_object(self.create_random_numbers(10))
+            self.create_object(create_random_numbers(10))
             self.app.parser_config['limits']['rbytes'] = orig_maxinput
 
     def test_QUERY_max_nexe_size(self):

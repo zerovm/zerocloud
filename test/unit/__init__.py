@@ -1,10 +1,14 @@
 import os
 import copy
 import logging
+import cPickle as pickle
+import random
+import struct
 from sys import exc_info
 from contextlib import contextmanager
 from collections import defaultdict
-from tempfile import NamedTemporaryFile
+import tarfile
+from tempfile import NamedTemporaryFile, mkstemp
 from eventlet.green import socket
 from tempfile import mkdtemp
 from shutil import rmtree
@@ -397,3 +401,46 @@ def fake_http_connect(*code_iter, **kwargs):
                         expect_status=expect_status, headers=headers)
 
     return connect
+
+
+def create_random_numbers(max_num, proto='pickle'):
+    numlist = [i for i in range(max_num)]
+    for i in range(max_num):
+        randindex1 = random.randrange(max_num)
+        randindex2 = random.randrange(max_num)
+        numlist[randindex1], numlist[randindex2] =\
+        numlist[randindex2], numlist[randindex1]
+    if proto == 'binary':
+        return struct.pack('%sI' % len(numlist), *numlist)
+    else:
+        return pickle.dumps(numlist, protocol=0)
+
+
+def get_sorted_numbers(min_num=0, max_num=10, proto='pickle'):
+    numlist = [i for i in range(min_num,max_num)]
+    if proto == 'binary':
+        return struct.pack('%sI' % len(numlist), *numlist)
+    else:
+        return pickle.dumps(numlist, protocol=0)
+
+
+@contextmanager
+def create_tar(name_and_file):
+    tarfd, tarname = mkstemp()
+    os.close(tarfd)
+    tar = tarfile.open(name=tarname, mode='w')
+    for name, f in name_and_file.iteritems():
+        info = tarfile.TarInfo(name)
+        f.seek(0, 2)
+        size = f.tell()
+        info.size = size
+        f.seek(0, 0)
+        tar.addfile(info, f)
+    tar.close()
+    try:
+        yield tarname
+    finally:
+        try:
+            os.unlink(tarname)
+        except OSError:
+            pass
