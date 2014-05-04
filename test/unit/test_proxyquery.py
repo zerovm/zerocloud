@@ -12,15 +12,14 @@ import swift
 import unittest
 import os
 import cPickle as pickle
-from time import time, sleep
-from swift.common.swob import Request, HTTPNotFound, HTTPUnauthorized
+from time import time
+from swift.common.swob import Request, HTTPUnauthorized
 from hashlib import md5
 from tempfile import mkstemp, mkdtemp
 from shutil import rmtree
 
 from nose import SkipTest
-from httplib import HTTPException
-from eventlet import sleep, spawn, Timeout, util, wsgi, listen, GreenPool
+from eventlet import sleep, spawn, wsgi, listen, GreenPool
 from gzip import GzipFile
 from contextlib import contextmanager
 
@@ -32,9 +31,10 @@ from swift.common.utils import mkdirs, normalize_timestamp, NullLogger
 from swift.common import ring
 
 from zerocloud import proxyquery, objectquery
-from test.unit import connect_tcp, readuntil2crlfs, FakeLogger, fake_http_connect
-from zerocloud.common import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, NodeEncoder
-from zerocloud.configparser import ClusterConfigParser, ClusterConfigParsingError
+from test.unit import connect_tcp, readuntil2crlfs, fake_http_connect, trim
+from zerocloud.common import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
+from zerocloud.configparser import ClusterConfigParser, \
+    ClusterConfigParsingError
 
 try:
     import simplejson as json
@@ -139,7 +139,8 @@ def setup():
     mkdirs(os.path.join(_testdir, 'sda1', 'tmp'))
     mkdirs(os.path.join(_testdir, 'sdb1'))
     mkdirs(os.path.join(_testdir, 'sdb1', 'tmp'))
-    _orig_container_listing_limit = swift.common.constraints.CONTAINER_LISTING_LIMIT
+    _orig_container_listing_limit = \
+        swift.common.constraints.CONTAINER_LISTING_LIMIT
     prolis = listen(('localhost', 0))
     acc1lis = listen(('localhost', 0))
     acc2lis = listen(('localhost', 0))
@@ -148,29 +149,37 @@ def setup():
     obj1lis = listen(('localhost', 0))
     obj2lis = listen(('localhost', 0))
     conf = {'devices': _testdir, 'swift_dir': _testdir,
-            'mount_check': 'false', 'allowed_headers':
-        'content-encoding, x-object-manifest, content-disposition, foo',
+            'mount_check': 'false',
+            'allowed_headers': 'content-encoding, x-object-manifest, '
+                               'content-disposition, foo',
             'disable_fallocate': 'true',
-            'zerovm_proxy': 'http://127.0.0.1:%d/v1/' % prolis.getsockname()[1],
-            'zerovm_maxoutput': 1024 * 1024 * 10 }
+            'zerovm_proxy': 'http://127.0.0.1:%d/v1/' %
+                            prolis.getsockname()[1],
+            'zerovm_maxoutput': 1024 * 1024 * 10}
     _test_sockets = \
         (prolis, acc1lis, acc2lis, con1lis, con2lis, obj1lis, obj2lis)
     pickle.dump(ring.RingData([[0, 1, 0, 1], [1, 0, 1, 0]],
-                              [{'id': 0, 'zone': 0, 'device': 'sda1', 'ip': '127.0.0.1',
+                              [{'id': 0, 'zone': 0, 'device': 'sda1',
+                                'ip': '127.0.0.1',
                                 'port': acc1lis.getsockname()[1]},
-                               {'id': 1, 'zone': 1, 'device': 'sdb1', 'ip': '127.0.0.1',
+                               {'id': 1, 'zone': 1, 'device': 'sdb1',
+                                'ip': '127.0.0.1',
                                 'port': acc2lis.getsockname()[1]}], 30),
                 GzipFile(os.path.join(_testdir, 'account.ring.gz'), 'wb'))
     pickle.dump(ring.RingData([[0, 1, 0, 1], [1, 0, 1, 0]],
-                              [{'id': 0, 'zone': 0, 'device': 'sda1', 'ip': '127.0.0.1',
+                              [{'id': 0, 'zone': 0, 'device': 'sda1',
+                                'ip': '127.0.0.1',
                                 'port': con1lis.getsockname()[1]},
-                               {'id': 1, 'zone': 1, 'device': 'sdb1', 'ip': '127.0.0.1',
+                               {'id': 1, 'zone': 1, 'device': 'sdb1',
+                                'ip': '127.0.0.1',
                                 'port': con2lis.getsockname()[1]}], 30),
                 GzipFile(os.path.join(_testdir, 'container.ring.gz'), 'wb'))
     pickle.dump(ring.RingData([[0, 1, 0, 1], [1, 0, 1, 0]],
-                              [{'id': 0, 'zone': 0, 'device': 'sda1', 'ip': '127.0.0.1',
+                              [{'id': 0, 'zone': 0, 'device': 'sda1',
+                                'ip': '127.0.0.1',
                                 'port': obj1lis.getsockname()[1]},
-                               {'id': 1, 'zone': 1, 'device': 'sdb1', 'ip': '127.0.0.1',
+                               {'id': 1, 'zone': 1, 'device': 'sdb1',
+                                'ip': '127.0.0.1',
                                 'port': obj2lis.getsockname()[1]}], 30),
                 GzipFile(os.path.join(_testdir, 'object.ring.gz'), 'wb'))
     prosrv = proxyquery.filter_factory(conf)(
@@ -178,12 +187,16 @@ def setup():
     )
     acc1srv = account_server.AccountController(conf)
     acc2srv = account_server.AccountController(conf)
-    con1srv = container_server.ContainerController(conf)
-    con2srv = container_server.ContainerController(conf)
-    obj1srv = objectquery.filter_factory(conf)(object_server.ObjectController(conf))
-    obj2srv = objectquery.filter_factory(conf)(object_server.ObjectController(conf))
-    _test_servers =\
-    (prosrv, acc1srv, acc2srv, con1srv, con2srv, obj1srv, obj2srv)
+    con1srv = objectquery.filter_factory(conf)(
+        container_server.ContainerController(conf))
+    con2srv = objectquery.filter_factory(conf)(
+        container_server.ContainerController(conf))
+    obj1srv = \
+        objectquery.filter_factory(conf)(object_server.ObjectController(conf))
+    obj2srv = \
+        objectquery.filter_factory(conf)(object_server.ObjectController(conf))
+    _test_servers = \
+        (prosrv, acc1srv, acc2srv, con1srv, con2srv, obj1srv, obj2srv)
     nl = NullLogger()
     prospa = spawn(wsgi.server, prolis, prosrv, nl)
     acc1spa = spawn(wsgi.server, acc1lis, acc1srv, nl)
@@ -192,21 +205,23 @@ def setup():
     con2spa = spawn(wsgi.server, con2lis, con2srv, nl)
     obj1spa = spawn(wsgi.server, obj1lis, obj1srv, nl)
     obj2spa = spawn(wsgi.server, obj2lis, obj2srv, nl)
-    _test_coros =\
-    (prospa, acc1spa, acc2spa, con1spa, con2spa, obj1spa, obj2spa)
+    _test_coros = \
+        (prospa, acc1spa, acc2spa, con1spa, con2spa, obj1spa, obj2spa)
     # Create account
     ts = normalize_timestamp(time())
     partition, nodes = prosrv.app.account_ring.get_nodes('a')
     for node in nodes:
-        conn = swift.proxy.controllers.base.http_connect(node['ip'], node['port'],
+        conn = swift.proxy.controllers.base.http_connect(
+            node['ip'], node['port'],
             node['device'], partition, 'PUT', '/a',
-                {'X-Timestamp': ts, 'x-trans-id': 'test'})
+            {'X-Timestamp': ts, 'x-trans-id': 'test'})
         resp = conn.getresponse()
         assert(resp.status == 201)
     ts = normalize_timestamp(time())
     partition, nodes = prosrv.app.account_ring.get_nodes('userstats')
     for node in nodes:
-        conn = swift.proxy.controllers.base.http_connect(node['ip'], node['port'],
+        conn = swift.proxy.controllers.base.http_connect(
+            node['ip'], node['port'],
             node['device'], partition, 'PUT', '/userstats',
             {'X-Timestamp': ts, 'x-trans-id': 'test1'})
         resp = conn.getresponse()
@@ -254,12 +269,9 @@ class TestProxyQuery(unittest.TestCase):
         obj_ring=FakeRing()
         obj_ring.partition_count = 1
         self.proxy_app = proxy_server.Application(None, FakeMemcache(),
-            account_ring=FakeRing(), container_ring=FakeRing(),
-            object_ring=obj_ring)
-#        self.conf = {'devices': _testdir, 'swift_dir': _testdir,
-#                'mount_check': 'false', 'allowed_headers':
-#                'content-encoding, x-object-manifest, content-disposition, foo'}
-        #monkey_patch_mimetools()
+                                                  account_ring=FakeRing(),
+                                                  container_ring=FakeRing(),
+                                                  object_ring=obj_ring)
         self.zerovm_mock = None
 
     def tearDown(self):
@@ -331,9 +343,9 @@ class TestProxyQuery(unittest.TestCase):
                 os.close(fd)
                 self.zerovm_mock = zerovm_mock
             _obj1srv.zerovm_exename = ['python', zerovm_mock]
-            #_obj1srv.zerovm_nexe_xparams = ['ok.', '0']
             _obj2srv.zerovm_exename = ['python', zerovm_mock]
-            #_obj2srv.zerovm_nexe_xparams = ['ok.', '0']
+            _con1srv.zerovm_exename = ['python', zerovm_mock]
+            _con2srv.zerovm_exename = ['python', zerovm_mock]
 
         self._randomnumbers = self.get_random_numbers()
         self._nexescript = ('return pickle.dumps(sorted(id))')
@@ -342,7 +354,8 @@ class TestProxyQuery(unittest.TestCase):
         self._nexescript_etag = self._nexescript_etag.hexdigest()
         set_zerovm_mock()
 
-        (prolis, acc1lis, acc2lis, con1lis, con2lis, obj1lis, obj2lis) = _test_sockets
+        (prolis, acc1lis, acc2lis, con1lis, con2lis, obj1lis, obj2lis) = \
+            _test_sockets
         self.create_container(prolis, '/v1/a/c')
         self.create_container(prolis, '/v1/a/c_in1')
         self.create_container(prolis, '/v1/a/c_in2')
@@ -351,14 +364,17 @@ class TestProxyQuery(unittest.TestCase):
         self.create_object(prolis, '/v1/a/c/o', self._randomnumbers)
         self.create_object(prolis, '/v1/a/c/exe', self._nexescript)
 
-        self.create_object(prolis, '/v1/a/c_in1/input1', self.get_random_numbers(0,10))
-        self.create_object(prolis, '/v1/a/c_in1/input2', self.get_random_numbers(10,20))
+        self.create_object(prolis, '/v1/a/c_in1/input1',
+                           self.get_random_numbers(0,10))
+        self.create_object(prolis, '/v1/a/c_in1/input2',
+                           self.get_random_numbers(10,20))
         self.create_object(prolis, '/v1/a/c_in1/junk', 'junk')
-        self.create_object(prolis, '/v1/a/c_in2/input1', self.get_random_numbers(20,30))
-        self.create_object(prolis, '/v1/a/c_in2/input2', self.get_random_numbers(30,40))
+        self.create_object(prolis, '/v1/a/c_in2/input1',
+                           self.get_random_numbers(20,30))
+        self.create_object(prolis, '/v1/a/c_in2/input2',
+                           self.get_random_numbers(30,40))
         self.create_object(prolis, '/v1/a/c_in2/junk', 'junk')
         self.create_container(prolis, '/v1/userstats/a')
-
 
     def zerovm_request(self):
         req = Request.blank('/v1/a',
@@ -1802,7 +1818,7 @@ return json.dumps(con_list)
                 'name': 'sort',
                 'exec': {'path': 'swift://a/c/exe2'},
                 'file_list': [
-                    {'device': 'stdin', 'path': 'swift://a/c_in*'},
+                    {'device': 'stdin', 'path': 'swift://a/c_in*/*'},
                     {'device': 'stdout'}
                 ]
             }
@@ -2488,3 +2504,95 @@ return open(mnfst.nvram['path']).read()
         finally:
             prosrv.network_type = orig_network_type
             prosrv.ignore_replication = orig_repl
+
+    def test_container_query(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe = trim(r'''
+            import sqlite3
+            db_path = mnfst.channels['/dev/input']['path']
+            con = sqlite3.connect(db_path)
+            cursor = con.cursor()
+            cursor.execute("SELECT name FROM object order by 1;")
+            l = []
+            for r in cursor.fetchall():
+                l.append(str(r[0]))
+            return json.dumps(l)
+            ''')
+        self.create_object(prolis, '/v1/a/c/list_container.nexe', nexe)
+        self.create_container(prolis, '/v1/a/test_cont1')
+        self.create_object(prolis, '/v1/a/test_cont1/o1',
+                           self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/test_cont1/o2',
+                           self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/test_cont1/o/o3',
+                           self.get_random_numbers())
+        conf = [
+            {
+                'name': 'list',
+                'exec': {
+                    'path': 'swift://a/c/list_container.nexe'
+                },
+                'file_list': [
+                    {
+                        'device': 'input',
+                        'path': 'swift://a/test_cont1'
+                    },
+                    {
+                        'device': 'stdout'
+                    }
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.executed_successfully(res)
+        obj_list = json.loads(res.body)
+        self.assertEqual(obj_list, ['o/o3', 'o1', 'o2'])
+        self.create_container(prolis, '/v1/a/test_cont2')
+        self.create_object(prolis, '/v1/a/test_cont2/oo2',
+                           self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/test_cont2/o/o2',
+                           self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/test_cont2/o/o/o2',
+                           self.get_random_numbers())
+        conf = [
+            {
+                'name': 'list',
+                'exec': {
+                    'path': 'swift://a/c/list_container.nexe'
+                },
+                'file_list': [
+                    {
+                        'device': 'input',
+                        'path': 'swift://a/test_cont*'
+                    },
+                    {
+                        'device': 'stdout',
+                        'path': 'swift://a/c/list_output*',
+                        'content_type': 'application/json'
+                    }
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.executed_successfully(res)
+        req = self.object_request('/v1/a/c/list_output1')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.content_type, 'application/json')
+        self.assertEqual(json.loads(res.body),
+                         ['o/o3', 'o1', 'o2'])
+        req = self.object_request('/v1/a/c/list_output2')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.content_type, 'application/json')
+        self.assertEqual(json.loads(res.body),
+                         ['o/o/o2', 'o/o2', 'oo2'])
+

@@ -21,7 +21,7 @@ from swiftclient.client import quote
 from swift.common.http import HTTP_CONTINUE, is_success, \
     HTTP_INSUFFICIENT_STORAGE, is_client_error, HTTP_NOT_FOUND
 from swift.proxy.controllers.base import update_headers, delay_denial, \
-    cors_validation, get_info
+    cors_validation, get_info, close_swift_conn
 from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
     get_remote_client, ContextPool, cache_from_env, normalize_timestamp, \
     GreenthreadSafeIterator
@@ -569,58 +569,55 @@ class ClusterController(ObjectController):
     def _make_exec_requests(self, pile, exec_requests):
         for exec_request in exec_requests:
             node = exec_request.node
-            try:
-                account, container, obj = \
-                    split_path(node.path_info, 3, 3, True)
-                partition, nodes = self.app.object_ring.get_nodes(account,
-                                                                  container,
-                                                                  obj)
+            account, container, obj = \
+                split_path(node.path_info, 1, 3, True)
+            if obj:
+                ring = self.app.object_ring
+                partition = ring.get_part(account, container, obj)
                 node_iter = GreenthreadSafeIterator(
                     self.iter_nodes_local_first(self.app.object_ring,
                                                 partition))
-                exec_request.path_info = node.path_info
-                if node.replicate > 1:
-                    container_info = self.container_info(account, container)
-                    container_partition = container_info['partition']
-                    containers = container_info['nodes']
-                    exec_headers = self._backend_requests(exec_request,
-                                                          node.replicate,
-                                                          container_partition,
-                                                          containers)
-                    if node.skip_validation:
-                        for hdr in exec_headers:
-                            hdr['x-zerovm-valid'] = 'true'
-                    i = 0
-                    pile.spawn(self._connect_exec_node,
-                               node_iter,
-                               partition,
-                               exec_request,
-                               self.app.logger.thread_locals,
-                               node,
-                               exec_headers[i])
-                    for repl_node in node.replicas:
-                        i += 1
-                        pile.spawn(self._connect_exec_node,
-                                   node_iter,
-                                   partition,
-                                   exec_request,
-                                   self.app.logger.thread_locals,
-                                   repl_node,
-                                   exec_headers[i])
-                else:
-                    if node.skip_validation:
-                        exec_request.headers['x-zerovm-valid'] = 'true'
-                    pile.spawn(self._connect_exec_node,
-                               node_iter,
-                               partition,
-                               exec_request,
-                               self.app.logger.thread_locals,
-                               node,
-                               exec_request.headers)
-            except ValueError:
+            elif container:
+                ring = self.app.container_ring
+                partition = ring.get_part(account, container)
+                node_iter = GreenthreadSafeIterator(
+                    self.server.iter_nodes(ring, partition))
+            else:
                 partition = self.get_random_partition()
-                node_iter = self.iter_nodes_local_first(self.app.object_ring,
-                                                        partition)
+                node_iter = GreenthreadSafeIterator(
+                    self.iter_nodes_local_first(
+                        self.app.object_ring,
+                        partition))
+            exec_request.path_info = node.path_info
+            if node.replicate > 1:
+                container_info = self.container_info(account, container)
+                container_partition = container_info['partition']
+                containers = container_info['nodes']
+                exec_headers = self._backend_requests(exec_request,
+                                                      node.replicate,
+                                                      container_partition,
+                                                      containers)
+                if node.skip_validation:
+                    for hdr in exec_headers:
+                        hdr['x-zerovm-valid'] = 'true'
+                i = 0
+                pile.spawn(self._connect_exec_node,
+                           node_iter,
+                           partition,
+                           exec_request,
+                           self.app.logger.thread_locals,
+                           node,
+                           exec_headers[i])
+                for repl_node in node.replicas:
+                    i += 1
+                    pile.spawn(self._connect_exec_node,
+                               node_iter,
+                               partition,
+                               exec_request,
+                               self.app.logger.thread_locals,
+                               repl_node,
+                               exec_headers[i])
+            else:
                 if node.skip_validation:
                     exec_request.headers['x-zerovm-valid'] = 'true'
                 pile.spawn(self._connect_exec_node,
@@ -630,18 +627,6 @@ class ClusterController(ObjectController):
                            self.app.logger.thread_locals,
                            node,
                            exec_request.headers)
-                for repl_node in node.replicas:
-                    partition = self.get_random_partition()
-                    node_iter = \
-                        self.iter_nodes_local_first(self.app.object_ring,
-                                                    partition)
-                    pile.spawn(self._connect_exec_node,
-                               node_iter,
-                               partition,
-                               exec_request,
-                               self.app.logger.thread_locals,
-                               repl_node,
-                               exec_request.headers)
         return [conn for conn in pile if conn]
 
     def iter_nodes_local_first(self, ring, partition):
@@ -1083,11 +1068,14 @@ class ClusterController(ObjectController):
         if len(conns) < self.parser.total_count:
             self.app.logger.exception(
                 'ERROR Cannot find suitable node to execute code on')
+            for conn in conns:
+                close_swift_conn(getattr(conn, 'resp'))
             return HTTPServiceUnavailable(
                 body='Cannot find suitable node to execute code on')
 
         for conn in conns:
             if getattr(conn, 'error', None):
+                close_swift_conn(conn.resp)
                 return Response(body=conn.error,
                                 status="%d %s" % (conn.resp.status,
                                                   conn.resp.reason),
@@ -1358,6 +1346,7 @@ class ClusterController(ObjectController):
                 elif resp.status == HTTP_INSUFFICIENT_STORAGE:
                     self.server.error_limit(node,
                                             'ERROR Insufficient Storage')
+                    resp.nuke_from_orbit()
                 elif is_client_error(resp.status):
                     conn.error = resp.read()
                     conn.resp = resp
@@ -1365,10 +1354,13 @@ class ClusterController(ObjectController):
                 else:
                     self.app.logger.warn('Obj server failed with: %d %s'
                                          % (resp.status, resp.reason))
+                    resp.nuke_from_orbit()
             except Exception:
                 self.server.exception_occurred(node, 'Object',
                                                'Expect: 100-continue on %s'
                                                % request.path_info)
+                if getattr(conn, 'resp'):
+                    conn.resp.nuke_from_orbit()
 
     def _store_accounting_data(self, request, connection=None):
         txn_id = request.environ['swift.trans_id']

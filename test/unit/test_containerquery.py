@@ -3,7 +3,6 @@ import tarfile
 from tempfile import mkdtemp, mkstemp
 import unittest
 from shutil import rmtree
-from hashlib import md5
 from StringIO import StringIO
 from swift.common import utils
 from swift.common.swob import Request
