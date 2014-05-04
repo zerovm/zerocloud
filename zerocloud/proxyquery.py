@@ -13,6 +13,8 @@ from eventlet import GreenPile, GreenPool, Queue, spawn_n
 from eventlet.green import socket
 from eventlet.timeout import Timeout
 import zlib
+import itertools
+from swift.common.ring import Ring
 
 from swiftclient.client import quote
 
@@ -37,7 +39,7 @@ from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
     merge_headers, update_metadata, DEFAULT_EXE_SYSTEM_MAP, \
     STREAM_CACHE_SIZE, ZvmChannel, parse_location, is_swift_path, \
-    is_image_path, can_run_as_daemon, SwiftPath
+    is_image_path, can_run_as_daemon, SwiftPath, load_server_conf
 from zerocloud.configparser import ClusterConfigParser, \
     ClusterConfigParsingError
 from zerocloud.tarstream import StringBuffer, UntarStream, \
@@ -353,48 +355,63 @@ class ProxyQueryMiddleware(object):
                                  % (conf_file, sock))
         return result
 
-    def __init__(self, app, conf, logger=None):
+    def __init__(self, app, conf, logger=None,
+                 object_ring=None, container_ring=None):
         self.app = app
         if logger:
             self.logger = logger
         else:
             self.logger = get_logger(conf, log_route='proxy-query')
-        # header for "execute by POST"
-        self.app.zerovm_execute = 'x-zerovm-execute'
-        # execution engine version
-        self.app.zerovm_execute_ver = '1.0'
-        # maximum size of a system map file
-        self.app.zerovm_maxconfig = int(conf.get('zerovm_maxconfig', 65536))
-        # name server hostname or ip, will be autodetected if not set
-        self.app.zerovm_ns_hostname = conf.get('zerovm_ns_hostname')
-        # name server thread pool size
-        self.app.zerovm_ns_maxpool = int(conf.get('zerovm_ns_maxpool', 1000))
-        self.app.zerovm_ns_thrdpool = GreenPool(self.app.zerovm_ns_maxpool)
-        # max time to wait for upload to finish, used in POST requests
-        self.app.max_upload_time = int(conf.get('max_upload_time', 86400))
+        # let's load appropriate server config sections here
+        load_server_conf(conf, ['app:proxy-server'])
+        self.node_timeout = int(conf.get('node_timeout', 10))
+        self.immediate_response_timeout = \
+            int(conf.get('interactive_timeout', self.node_timeout))
+        self.ignore_replication = conf.get(
+            'zerovm_ignore_replication', 'f').lower() in TRUE_VALUES
         # network chunk size for all network ops
-        self.app.network_chunk_size = int(conf.get('network_chunk_size',
-                                                   65536))
+        self.network_chunk_size = int(conf.get('network_chunk_size',
+                                               65536))
+        # max time to wait for upload to finish, used in POST requests
+        self.max_upload_time = int(conf.get('max_upload_time', 86400))
+        self.client_timeout = int(conf.get('client_timeout', 60))
+        swift_dir = conf.get('swift_dir', '/etc/swift')
+        self.object_ring = object_ring or Ring(swift_dir, ring_name='object')
+        self.container_ring = container_ring or Ring(swift_dir,
+                                                     ring_name='container')
+        self.put_queue_depth = int(conf.get('put_queue_depth', 10))
+        self.conn_timeout = float(conf.get('conn_timeout', 0.5))
+        # header for "execute by POST"
+        self.zerovm_execute = 'x-zerovm-execute'
+        # execution engine version
+        self.zerovm_execute_ver = '1.0'
+        # maximum size of a system map file
+        self.zerovm_maxconfig = int(conf.get('zerovm_maxconfig', 65536))
+        # name server hostname or ip, will be autodetected if not set
+        self.zerovm_ns_hostname = conf.get('zerovm_ns_hostname')
+        # name server thread pool size
+        self.zerovm_ns_maxpool = int(conf.get('zerovm_ns_maxpool', 1000))
+        self.zerovm_ns_thrdpool = GreenPool(self.zerovm_ns_maxpool)
         # use newest files when running zerovm executables, default - False
-        self.app.zerovm_uses_newest = conf.get(
+        self.zerovm_uses_newest = conf.get(
             'zerovm_uses_newest', 'f').lower() in TRUE_VALUES
         # use executable validation info, stored on PUT or POST,
         # to shave some time on zerovm startup
-        self.app.zerovm_prevalidate = conf.get(
+        self.zerovm_prevalidate = conf.get(
             'zerovm_prevalidate', 'f').lower() in TRUE_VALUES
         # use CORS workaround to POST execute commands, default - False
-        self.app.zerovm_use_cors = conf.get(
+        self.zerovm_use_cors = conf.get(
             'zerovm_use_cors', 'f').lower() in TRUE_VALUES
         # Accounting: enable or disabe execution accounting data,
         # default - disabled
-        self.app.zerovm_accounting_enabled = conf.get(
+        self.zerovm_accounting_enabled = conf.get(
             'zerovm_accounting_enabled', 'f').lower() in TRUE_VALUES
         # Accounting: system account for storing accounting data
-        self.app.cdr_account = conf.get('user_stats_account', 'userstats')
+        self.cdr_account = conf.get('user_stats_account', 'userstats')
         # Accounting: storage API version
-        self.app.version = 'v1'
+        self.version = 'v1'
         # default content-type for unknown files
-        self.app.zerovm_content_type = conf.get(
+        self.zerovm_content_type = conf.get(
             'zerovm_default_content_type', 'application/octet-stream')
         # names of sysimage devices, no sysimage devices exist by default
         devs = [(i.strip(), None)
@@ -402,17 +419,17 @@ class ProxyQueryMiddleware(object):
                 if i.strip()]
         self.zerovm_sysimage_devices = dict(devs)
         # GET support: container for content-type association storage
-        self.app.zerovm_registry_path = '.zvm'
+        self.zerovm_registry_path = '.zvm'
         # GET support: API version for "open" command
-        self.app.zerovm_open_version = 'open'
+        self.zerovm_open_version = 'open'
         # GET support: API version for "open with" command
-        self.app.zerovm_openwith_version = 'open-with'
+        self.zerovm_openwith_version = 'open-with'
         # GET support: allowed commands
-        self.app.zerovm_allowed_commands = [self.app.zerovm_open_version,
-                                            self.app.zerovm_openwith_version]
+        self.zerovm_allowed_commands = [self.zerovm_open_version,
+                                        self.zerovm_openwith_version]
         # GET support: cache config files for this amount of seconds
-        self.app.zerovm_cache_config_timeout = 60
-        self.app.parser_config = {
+        self.zerovm_cache_config_timeout = 60
+        self.parser_config = {
             'limits': {
                 # total maximum iops for channel read or write operations
                 # per zerovm session
@@ -428,21 +445,15 @@ class ProxyQueryMiddleware(object):
         }
         # use direct tcp connections (tcp) or intermediate broker (opaque)
         self.network_type = conf.get('zerovm_network_type', 'tcp')
-
+        # opaque network does not support replication right now
+        if self.network_type == 'opaque':
+            self.ignore_replication = True
         # list of daemons we need to lazy load
         # (first request will start the daemon)
         daemon_list = [i.strip() for i in
                        conf.get('zerovm_daemons', '').split() if i.strip()]
-        self.app.zerovm_daemons = self.parse_daemon_config(daemon_list)
+        self.zerovm_daemons = self.parse_daemon_config(daemon_list)
         self.uid_generator = Zuid()
-
-        self.app.immediate_response_timeout = \
-            int(conf.get('interactive_timeout', self.app.node_timeout))
-        self.ignore_replication = conf.get(
-            'zerovm_ignore_replication', 'f').lower() in TRUE_VALUES
-        # opaque network does not support replication right now
-        if self.network_type == 'opaque':
-            self.ignore_replication = True
 
     @wsgify
     def __call__(self, req):
@@ -455,8 +466,8 @@ class ProxyQueryMiddleware(object):
         except ValueError:
             return HTTPNotFound(request=req)
         if account and \
-                (self.app.zerovm_execute in req.headers
-                 or version in self.app.zerovm_allowed_commands):
+                (self.zerovm_execute in req.headers
+                 or version in self.zerovm_allowed_commands):
             if req.content_length and req.content_length < 0:
                 return HTTPBadRequest(request=req,
                                       body='Invalid Content-Length')
@@ -476,9 +487,9 @@ class ProxyQueryMiddleware(object):
             if path_parts['version']:
                 controller.command = path_parts['version']
                 req.path_info_pop()
-            if self.app.zerovm_execute not in req.headers:
-                req.headers[self.app.zerovm_execute] = \
-                    self.app.zerovm_execute_ver
+            if self.zerovm_execute not in req.headers:
+                req.headers[self.zerovm_execute] = \
+                    self.zerovm_execute_ver
             try:
                 handler = getattr(controller, req.method)
             except AttributeError:
@@ -509,26 +520,26 @@ class ProxyQueryMiddleware(object):
         return self.app
 
     def get_controller(self, account, container, obj):
-        return ClusterController(self.app, account, container, obj, self)
+        return ClusterController(self, account, container, obj, self.app)
 
 
 class ClusterController(ObjectController):
 
-    def __init__(self, app, account_name, container_name, obj_name, middleware,
+    def __init__(self, app, account_name, container_name, obj_name, server,
                  **kwargs):
         ObjectController.__init__(self, app,
                                   account_name,
                                   container_name or '',
                                   obj_name or '')
-        self.middleware = middleware
         self.command = None
         self.parser = ClusterConfigParser(
-            self.middleware.zerovm_sysimage_devices,
+            self.app.zerovm_sysimage_devices,
             self.app.zerovm_content_type,
             self.app.parser_config,
-            self.middleware.list_account,
-            self.middleware.list_container,
-            network_type=self.middleware.network_type)
+            self.app.list_account,
+            self.app.list_container,
+            network_type=self.app.network_type)
+        self.server = server
 
     def get_daemon_socket(self, config):
         for daemon_sock, daemon_conf in self.app.zerovm_daemons:
@@ -633,6 +644,44 @@ class ClusterController(ObjectController):
                                exec_request.headers)
         return [conn for conn in pile if conn]
 
+    def iter_nodes_local_first(self, ring, partition):
+        """
+        Yields nodes for a ring partition.
+
+        If the 'write_affinity' setting is non-empty, then this will yield N
+        local nodes (as defined by the write_affinity setting) first, then the
+        rest of the nodes as normal. It is a re-ordering of the nodes such
+        that the local ones come first; no node is omitted. The effect is
+        that the request will be serviced by local object servers first, but
+        nonlocal ones will be employed if not enough local ones are available.
+
+        :param ring: ring to get nodes from
+        :param partition: ring partition to yield nodes for
+        """
+
+        primary_nodes = ring.get_part_nodes(partition)
+        num_locals = self.server.write_affinity_node_count(len(primary_nodes))
+        is_local = self.server.write_affinity_is_local_fn
+
+        if is_local is None:
+            return self.server.iter_nodes(ring, partition)
+
+        all_nodes = itertools.chain(primary_nodes,
+                                    ring.get_more_nodes(partition))
+        first_n_local_nodes = list(itertools.islice(
+            itertools.ifilter(is_local, all_nodes), num_locals))
+
+        # refresh it; it moved when we computed first_n_local_nodes
+        all_nodes = itertools.chain(primary_nodes,
+                                    ring.get_more_nodes(partition))
+        local_first_node_iter = itertools.chain(
+            first_n_local_nodes,
+            itertools.ifilter(lambda node: node not in first_n_local_nodes,
+                              all_nodes))
+
+        return self.server.iter_nodes(
+            ring, partition, node_iter=local_first_node_iter)
+
     def _spawn_file_senders(self, conns, pool, req):
         for conn in conns:
             conn.failed = False
@@ -678,7 +727,7 @@ class ClusterController(ObjectController):
                 # if 'boot' in ch.device:
                 #     source_req.acl = container_info['exec_acl']
                 source_resp = \
-                    ObjectController(self.app,
+                    ObjectController(self.server,
                                      acct,
                                      src_container_name,
                                      src_obj_name).GET(source_req)
@@ -906,7 +955,7 @@ class ClusterController(ObjectController):
 
         req.path_info = '/' + self.account_name
         try:
-            if self.middleware.ignore_replication:
+            if self.app.ignore_replication:
                 replica_count = 1
             else:
                 replica_count = self.app.object_ring.replica_count
@@ -929,7 +978,7 @@ class ClusterController(ObjectController):
             return HTTPServiceUnavailable(
                 body='Cannot find own address, check zerovm_ns_hostname')
         ns_server = None
-        network_is_tcp = self.middleware.network_type == 'tcp'
+        network_is_tcp = self.app.network_type == 'tcp'
         if self.parser.total_count > 1 and network_is_tcp:
             ns_server = NameService(self.parser.total_count)
             if self.app.zerovm_ns_thrdpool.free() <= 0:
@@ -1112,7 +1161,7 @@ class ClusterController(ObjectController):
                         conns.append(conn)
                 resp = self.create_final_response(conns, req)
                 path = SwiftPath(deferred_url)
-                container_info = get_info(self.app, req.environ.copy(),
+                container_info = get_info(self.server, req.environ.copy(),
                                           path.account, path.container,
                                           ret_not_found=True)
                 if container_info['status'] == HTTP_NOT_FOUND:
@@ -1122,11 +1171,11 @@ class ClusterController(ObjectController):
                                                      path.container)
                     cont_req.method = 'PUT'
                     cont_resp = \
-                        ContainerController(self.app,
+                        ContainerController(self.server,
                                             path.account,
                                             path.container).PUT(cont_req)
                     if cont_resp.status_int >= 300:
-                        self.middleware.logger.warn(
+                        self.app.logger.warn(
                             'Failed to create deferred container: %s'
                             % cont_req.url)
                         return
@@ -1144,12 +1193,12 @@ class ClusterController(ObjectController):
                 deferred_put.method = 'PUT'
                 deferred_put.environ['wsgi.input'] = resp
                 deferred_put.content_length = resp.content_length
-                deferred_resp = ObjectController(self.app,
+                deferred_resp = ObjectController(self.server,
                                                  path.account,
                                                  path.container,
                                                  path.obj).PUT(deferred_put)
                 if deferred_resp.status_int >= 300:
-                    self.middleware.logger.warn(
+                    self.app.logger.warn(
                         'Failed to create deferred object: %s : %s'
                         % (deferred_put.url, deferred_resp.status))
                 report = self._create_deferred_report(resp.headers)
@@ -1160,12 +1209,12 @@ class ClusterController(ObjectController):
                 deferred_put.environ['wsgi.input'] = resp
                 deferred_put.content_length = len(report)
                 deferred_resp = \
-                    ObjectController(self.app,
+                    ObjectController(self.server,
                                      path.account,
                                      path.container,
                                      path.obj + '.headers').PUT(deferred_put)
                 if deferred_resp.status_int >= 300:
-                    self.middleware.logger.warn(
+                    self.app.logger.warn(
                         'Failed to create deferred object: %s : %s'
                         % (deferred_put.url, deferred_resp.status))
             if self.container_name:
@@ -1239,7 +1288,7 @@ class ClusterController(ObjectController):
                     conn.error = error
                     return conn
                 dest_resp = \
-                    ObjectController(self.app,
+                    ObjectController(self.server,
                                      chan.path.account,
                                      chan.path.container,
                                      chan.path.obj).PUT(dest_req)
@@ -1274,7 +1323,7 @@ class ClusterController(ObjectController):
                                         self.app.network_chunk_size), ''),
                                     headers=dict(server_response.getheaders()))
             except (Exception, Timeout):
-                self.app.exception_occurred(
+                self.server.exception_occurred(
                     conn.node, 'Object',
                     'Trying to get final status of POST to %s'
                     % request.path_info)
@@ -1307,8 +1356,8 @@ class ClusterController(ObjectController):
                     conn.resp = resp
                     return conn
                 elif resp.status == HTTP_INSUFFICIENT_STORAGE:
-                    self.app.error_limit(node,
-                                         'ERROR Insufficient Storage')
+                    self.server.error_limit(node,
+                                            'ERROR Insufficient Storage')
                 elif is_client_error(resp.status):
                     conn.error = resp.read()
                     conn.resp = resp
@@ -1317,9 +1366,9 @@ class ClusterController(ObjectController):
                     self.app.logger.warn('Obj server failed with: %d %s'
                                          % (resp.status, resp.reason))
             except Exception:
-                self.app.exception_occurred(node, 'Object',
-                                            'Expect: 100-continue on %s'
-                                            % request.path_info)
+                self.server.exception_occurred(node, 'Object',
+                                               'Expect: 100-continue on %s'
+                                               % request.path_info)
 
     def _store_accounting_data(self, request, connection=None):
         txn_id = request.environ['swift.trans_id']
@@ -1370,7 +1419,7 @@ class ClusterController(ObjectController):
             obj_req.method = 'GET'
             run = True
         controller = ObjectController(
-            self.app,
+            self.server,
             self.account_name,
             self.container_name,
             self.object_name)
@@ -1426,7 +1475,7 @@ class ClusterController(ObjectController):
         config_req = req.copy_get()
         config_req.path_info = config_path
         config_resp = ObjectController(
-            self.app,
+            self.server,
             self.account_name,
             cont,
             obj).GET(config_req)

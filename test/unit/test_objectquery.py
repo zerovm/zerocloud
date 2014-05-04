@@ -836,15 +836,15 @@ return resp + out
             self.assertEqual(members[0].size, len(self._sortednumbers))
             file = tar_out.extractfile(members[0])
             self.assertEqual(file.read(), self._sortednumbers)
-            orig_max_upload_time = self.obj_controller.max_upload_time
-            self.obj_controller.max_upload_time = 0.001
+            orig_max_upload_time = self.app.max_upload_time
+            self.app.max_upload_time = 0.001
             fp = open(tar, 'rb')
             length = os.path.getsize(tar)
             req.body_file = Input(SlowBody(fp), length)
             req.content_length = length
             resp = req.get_response(self.app)
             fp.close()
-            self.obj_controller.max_upload_time = orig_max_upload_time
+            self.app.max_upload_time = orig_max_upload_time
             self.assertEquals(resp.status_int, 408)
 
     def test_QUERY_no_content_type(self):

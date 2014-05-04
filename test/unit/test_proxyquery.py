@@ -362,22 +362,23 @@ class TestProxyQuery(unittest.TestCase):
 
     def zerovm_request(self):
         req = Request.blank('/v1/a',
-            environ={'REQUEST_METHOD': 'POST'},
-            headers={'Content-Type': 'application/json',
-                     'x-zerovm-execute': '1.0'})
+                            environ={'REQUEST_METHOD': 'POST'},
+                            headers={'Content-Type': 'application/json',
+                                     'x-zerovm-execute': '1.0'})
         return req
 
     def zerovm_tar_request(self):
         req = Request.blank('/v1/a',
-            environ={'REQUEST_METHOD': 'POST'},
-            headers={'Content-Type': 'application/x-gtar',
-                     'x-zerovm-execute': '1.0'})
+                            environ={'REQUEST_METHOD': 'POST'},
+                            headers={'Content-Type': 'application/x-gtar',
+                                     'x-zerovm-execute': '1.0'})
         return req
 
     def object_request(self, path):
         req = Request.blank(path,
-            environ={'REQUEST_METHOD': 'GET'},
-            headers={'Content-Type': 'application/octet-stream'})
+                            environ={'REQUEST_METHOD': 'GET'},
+                            headers={
+                                'Content-Type': 'application/octet-stream'})
         return req
 
     @contextmanager
@@ -957,9 +958,9 @@ return resp
             }
         ]
         conf = json.dumps(conf)
-        self.create_container(prolis, '/v1/a/%s' % prosrv.app.zerovm_registry_path)
+        self.create_container(prolis, '/v1/a/%s' % prosrv.zerovm_registry_path)
         self.create_object(prolis, '/v1/a/%s/%s'
-                                   % (prosrv.app.zerovm_registry_path,
+                                   % (prosrv.zerovm_registry_path,
                                       'application/octet-stream/config'),
                            conf, content_type='application/json')
         req = Request.blank('/open/a/c/o')
@@ -1285,8 +1286,8 @@ print 'Test'
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        orig_timeout = prosrv.app.immediate_response_timeout
-        prosrv.app.immediate_response_timeout = 0.5
+        orig_timeout = prosrv.immediate_response_timeout
+        prosrv.immediate_response_timeout = 0.5
         nexe = \
 r'''
 from time import sleep
@@ -1338,14 +1339,14 @@ return 'slept'
         except Exception:
             raised += 1
         self.assertEqual(raised, 0)
-        prosrv.app.immediate_response_timeout = orig_timeout
+        prosrv.immediate_response_timeout = orig_timeout
 
     def test_deferred_with_obj(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        orig_timeout = prosrv.app.immediate_response_timeout
-        prosrv.app.immediate_response_timeout = 0.5
+        orig_timeout = prosrv.immediate_response_timeout
+        prosrv.immediate_response_timeout = 0.5
         nexe = \
 r'''
 from time import sleep
@@ -1398,7 +1399,7 @@ return 'slept'
         except Exception:
             raised += 1
         self.assertEqual(raised, 0)
-        prosrv.app.immediate_response_timeout = orig_timeout
+        prosrv.immediate_response_timeout = orig_timeout
 
     def test_QUERY_use_nvram(self):
         self.setup_QUERY()
@@ -1999,16 +2000,18 @@ return json.dumps(con_list)
                 sleep(0.1)
                 return '1'
 
+        prosrv = _test_servers[0]
+        orig_upload_time = prosrv.max_upload_time
         with save_globals():
             proxy_server.http_connect = \
                 fake_http_connect(200, 200, 201, 201, 201)
-            prosrv = _test_servers[0]
-            prosrv.app.max_upload_time = 1
+            prosrv.max_upload_time = 1
             req = self.zerovm_request()
             req.body_file = SlowFile()
             req.content_length = 100
             res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 408)
+        prosrv.max_upload_time = orig_upload_time
 
     def test_QUERY_invalid_etag(self):
         conf = [
@@ -2177,7 +2180,9 @@ return json.dumps(con_list)
 
     def test_QUERY_config_parser(self):
 
-        pqm = proxyquery.ProxyQueryMiddleware(self.proxy_app, {'zerovm_sysimage_devices': 'sysimage1 sysimage2'})
+        pqm = proxyquery.ProxyQueryMiddleware(
+            self.proxy_app,
+            {'zerovm_sysimage_devices': 'sysimage1 sysimage2'})
         conf = [
             {
                 'name': 'script',
@@ -2206,8 +2211,11 @@ return json.dumps(con_list)
                             headers={'Content-Type': 'application/json'})
         parser = None
         try:
-            parser = ClusterConfigParser(pqm.zerovm_sysimage_devices, pqm.app.zerovm_content_type,
-                                         pqm.app.parser_config, pqm.list_account, pqm.list_container)
+            parser = ClusterConfigParser(pqm.zerovm_sysimage_devices,
+                                         pqm.zerovm_content_type,
+                                         pqm.parser_config,
+                                         pqm.list_account,
+                                         pqm.list_container)
             parser.parse(conf, False, request=req)
         except ClusterConfigParsingError:
             self.assertTrue(False, msg='ClusterConfigParsingError is raised')
@@ -2217,10 +2225,14 @@ return json.dumps(con_list)
         prosrv = _test_servers[0]
         self.setup_QUERY()
         self.create_container(prolis, '/v1/a/terasort')
-        self.create_object(prolis, '/v1/a/terasort/input/1.txt', self.get_random_numbers())
-        self.create_object(prolis, '/v1/a/terasort/input/2.txt', self.get_random_numbers())
-        self.create_object(prolis, '/v1/a/terasort/input/3.txt', self.get_random_numbers())
-        self.create_object(prolis, '/v1/a/terasort/input/4.txt', self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/terasort/input/1.txt',
+                           self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/terasort/input/2.txt',
+                           self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/terasort/input/3.txt',
+                           self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/terasort/input/4.txt',
+                           self.get_random_numbers())
         nexe =\
 r'''
 return open(mnfst.nvram['path']).read()
@@ -2334,9 +2346,10 @@ return open(mnfst.nvram['path']).read()
         parser = None
         try:
             parser = ClusterConfigParser(pqm.zerovm_sysimage_devices,
-                                         pqm.app.zerovm_content_type,
-                                         pqm.app.parser_config,
-                                         pqm.list_account, pqm.list_container,
+                                         pqm.zerovm_content_type,
+                                         pqm.parser_config,
+                                         pqm.list_account,
+                                         pqm.list_container,
                                          network_type='opaque')
             parser.parse(conf, False, request=req)
         except ClusterConfigParsingError:
