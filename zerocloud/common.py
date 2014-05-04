@@ -4,7 +4,7 @@ from hashlib import md5
 from swift.common.constraints import MAX_META_NAME_LENGTH, \
     MAX_META_VALUE_LENGTH, MAX_META_COUNT, MAX_META_OVERALL_SIZE
 from swift.common.swob import Response
-from swift.common.utils import split_path
+from swift.common.utils import split_path, readconf
 
 try:
     import simplejson as json
@@ -426,3 +426,12 @@ class NodeEncoder(json.JSONEncoder):
         if isinstance(o, ObjPath):
             return o.url
         return json.JSONEncoder.default(self, o)
+
+
+def load_server_conf(conf, sections):
+    server_conf_file = conf.get('__file__', None)
+    if server_conf_file:
+        server_conf = readconf(server_conf_file)
+        for sect in sections:
+            if server_conf.get(sect, None):
+                conf.update(server_conf[sect])

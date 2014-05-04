@@ -24,7 +24,7 @@ from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict, \
     HTTPInsufficientStorage
 from swift.common.utils import normalize_timestamp, \
-    split_path, get_logger, mkdirs, disable_fallocate, TRUE_VALUES
+    split_path, get_logger, mkdirs, disable_fallocate, config_true_value
 from swift.obj.diskfile import DiskFileManager, DiskFile, DiskFileWriter, \
     write_metadata
 from swift.common.constraints import check_utf8
@@ -35,17 +35,27 @@ from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, \
     ACCESS_WRITABLE, MD5HASH_LENGTH, parse_location, is_image_path, \
     ACCESS_NETWORK, ACCESS_RANDOM, REPORT_VALIDATOR, REPORT_RETCODE, \
     REPORT_ETAG, REPORT_CDR, REPORT_STATUS, SwiftPath, REPORT_LENGTH, \
-    REPORT_DAEMON
+    REPORT_DAEMON, load_server_conf
 from zerocloud.configparser import ClusterConfigParser
 from zerocloud.proxyquery import gunzip_iter
 
-from zerocloud.tarstream import UntarStream, TarStream, REGTYPE, BLOCKSIZE, NUL
+from zerocloud.tarstream import UntarStream, TarStream, \
+    REGTYPE, BLOCKSIZE, NUL
 import zerocloud.thread_pool as zpool
 
 try:
     import simplejson as json
 except ImportError:
     import json
+
+# mapping between return code and its message
+RETCODE_MAP = [
+    'OK',              # [0]
+    'Error',           # [1]
+    'Timed out',       # [2]
+    'Killed',          # [3]
+    'Output too long'  # [4]
+]
 
 
 class ZDiskFileManager(DiskFileManager):
@@ -200,6 +210,8 @@ class ObjectQueryMiddleware(object):
         else:
             self.logger = get_logger(conf, log_route='obj-query')
 
+        # let's load appropriate server config sections here
+        load_server_conf(conf, ['app:object-server'])
         # path to zerovm executable, better use absolute path here
         # for security reasons
         self.zerovm_exename = [i.strip() for i in
@@ -211,11 +223,10 @@ class ObjectQueryMiddleware(object):
         self.zerovm_maxnexe = int(conf.get('zerovm_maxnexe', 256 * 1048576))
         # run the middleware in debug mode
         # will gather temp files and write them into /tmp/zvm_debug/ dir
-        self.zerovm_debug = conf.get('zerovm_debug', 'no').lower() \
-            in TRUE_VALUES
+        self.zerovm_debug = config_true_value(conf.get('zerovm_debug', 'no'))
         # run the middleware in performance check mode
         # will print performance data to system log
-        self.zerovm_perf = conf.get('zerovm_perf', 'no').lower() in TRUE_VALUES
+        self.zerovm_perf = config_true_value(conf.get('zerovm_perf', 'no'))
         # name-path pairs for sysimage devices on this node
         zerovm_sysimage_devices = {}
         sysimage_list = [i.strip()
@@ -258,18 +269,10 @@ class ObjectQueryMiddleware(object):
         self.zerovm_sockets_dir = '/tmp/zvm-daemons'
         if not os.path.exists(self.zerovm_sockets_dir):
             mkdirs(self.zerovm_sockets_dir)
-        # mapping between return code and its message
-        self.retcode_map = [
-            'OK',              # [0]
-            'Error',           # [1]
-            'Timed out',       # [2]
-            'Killed',          # [3]
-            'Output too long'  # [4]
-        ]
 
         # for unit-tests
         self.fault_injection = conf.get('fault_injection', ' ')
-        self.os_interface = os  # for unit-tests
+        self.os_interface = os
 
         self.parser_config = {
             'limits': {
@@ -294,11 +297,14 @@ class ObjectQueryMiddleware(object):
         }
         self.parser = ClusterConfigParser(zerovm_sysimage_devices, None,
                                           self.parser_config, None, None)
-        # obey `disable_fallocate` configuration directive
-        if conf.get('disable_fallocate', 'no').lower() in TRUE_VALUES:
-            disable_fallocate()
-
         self._diskfile_mgr = ZDiskFileManager(conf, self.logger)
+        # obey `disable_fallocate` configuration directive
+        if config_true_value(conf.get('disable_fallocate', 'no')):
+            disable_fallocate()
+        self.disk_chunk_size = int(conf.get('disk_chunk_size', 65536))
+        self.network_chunk_size = int(conf.get('network_chunk_size', 65536))
+        self.max_upload_time = int(conf.get('max_upload_time', 86400))
+        self.log_requests = config_true_value(conf.get('log_requests', 'true'))
 
     def get_disk_file(self, device, partition, account, container, obj,
                       **kwargs):
@@ -421,7 +427,7 @@ class ObjectQueryMiddleware(object):
         try:
             channels['boot'] = os.path.join(zerovm_tmp, 'boot')
             fp = open(channels['boot'], 'wb')
-            reader = iter(lambda: nexe.read(self.app.disk_chunk_size), '')
+            reader = iter(lambda: nexe.read(self.disk_chunk_size), '')
             for chunk in reader:
                 fp.write(chunk)
             fp.close()
@@ -511,7 +517,7 @@ class ObjectQueryMiddleware(object):
     def _create_exec_error(self, nexe_headers, zerovm_retcode, zerovm_stdout):
         err = 'ERROR OBJ.QUERY retcode=%s, ' \
               ' zerovm_stdout=%s' \
-              % (self.retcode_map[zerovm_retcode],
+              % (RETCODE_MAP[zerovm_retcode],
                  zerovm_stdout)
         self.logger.exception(err)
         resp = HTTPInternalServerError(body=err)
@@ -603,12 +609,12 @@ class ObjectQueryMiddleware(object):
                                           content_type='text/plain',
                                           headers=nexe_headers)
         zerovm_valid = False
-        if req.headers.get('x-zerovm-valid', 'false').lower() in TRUE_VALUES:
+        if config_true_value(req.headers.get('x-zerovm-valid', 'false')):
             zerovm_valid = True
         tmpdir = TmpDir(
             self._diskfile_mgr.devices,
             device,
-            disk_chunk_size=self.app.disk_chunk_size,
+            disk_chunk_size=self.disk_chunk_size,
             os_interface=self.os_interface
         )
         disk_file = None
@@ -616,9 +622,9 @@ class ObjectQueryMiddleware(object):
         channels = {}
         with tmpdir.mkdtemp() as zerovm_tmp:
             read_iter = iter(lambda:
-                             req.body_file.read(self.app.network_chunk_size),
+                             req.body_file.read(self.network_chunk_size),
                              '')
-            upload_expiration = time.time() + self.app.max_upload_time
+            upload_expiration = time.time() + self.max_upload_time
             untar_stream = UntarStream(read_iter)
             perf = "%.3f" % (time.time() - start)
             for chunk in read_iter:
@@ -642,7 +648,7 @@ class ObjectQueryMiddleware(object):
                             fname = 'image'
                             file_iter = gunzip_iter(
                                 untar_stream.untar_file_iter(),
-                                self.app.network_chunk_size)
+                                self.network_chunk_size)
                         channels[fname] = os.path.join(zerovm_tmp, fname)
                         fp = open(channels[fname], 'ab')
                         untar_stream.to_write = info.size
@@ -1054,7 +1060,7 @@ class ObjectQueryMiddleware(object):
                         yield tstream.data
 
                 response.app_iter = resp_iter(immediate_responses,
-                                              self.app.network_chunk_size)
+                                              self.network_chunk_size)
                 response.content_length = resp_size
                 return response
 
@@ -1147,7 +1153,7 @@ class ObjectQueryMiddleware(object):
             res.headers['x-nexe-cdr-line'] = '%.3f, %s' \
                                              % (trans_time,
                                                 res.headers['x-nexe-cdr-line'])
-        if self.app.log_requests:
+        if self.log_requests:
             log_line = '%s - - [%s] "%s %s" %s %s "%s" "%s" "%s" %.4f' % (
                 req.remote_addr,
                 time.strftime('%d/%b/%Y:%H:%M:%S +0000', time.gmtime()),
@@ -1183,7 +1189,7 @@ class ObjectQueryMiddleware(object):
                 tmpdir = TmpDir(
                     self._diskfile_mgr.devices,
                     device,
-                    disk_chunk_size=self.app.disk_chunk_size,
+                    disk_chunk_size=self.disk_chunk_size,
                     os_interface=self.os_interface
                 )
                 with tmpdir.mkstemp() as (zerovm_inputmnfst_fd,
@@ -1296,7 +1302,7 @@ class ObjectQueryMiddleware(object):
             try:
                 os.lseek(fd, local_object['offset'], os.SEEK_SET)
                 for chunk in iter(lambda:
-                                  os.read(fd, self.app.disk_chunk_size), ''):
+                                  os.read(fd, self.disk_chunk_size), ''):
                     os.write(newfd, chunk)
                     new_etag.update(chunk)
             except IOError:
@@ -1311,7 +1317,7 @@ class ObjectQueryMiddleware(object):
             new_etag = md5()
             try:
                 for chunk in iter(lambda:
-                                  os.read(fd, self.app.disk_chunk_size), ''):
+                                  os.read(fd, self.disk_chunk_size), ''):
                     new_etag.update(chunk)
             except IOError:
                 return HTTPInternalServerError(
