@@ -48,6 +48,15 @@ try:
 except ImportError:
     import json
 
+# mapping between return code and its message
+RETCODE_MAP = [
+    'OK',              # [0]
+    'Error',           # [1]
+    'Timed out',       # [2]
+    'Killed',          # [3]
+    'Output too long'  # [4]
+]
+
 
 class ZDiskFileManager(DiskFileManager):
 
@@ -260,14 +269,6 @@ class ObjectQueryMiddleware(object):
         self.zerovm_sockets_dir = '/tmp/zvm-daemons'
         if not os.path.exists(self.zerovm_sockets_dir):
             mkdirs(self.zerovm_sockets_dir)
-        # mapping between return code and its message
-        self.retcode_map = [
-            'OK',              # [0]
-            'Error',           # [1]
-            'Timed out',       # [2]
-            'Killed',          # [3]
-            'Output too long'  # [4]
-        ]
 
         # for unit-tests
         self.fault_injection = conf.get('fault_injection', ' ')
@@ -516,7 +517,7 @@ class ObjectQueryMiddleware(object):
     def _create_exec_error(self, nexe_headers, zerovm_retcode, zerovm_stdout):
         err = 'ERROR OBJ.QUERY retcode=%s, ' \
               ' zerovm_stdout=%s' \
-              % (self.retcode_map[zerovm_retcode],
+              % (RETCODE_MAP[zerovm_retcode],
                  zerovm_stdout)
         self.logger.exception(err)
         resp = HTTPInternalServerError(body=err)
