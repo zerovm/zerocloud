@@ -267,6 +267,10 @@ class ClusterConfigParser(object):
                         if is_swift_path(channel.path):
                             channel.path = expand_account_path(account_name,
                                                                channel.path)
+                            if not channel.path.obj \
+                                    and not channel.access & ACCESS_READABLE:
+                                raise ClusterConfigParsingError(
+                                    'Container path must be read-only')
                         if channel.access < 0:
                             if self.is_sysimage_device(channel.device):
                                 other_list.append(channel)
@@ -312,9 +316,6 @@ class ClusterConfigParser(object):
                                 self._add_new_channel(zvm_node, chan)
                     for chan in write_list:
                         if chan.path and is_swift_path(chan.path):
-                            if not chan.path.obj:
-                                raise ClusterConfigParsingError(
-                                    'Container path is not writable')
                             if '*' in chan.path.url:
                                 if read_group:
                                     for i in range(1, node_count + 1):
