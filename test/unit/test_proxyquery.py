@@ -2182,7 +2182,8 @@ return json.dumps(con_list)
 
         pqm = proxyquery.ProxyQueryMiddleware(
             self.proxy_app,
-            {'zerovm_sysimage_devices': 'sysimage1 sysimage2'})
+            {'zerovm_sysimage_devices': 'sysimage1 sysimage2'},
+            object_ring=FakeRing(), container_ring=FakeRing())
         conf = [
             {
                 'name': 'script',
@@ -2316,7 +2317,8 @@ return open(mnfst.nvram['path']).read()
 
         pqm = proxyquery.ProxyQueryMiddleware(
             self.proxy_app,
-            {'zerovm_sysimage_devices': 'sysimage1 sysimage2'})
+            {'zerovm_sysimage_devices': 'sysimage1 sysimage2'},
+            object_ring=FakeRing(), container_ring=FakeRing())
         conf = [
             {
                 'name': 'script',
