@@ -118,6 +118,9 @@ class ClusterConfigParser(object):
         :raises ClusterConfigParsingError: on all other errors
         """
         temp_list = []
+        if '*' in path.account:
+            raise ClusterConfigParsingError('Invalid path: %s'
+                                            % path.url)
         if '*' in path.container:
             mask = re.compile(re.escape(path.container).replace('\\*', '.*'))
             try:
@@ -136,18 +139,23 @@ class ClusterConfigParser(object):
             else:
                 mask = None
             for container in containers:
-                try:
-                    obj_list = self.list_container(path.account,
-                                                   container,
-                                                   mask=mask, **kwargs)
-                except Exception:
-                    raise ClusterConfigParsingError(
-                        'Error querying object server '
-                        'for container: %s' % container)
-                for obj in obj_list:
+                if mask:
+                    try:
+                        obj_list = self.list_container(path.account,
+                                                       container,
+                                                       mask=mask, **kwargs)
+                    except Exception:
+                        raise ClusterConfigParsingError(
+                            'Error querying object server '
+                            'for container: %s' % container)
+                    for obj in obj_list:
+                        temp_list.append(SwiftPath.init(path.account,
+                                                        container,
+                                                        obj))
+                else:
                     temp_list.append(SwiftPath.init(path.account,
                                                     container,
-                                                    obj))
+                                                    None))
         else:
             obj = re.escape(path.obj).replace('\\*', '.*')
             mask = re.compile(obj)
@@ -259,6 +267,10 @@ class ClusterConfigParser(object):
                         if is_swift_path(channel.path):
                             channel.path = expand_account_path(account_name,
                                                                channel.path)
+                            if not channel.path.obj \
+                                    and not channel.access & ACCESS_READABLE:
+                                raise ClusterConfigParsingError(
+                                    'Container path must be read-only')
                         if channel.access < 0:
                             if self.is_sysimage_device(channel.device):
                                 other_list.append(channel)
@@ -277,7 +289,8 @@ class ClusterConfigParser(object):
 
                     read_group = False
                     for chan in read_list:
-                        if '*' in chan.path.path:
+                        if is_swift_path(chan.path) \
+                                and '*' in chan.path.path:
                             read_group = True
                             object_list = self.find_objects(chan.path,
                                                             **kwargs)
@@ -301,40 +314,44 @@ class ClusterConfigParser(object):
                                                           index=i)
                             else:
                                 self._add_new_channel(zvm_node, chan)
-
                     for chan in write_list:
-                        if chan.path and '*' in chan.path.url:
-                            if read_group:
-                                for i in range(1, node_count + 1):
-                                    new_node = self.nodes.get(
-                                        _create_node_name(zvm_node.name, i))
-                                    new_url = \
-                                        _extract_stored_wildcards(chan.path,
-                                                                  new_node)
-                                    new_loc = parse_location(new_url)
-                                    new_node.add_channel(channel=chan,
-                                                         path=new_loc)
+                        if chan.path and is_swift_path(chan.path):
+                            if '*' in chan.path.url:
+                                if read_group:
+                                    for i in range(1, node_count + 1):
+                                        new_node = self.nodes.get(
+                                            _create_node_name(
+                                                zvm_node.name, i))
+                                        new_url = \
+                                            _extract_stored_wildcards(
+                                                chan.path,
+                                                new_node)
+                                        new_loc = parse_location(new_url)
+                                        new_node.add_channel(channel=chan,
+                                                             path=new_loc)
+                                else:
+                                    for i in range(1, node_count + 1):
+                                        new_name = \
+                                            _create_node_name(zvm_node.name, i)
+                                        new_url = \
+                                            chan.path.url.replace('*',
+                                                                  new_name)
+                                        new_loc = parse_location(new_url)
+                                        new_node = self._add_new_channel(
+                                            zvm_node,
+                                            chan,
+                                            index=i,
+                                            path=new_loc)
+                                        new_node.wildcards = \
+                                            [new_name] * \
+                                            chan.path.url.count('*')
                             else:
-                                for i in range(1, node_count + 1):
-                                    new_name = \
-                                        _create_node_name(zvm_node.name, i)
-                                    new_url = \
-                                        chan.path.url.replace('*', new_name)
-                                    new_loc = parse_location(new_url)
-                                    new_node = self._add_new_channel(
-                                        zvm_node,
-                                        chan,
-                                        index=i,
-                                        path=new_loc)
-                                    new_node.wildcards = \
-                                        [new_name] * chan.path.url.count('*')
-                        elif chan.path:
-                            if node_count > 1:
-                                raise ClusterConfigParsingError(
-                                    'Single path %s for multiple node '
-                                    'definition: %s, please use wildcard'
-                                    % (chan.path.url, zvm_node.name))
-                            self._add_new_channel(zvm_node, chan)
+                                if node_count > 1:
+                                    raise ClusterConfigParsingError(
+                                        'Single path %s for multiple node '
+                                        'definition: %s, please use wildcard'
+                                        % (chan.path.url, zvm_node.name))
+                                self._add_new_channel(zvm_node, chan)
                         else:
                             if 'stdout' not in chan.device \
                                     and 'stderr' not in chan.device:
@@ -367,6 +384,9 @@ class ClusterConfigParser(object):
             print traceback.format_exc()
             raise ClusterConfigParsingError('Config parser internal error')
 
+        if not self.nodes:
+            raise ClusterConfigParsingError('Config parser cannot resolve '
+                                            'any job nodes')
         for node in cluster_config:
             connection_list = node.get('connect')
             node_name = node.get('name')
