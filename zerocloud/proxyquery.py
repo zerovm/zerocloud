@@ -589,6 +589,7 @@ class ClusterController(ObjectController):
                         self.app.object_ring,
                         partition))
             exec_request.path_info = node.path_info
+            exec_request.headers['x-zerovm-access'] = node.access
             if node.replicate > 1:
                 container_info = self.container_info(account, container)
                 container_partition = container_info['partition']
@@ -690,6 +691,10 @@ class ClusterController(ObjectController):
                                           exe_resp, req, nexe_headers, node):
         source_resp = None
         load_from = channel.path.path
+        if is_swift_path(channel.path) and not channel.path.obj:
+            return HTTPBadRequest(request=req,
+                                  body='Cannot use container %s as a remote '
+                                       'object reference' % load_from)
         for resp in data_sources:
             if resp.request and load_from == resp.request.path_info:
                 source_resp = resp
@@ -753,6 +758,8 @@ class ClusterController(ObjectController):
             if resp and resp.headers.get('x-zerovm-daemon', None):
                 final_response.headers['x-nexe-cached'] = 'true'
             if resp and resp.content_length > 0:
+                if not resp.app_iter:
+                    resp.app_iter = [resp.body]
                 if final_body:
                     final_body.append(resp.app_iter)
                     final_response.content_length += resp.content_length
@@ -1074,9 +1081,10 @@ class ClusterController(ObjectController):
                 body='Cannot find suitable node to execute code on')
 
         for conn in conns:
-            if getattr(conn, 'error', None):
-                close_swift_conn(conn.resp)
-                return Response(body=conn.error,
+            if hasattr(conn, 'error'):
+                if hasattr(conn, 'resp'):
+                    close_swift_conn(conn.resp)
+                return Response(app_iter=[conn.error],
                                 status="%d %s" % (conn.resp.status,
                                                   conn.resp.reason),
                                 headers=conn.nexe_headers)
@@ -1323,6 +1331,7 @@ class ClusterController(ObjectController):
     def _connect_exec_node(self, obj_nodes, part, request,
                            logger_thread_locals, cnode, request_headers):
         self.app.logger.thread_locals = logger_thread_locals
+        conn = None
         for node in obj_nodes:
             try:
                 with ConnectionTimeout(self.app.conn_timeout):
@@ -1346,14 +1355,23 @@ class ClusterController(ObjectController):
                 elif resp.status == HTTP_INSUFFICIENT_STORAGE:
                     self.server.error_limit(node,
                                             'ERROR Insufficient Storage')
+                    conn.error = 'Insufficient Storage'
+                    conn.resp = resp
                     resp.nuke_from_orbit()
                 elif is_client_error(resp.status):
                     conn.error = resp.read()
                     conn.resp = resp
-                    return conn
+                    if resp.status == HTTP_NOT_FOUND:
+                        conn.error = 'Error %d %s while fetching %s' \
+                                     % (resp.status, resp.reason,
+                                        request.path_info)
+                    else:
+                        return conn
                 else:
                     self.app.logger.warn('Obj server failed with: %d %s'
                                          % (resp.status, resp.reason))
+                    conn.error = resp.read()
+                    conn.resp = resp
                     resp.nuke_from_orbit()
             except Exception:
                 self.server.exception_occurred(node, 'Object',
@@ -1361,6 +1379,9 @@ class ClusterController(ObjectController):
                                                % request.path_info)
                 if getattr(conn, 'resp'):
                     conn.resp.nuke_from_orbit()
+                conn = None
+        if conn:
+            return conn
 
     def _store_accounting_data(self, request, connection=None):
         txn_id = request.environ['swift.trans_id']

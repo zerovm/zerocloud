@@ -728,23 +728,29 @@ class ClusterConfigParser(object):
 
     def resolve_path_info(self, account_name, replica_count):
         default_path_info = '/%s' % account_name
+        top_channel = None
         for node in self.node_list:
             if node.attach == 'default':
                 top_channel = node.channels[0]
             else:
                 for chan in node.channels:
-                    if node.attach == chan.device:
+                    if node.attach == chan.device\
+                            and is_swift_path(chan.path):
                         top_channel = chan
                         break
             if top_channel and is_swift_path(top_channel.path):
                 if top_channel.access & (ACCESS_READABLE | ACCESS_CDR):
                     node.path_info = top_channel.path.path
+                    node.access = 'GET'
                 elif top_channel.access & ACCESS_WRITABLE \
                         and node.replicate > 0:
                     node.path_info = top_channel.path.path
                     node.replicate = replica_count
+                    node.access = 'PUT'
                 else:
                     node.path_info = default_path_info
+            if not top_channel:
+                node.path_info = default_path_info
             if node.replicate == 0:
                 node.replicate = 1
 

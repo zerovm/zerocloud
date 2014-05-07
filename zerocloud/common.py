@@ -314,6 +314,7 @@ class ZvmNode(object):
         self.skip_validation = False
         self.wildcards = None
         self.attach = attach
+        self.access = ''
 
     def copy(self, id, name=None):
         newnode = deepcopy(self)
