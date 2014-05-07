@@ -97,7 +97,8 @@ class TestContainerQuery(unittest.TestCase):
                             environ={'REQUEST_METHOD': 'POST'},
                             headers={'Content-Type': 'application/x-gtar',
                                      'x-zerovm-execute': '1.0',
-                                     'x-account-name': 'a'})
+                                     'x-account-name': 'a',
+                                     'x-zerovm-access': 'GET'})
         req.headers['x-zerocloud-id'] = self.uid_generator.get()
         return req
 

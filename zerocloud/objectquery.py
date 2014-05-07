@@ -38,7 +38,7 @@ from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, \
     ACCESS_WRITABLE, MD5HASH_LENGTH, parse_location, is_image_path, \
     ACCESS_NETWORK, ACCESS_RANDOM, REPORT_VALIDATOR, REPORT_RETCODE, \
     REPORT_ETAG, REPORT_CDR, REPORT_STATUS, SwiftPath, REPORT_LENGTH, \
-    REPORT_DAEMON, load_server_conf
+    REPORT_DAEMON, load_server_conf, is_swift_path
 from zerocloud.configparser import ClusterConfigParser
 from zerocloud.proxyquery import gunzip_iter
 
@@ -631,7 +631,46 @@ class ObjectQueryMiddleware(object):
                                   body='Invalid Content-Type',
                                   content_type='text/plain',
                                   headers=nexe_headers)
-
+        access_type = req.headers.get('x-zerovm-access', '')
+        if obj:
+            try:
+                local_object.disk_file = \
+                    self.get_disk_file(device,
+                                       partition,
+                                       account,
+                                       container,
+                                       obj)
+            except DiskFileDeviceUnavailable:
+                return HTTPInsufficientStorage(drive=device,
+                                               request=req)
+            if access_type == 'GET':
+                try:
+                    local_object.disk_file.open()
+                except DiskFileNotExist:
+                    return HTTPNotFound(request=req)
+            elif access_type == 'PUT':
+                try:
+                    local_object.disk_file.new_timestamp = \
+                        req.headers.get('x-timestamp')
+                    float(local_object.disk_file.new_timestamp)
+                except (KeyError, ValueError, TypeError):
+                    return HTTPBadRequest(
+                        body='Locally writable object '
+                             'specified but no x-timestamp '
+                             'in request')
+        elif container:
+            if access_type == 'GET':
+                local_object.broker = \
+                    self._diskfile_mgr.get_container_broker(
+                        device, partition,
+                        account, container)
+                if local_object.broker.is_deleted():
+                    return HTTPNotFound(headers=nexe_headers,
+                                        request=req)
+            else:
+                return HTTPBadRequest(
+                    body='Containers should be read-only',
+                    headers=nexe_headers)
         pool = req.headers.get('x-zerovm-pool', 'default').lower()
         thrdpool = self.zerovm_thread_pools.get(pool, None)
         if not thrdpool:
@@ -763,21 +802,7 @@ class ObjectQueryMiddleware(object):
                 elif local_object.has_local_file and chan_path:
                     if chan_path.url == local_object.swift_path.url:
                         if chan_path.obj:
-                            try:
-                                local_object.disk_file = \
-                                    self.get_disk_file(device,
-                                                       partition,
-                                                       account,
-                                                       container,
-                                                       obj)
-                            except DiskFileDeviceUnavailable:
-                                return HTTPInsufficientStorage(drive=device,
-                                                               request=req)
-                            if ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
-                                try:
-                                    local_object.disk_file.open()
-                                except DiskFileNotExist:
-                                    return HTTPNotFound(request=req)
+                            if access_type == 'GET':
                                 meta = local_object.disk_file.get_metadata()
                                 input_file_size = int(meta['Content-Length'])
                                 if input_file_size > rbytes:
@@ -791,29 +816,12 @@ class ObjectQueryMiddleware(object):
                                     local_object.disk_file.data_file
                                 ch['meta'] = meta
                                 ch['size'] = input_file_size
-                            elif ch['access'] & ACCESS_WRITABLE:
-                                try:
-                                    local_object.disk_file.new_timestamp = \
-                                        req.headers.get('x-timestamp')
-                                    float(local_object.disk_file.new_timestamp)
-                                except (KeyError, ValueError, TypeError):
-                                    return HTTPBadRequest(
-                                        body='Locally writable object '
-                                             'specified but no x-timestamp '
-                                             'in request')
                             local_object.disk_file.channel_device = \
                                 '/dev/%s' % ch['device']
                             ch['path_info'] = \
                                 local_object.disk_file.name
                         elif chan_path.container:
-                            if ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
-                                local_object.broker = \
-                                    self._diskfile_mgr.get_container_broker(
-                                        device, partition,
-                                        account, container)
-                                if local_object.broker.is_deleted():
-                                    return HTTPNotFound(headers=nexe_headers,
-                                                        request=req)
+                            if access_type == 'GET':
                                 input_file_size = \
                                     self.os_interface.path.getsize(
                                         local_object.broker.db_file)
@@ -829,16 +837,13 @@ class ObjectQueryMiddleware(object):
                                 ch['size'] = input_file_size
                                 ch['path_info'] = \
                                     local_object.swift_path.path
-                            else:
-                                return HTTPBadRequest(
-                                    body='Containers should be read-only',
-                                    headers=nexe_headers)
                         local_object.channel = ch
                 if self.parser.is_sysimage_device(ch['device']):
                     ch['lpath'] = self.parser.get_sysimage(ch['device'])
                 elif ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
                     if not ch.get('lpath'):
-                        if not chan_path or is_image_path(chan_path):
+                        if not chan_path or is_image_path(chan_path)\
+                                or is_swift_path(chan_path):
                             return HTTPBadRequest(request=req,
                                                   body='Could not resolve '
                                                        'channel path: %s'

@@ -161,7 +161,8 @@ class TestObjectQuery(unittest.TestCase):
                             environ={'REQUEST_METHOD': 'POST'},
                             headers={'Content-Type': 'application/x-gtar',
                                      'x-zerovm-execute': '1.0',
-                                     'x-account-name': 'a'})
+                                     'x-account-name': 'a',
+                                     'x-zerovm-access': 'GET'})
         req.headers['x-zerocloud-id'] = self.uid_generator.get()
         return req
 
@@ -170,7 +171,8 @@ class TestObjectQuery(unittest.TestCase):
                             environ={'REQUEST_METHOD': 'POST'},
                             headers={'Content-Type': 'application/x-gtar',
                                      'x-zerovm-execute': '1.0',
-                                     'x-account-name': 'a'})
+                                     'x-account-name': 'a',
+                                     'x-zerovm-access': ''})
         req.headers['x-zerocloud-id'] = self.uid_generator.get()
         return req
 
@@ -552,7 +554,8 @@ return resp + out
                             headers={'Content-Type': 'application/x-gtar',
                                      'x-zerovm-execute': '1.0',
                                      'x-zerocloud-id': self.uid_generator.get(),
-                                     'x-timestamp': timestamp})
+                                     'x-timestamp': timestamp,
+                                     'x-zerovm-access': 'PUT'})
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
@@ -596,7 +599,8 @@ return resp + out
                             headers={'Content-Type': 'application/x-gtar',
                                      'x-zerovm-execute': '1.0',
                                      'x-zerocloud-id': self.uid_generator.get(),
-                                     'x-timestamp': timestamp})
+                                     'x-timestamp': timestamp,
+                                     'x-zerovm-access': 'PUT'})
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)

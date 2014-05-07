@@ -2165,6 +2165,141 @@ return json.dumps(con_list)
         self.assertEqual(res.status_int, 400)
         self.assertEqual(res.body, 'Invalid path swift://* in sort')
 
+    def test_local_device_path_404(self):
+        self.setup_QUERY()
+        prosrv = _test_servers[0]
+        for path in ('c/error', 'c/o/error', 'error'):
+            conf = [
+                {
+                    'name': 'sort',
+                    'exec': {'path': 'swift://a/c/exe',
+                             'args': ''},
+                    'file_list': [
+                        {'device': 'stdin',
+                         'path': 'swift://a/%s' % path},
+                        {'device': 'stdout'}
+                    ]
+                }
+            ]
+            conf = json.dumps(conf)
+            req = self.zerovm_request()
+            req.body = conf
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 404)
+            self.assertEqual(res.body, 'Error %s while fetching '
+                                       '/a/%s' % (res.status, path))
+            self.assertEqual(res.headers['x-nexe-system'], 'sort')
+            self.assertEqual(res.headers['x-nexe-status'],
+                             'ZeroVM did not run')
+            self.assertEqual(res.headers['x-nexe-retcode'], '0')
+
+    def test_remote_device_path_404(self):
+        self.setup_QUERY()
+        prosrv = _test_servers[0]
+        for path in ('c/error', 'c/o/error'):
+            conf = [
+                {
+                    'name': 'sort',
+                    'exec': {'path': 'swift://a/c/exe',
+                             'args': ''},
+                    'file_list': [
+                        {'device': 'stdin',
+                         'path': 'swift://a/%s' % path},
+                        {'device': 'stdout'}
+                    ],
+                    'attach': 'stdout'
+                }
+            ]
+            conf = json.dumps(conf)
+            req = self.zerovm_request()
+            req.body = conf
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 404)
+            self.assertEqual(res.body, 'Error %s while fetching '
+                                       '/a/%s' % (res.status, path))
+            self.assertEqual(res.headers['x-nexe-system'], 'sort')
+            self.assertEqual(res.headers['x-nexe-status'],
+                             'ZeroVM did not run')
+            self.assertEqual(res.headers['x-nexe-retcode'], '0')
+        for path in ('c/error', 'c/o/error'):
+            conf = [
+                {
+                    'name': 'sort',
+                    'exec': {'path': 'swift://a/c/exe',
+                             'args': ''},
+                    'file_list': [
+                        {'device': 'stdin',
+                         'path': 'swift://a/%s.in' % path},
+                        {'device': 'stdout',
+                         'path': 'swift://a/%s.out' % path}
+                    ],
+                    'attach': 'stdout'
+                }
+            ]
+            conf = json.dumps(conf)
+            req = self.zerovm_request()
+            req.body = conf
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 404)
+            self.assertEqual(res.body, 'Error %s while fetching '
+                                       '/a/%s.in' % (res.status, path))
+            self.assertEqual(res.headers['x-nexe-system'], 'sort')
+            self.assertEqual(res.headers['x-nexe-status'],
+                             'ZeroVM did not run')
+            self.assertEqual(res.headers['x-nexe-retcode'], '0')
+        for path in ('c/error', 'c/o/error'):
+            conf = [
+                {
+                    'name': 'sort',
+                    'exec': {'path': 'swift://a/c/exe',
+                             'args': ''},
+                    'file_list': [
+                        {'device': 'stdin',
+                         'path': 'swift://a/%s.in' % path},
+                        {'device': 'stdout',
+                         'path': 'swift://a/%s.out' % path}
+                    ],
+                    'attach': 'stdin'
+                }
+            ]
+            conf = json.dumps(conf)
+            req = self.zerovm_request()
+            req.body = conf
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 404)
+            self.assertEqual(res.body, 'Error %s while fetching '
+                                       '/a/%s.in' % (res.status, path))
+            self.assertEqual(res.headers['x-nexe-system'], 'sort')
+            self.assertEqual(res.headers['x-nexe-status'],
+                             'ZeroVM did not run')
+            self.assertEqual(res.headers['x-nexe-retcode'], '0')
+        for path in ('c/error', 'c/o/error'):
+            conf = [
+                {
+                    'name': 'sort',
+                    'exec': {'path': 'swift://a/c/exe',
+                             'args': ''},
+                    'file_list': [
+                        {'device': 'stdin',
+                         'path': 'swift://a/%s' % path},
+                        {'device': 'stdout',
+                         'path': 'swift://a/%s' % path}
+                    ],
+                    'attach': 'stdout'
+                }
+            ]
+            conf = json.dumps(conf)
+            req = self.zerovm_request()
+            req.body = conf
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.body, ('Could not resolve channel path: '
+                                        'swift://a/%s' % path) * 2)
+            self.assertEqual(res.headers['x-nexe-system'], 'sort,sort')
+            self.assertEqual(res.headers['x-nexe-status'],
+                             'ZeroVM did not run,ZeroVM did not run')
+            self.assertEqual(res.headers['x-nexe-retcode'], '0,0')
+
     def test_QUERY_account_server_error(self):
         with save_globals():
             swift.proxy.controllers.account.http_connect = \
