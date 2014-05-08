@@ -448,22 +448,30 @@ class TestProxyQuery(unittest.TestCase):
                 pass
 
     @contextmanager
-    def add_sysimage_device(self, sysimage_path):
+    def add_sysimage_device(self, sysimage_path, name='sysimage1'):
         prosrv = _test_servers[0]
+        _con1srv = _test_servers[3]
+        _con2srv = _test_servers[4]
         _obj1srv = _test_servers[5]
         _obj2srv = _test_servers[6]
         zerovm_sysimage_devices = prosrv.zerovm_sysimage_devices
         zerovm_sysimage_devices1 = _obj1srv.parser.sysimage_devices
         zerovm_sysimage_devices2 = _obj2srv.parser.sysimage_devices
-        prosrv.zerovm_sysimage_devices = {'sysimage1': None}
-        _obj1srv.parser.sysimage_devices = {'sysimage1': sysimage_path}
-        _obj2srv.parser.sysimage_devices = {'sysimage1': sysimage_path}
+        zerovm_sysimage_devices3 = _con1srv.parser.sysimage_devices
+        zerovm_sysimage_devices4 = _con2srv.parser.sysimage_devices
+        prosrv.zerovm_sysimage_devices = {name: None}
+        _con1srv.parser.sysimage_devices = {name: sysimage_path}
+        _con2srv.parser.sysimage_devices = {name: sysimage_path}
+        _obj1srv.parser.sysimage_devices = {name: sysimage_path}
+        _obj2srv.parser.sysimage_devices = {name: sysimage_path}
         try:
             yield True
         finally:
             prosrv.zerovm_sysimage_devices = zerovm_sysimage_devices
             _obj1srv.parser.sysimage_devices = zerovm_sysimage_devices1
             _obj2srv.parser.sysimage_devices = zerovm_sysimage_devices2
+            _con1srv.parser.sysimage_devices = zerovm_sysimage_devices3
+            _con2srv.parser.sysimage_devices = zerovm_sysimage_devices4
             try:
                 os.unlink(sysimage_path)
             except IOError:
