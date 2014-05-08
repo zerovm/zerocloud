@@ -314,8 +314,8 @@ class ProxyQueryMiddleware(object):
                                     % conf_file)
                 continue
             parser = ClusterConfigParser(self.zerovm_sysimage_devices,
-                                         self.app.zerovm_content_type,
-                                         self.app.parser_config,
+                                         self.zerovm_content_type,
+                                         self.parser_config,
                                          self.list_account,
                                          self.list_container,
                                          network_type=self.network_type)

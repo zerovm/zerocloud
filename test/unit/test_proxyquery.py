@@ -2733,3 +2733,65 @@ return open(mnfst.nvram['path']).read()
         self.assertEqual(json.loads(res.body),
                          ['o/o/o2', 'o/o2', 'oo2'])
 
+    def test_parse_daemon_config(self):
+        conf = [
+            {
+                'name': 'daemon1',
+                'exec': {
+                    'path': 'file://sysimage1:daemon1'
+                },
+                'file_list': [
+                    {
+                        'device': 'stdin',
+                        'path': 'swift://a/c/o'
+                    },
+                    {
+                        'device': 'stdout',
+                        'path': 'swift://a/c/o'
+                    },
+                    {
+                        'device': 'sysimage1'
+                    }
+                ]
+            }
+        ]
+        fd = open('%s/config.json' % _testdir, 'w')
+        json.dump(conf, fd)
+        fd.close()
+        conf = [
+            {
+                'name': 'daemon2',
+                'exec': {
+                    'path': 'file://sysimage1:daemon2'
+                },
+                'file_list': [
+                    {
+                        'device': 'input',
+                        'path': 'swift://a/c/o'
+                    },
+                    {
+                        'device': 'output',
+                        'path': 'swift://a/c/o'
+                    },
+                    {
+                        'device': 'sysimage1'
+                    }
+                ]
+            }
+        ]
+        fd = open('%s/config2.json' % _testdir, 'w')
+        json.dump(conf, fd)
+        fd.close()
+        pqm = proxyquery.ProxyQueryMiddleware(
+            self.proxy_app,
+            {'zerovm_sysimage_devices': 'sysimage1 sysimage2'},
+            object_ring=FakeRing(), container_ring=FakeRing())
+        daemons = pqm.parse_daemon_config(['daemon1',
+                                           '%s/config.json' % _testdir,
+                                           'daemon2',
+                                           '%s/config2.json' % _testdir])
+        for val in daemons:
+            self.assertIn(val[0], ('daemon1', 'daemon2'))
+            config = val[1]
+            self.assertEqual(config.exe.image, 'sysimage1')
+            self.assertIn(config.exe.path, ('daemon1', 'daemon2'))
