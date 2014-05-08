@@ -745,14 +745,24 @@ class ClusterController(ObjectController):
         req.cdr_log = []
         for conn in conns:
             resp = conn.resp
+            got_nexe_header = False
             if resp:
                 for key in conn.nexe_headers.keys():
                     if resp.headers.get(key):
+                        got_nexe_header = True
                         conn.nexe_headers[key] = resp.headers.get(key)
             if conn.error:
                 conn.nexe_headers['x-nexe-error'] = \
                     conn.error.replace('\n', '')
-
+            else:
+                if is_success(resp.status_int) and not got_nexe_header:
+                    # looks like the middleware is not installed
+                    # or not functioning otherwise we should get something
+                    return HTTPServiceUnavailable(
+                        request=req,
+                        headers=resp.headers,
+                        body='objectquery middleware is not installed '
+                             'or not functioning')
             self._store_accounting_data(req, conn)
             merge_headers(final_response.headers, conn.nexe_headers)
             if resp and resp.headers.get('x-zerovm-daemon', None):
