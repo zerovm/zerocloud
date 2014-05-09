@@ -13,8 +13,6 @@ from eventlet import GreenPile, GreenPool, Queue, spawn_n
 from eventlet.green import socket
 from eventlet.timeout import Timeout
 import zlib
-import itertools
-from swift.common.ring import Ring
 
 from swiftclient.client import quote
 
@@ -375,10 +373,6 @@ class ProxyQueryMiddleware(object):
         # max time to wait for upload to finish, used in POST requests
         self.max_upload_time = int(conf.get('max_upload_time', 86400))
         self.client_timeout = int(conf.get('client_timeout', 60))
-        swift_dir = conf.get('swift_dir', '/etc/swift')
-        self.object_ring = object_ring or Ring(swift_dir, ring_name='object')
-        self.container_ring = container_ring or Ring(swift_dir,
-                                                     ring_name='container')
         self.put_queue_depth = int(conf.get('put_queue_depth', 10))
         self.conn_timeout = float(conf.get('conn_timeout', 0.5))
         # header for "execute by POST"
@@ -520,29 +514,29 @@ class ProxyQueryMiddleware(object):
         return self.app
 
     def get_controller(self, account, container, obj):
-        return ClusterController(self, account, container, obj, self.app)
+        return ClusterController(self.app, account, container, obj, self)
 
 
 class ClusterController(ObjectController):
 
-    def __init__(self, app, account_name, container_name, obj_name, server,
+    def __init__(self, app, account_name, container_name, obj_name, middleware,
                  **kwargs):
         ObjectController.__init__(self, app,
                                   account_name,
                                   container_name or '',
                                   obj_name or '')
+        self.middleware = middleware
         self.command = None
         self.parser = ClusterConfigParser(
-            self.app.zerovm_sysimage_devices,
-            self.app.zerovm_content_type,
-            self.app.parser_config,
-            self.app.list_account,
-            self.app.list_container,
-            network_type=self.app.network_type)
-        self.server = server
+            self.middleware.zerovm_sysimage_devices,
+            self.middleware.zerovm_content_type,
+            self.middleware.parser_config,
+            self.middleware.list_account,
+            self.middleware.list_container,
+            network_type=self.middleware.network_type)
 
     def get_daemon_socket(self, config):
-        for daemon_sock, daemon_conf in self.app.zerovm_daemons:
+        for daemon_sock, daemon_conf in self.middleware.zerovm_daemons:
             if can_run_as_daemon(config, daemon_conf):
                 return daemon_sock
         return None
@@ -553,8 +547,8 @@ class ClusterController(ObjectController):
         return part
 
     def _get_own_address(self):
-        if self.app.zerovm_ns_hostname:
-            addr = self.app.zerovm_ns_hostname
+        if self.middleware.zerovm_ns_hostname:
+            addr = self.middleware.zerovm_ns_hostname
         else:
             addr = None
             partition_count = self.app.object_ring.partition_count
@@ -581,7 +575,7 @@ class ClusterController(ObjectController):
                 ring = self.app.container_ring
                 partition = ring.get_part(account, container)
                 node_iter = GreenthreadSafeIterator(
-                    self.server.iter_nodes(ring, partition))
+                    self.app.iter_nodes(ring, partition))
             else:
                 partition = self.get_random_partition()
                 node_iter = GreenthreadSafeIterator(
@@ -630,48 +624,10 @@ class ClusterController(ObjectController):
                            exec_request.headers)
         return [conn for conn in pile if conn]
 
-    def iter_nodes_local_first(self, ring, partition):
-        """
-        Yields nodes for a ring partition.
-
-        If the 'write_affinity' setting is non-empty, then this will yield N
-        local nodes (as defined by the write_affinity setting) first, then the
-        rest of the nodes as normal. It is a re-ordering of the nodes such
-        that the local ones come first; no node is omitted. The effect is
-        that the request will be serviced by local object servers first, but
-        nonlocal ones will be employed if not enough local ones are available.
-
-        :param ring: ring to get nodes from
-        :param partition: ring partition to yield nodes for
-        """
-
-        primary_nodes = ring.get_part_nodes(partition)
-        num_locals = self.server.write_affinity_node_count(len(primary_nodes))
-        is_local = self.server.write_affinity_is_local_fn
-
-        if is_local is None:
-            return self.server.iter_nodes(ring, partition)
-
-        all_nodes = itertools.chain(primary_nodes,
-                                    ring.get_more_nodes(partition))
-        first_n_local_nodes = list(itertools.islice(
-            itertools.ifilter(is_local, all_nodes), num_locals))
-
-        # refresh it; it moved when we computed first_n_local_nodes
-        all_nodes = itertools.chain(primary_nodes,
-                                    ring.get_more_nodes(partition))
-        local_first_node_iter = itertools.chain(
-            first_n_local_nodes,
-            itertools.ifilter(lambda node: node not in first_n_local_nodes,
-                              all_nodes))
-
-        return self.server.iter_nodes(
-            ring, partition, node_iter=local_first_node_iter)
-
     def _spawn_file_senders(self, conns, pool, req):
         for conn in conns:
             conn.failed = False
-            conn.queue = Queue(self.app.put_queue_depth)
+            conn.queue = Queue(self.middleware.put_queue_depth)
             conn.tar_stream = TarStream()
             pool.spawn(self._send_file, conn, req.path)
 
@@ -705,9 +661,10 @@ class ClusterController(ObjectController):
             else:
                 source_req = req.copy_get()
                 source_req.path_info = load_from
-                if self.app.zerovm_uses_newest:
+                if self.middleware.zerovm_uses_newest:
                     source_req.headers['X-Newest'] = 'true'
-                if self.app.zerovm_prevalidate and 'boot' in channel.device:
+                if self.middleware.zerovm_prevalidate \
+                        and 'boot' in channel.device:
                     source_req.headers['X-Zerovm-Valid'] = 'true'
                 acct, src_container_name, src_obj_name =\
                     split_path(load_from, 1, 3, True)
@@ -717,7 +674,7 @@ class ClusterController(ObjectController):
                 # if 'boot' in ch.device:
                 #     source_req.acl = container_info['exec_acl']
                 source_resp = \
-                    ObjectController(self.server,
+                    ObjectController(self.app,
                                      acct,
                                      src_container_name,
                                      src_obj_name).GET(source_req)
@@ -778,10 +735,11 @@ class ClusterController(ObjectController):
                     final_response.app_iter = final_body
                     final_response.content_length = resp.content_length
                     final_response.content_type = resp.headers['content-type']
-        if self.app.zerovm_accounting_enabled:
-            self.app.zerovm_ns_thrdpool.spawn_n(self._store_accounting_data,
-                                                req)
-        if self.app.zerovm_use_cors and self.container_name:
+        if self.middleware.zerovm_accounting_enabled:
+            self.middleware.zerovm_ns_thrdpool.spawn_n(
+                self._store_accounting_data,
+                req)
+        if self.middleware.zerovm_use_cors and self.container_name:
             container_info = self.container_info(self.account_name,
                                                  self.container_name)
             if container_info.get('cors', None):
@@ -800,20 +758,22 @@ class ClusterController(ObjectController):
     def POST(self, req, exe_resp=None, cluster_config=''):
         image_resp = None
         user_image = False
+        chunk_size = self.middleware.network_chunk_size
         if 'content-type' not in req.headers:
             return HTTPBadRequest(request=req,
                                   body='Must specify Content-Type')
-        upload_expiration = time.time() + self.app.max_upload_time
+        upload_expiration = time.time() + self.middleware.max_upload_time
         etag = md5()
         req.bytes_transferred = 0
         path_list = [StringBuffer(CLUSTER_CONFIG_FILENAME),
                      StringBuffer(NODE_CONFIG_FILENAME)]
         rdata = req.environ['wsgi.input']
-        read_iter = iter(lambda: rdata.read(self.app.network_chunk_size), '')
+        read_iter = iter(lambda: rdata.read(chunk_size), '')
         orig_content_type = req.content_type
         if req.content_type in ['application/x-gzip']:
             orig_iter = read_iter
-            read_iter = gunzip_iter(orig_iter, self.app.network_chunk_size)
+            read_iter = gunzip_iter(orig_iter,
+                                    chunk_size)
             req.content_type = TAR_MIMES[0]
         if req.content_type in TAR_MIMES:
             # we must have Content-Length set for tar-based requests
@@ -865,7 +825,8 @@ class ClusterController(ObjectController):
                     req.bytes_transferred += len(chunk)
                     if time.time() > upload_expiration:
                         return HTTPRequestTimeout(request=req)
-                    if req.bytes_transferred > self.app.zerovm_maxconfig:
+                    if req.bytes_transferred > \
+                            self.middleware.zerovm_maxconfig:
                         return HTTPRequestEntityTooLarge(request=req)
                     etag.update(chunk)
                     cluster_config += chunk
@@ -957,7 +918,7 @@ class ClusterController(ObjectController):
 
         req.path_info = '/' + self.account_name
         try:
-            if self.app.ignore_replication:
+            if self.middleware.ignore_replication:
                 replica_count = 1
             else:
                 replica_count = self.app.object_ring.replica_count
@@ -980,14 +941,14 @@ class ClusterController(ObjectController):
             return HTTPServiceUnavailable(
                 body='Cannot find own address, check zerovm_ns_hostname')
         ns_server = None
-        network_is_tcp = self.app.network_type == 'tcp'
+        network_is_tcp = self.middleware.network_type == 'tcp'
         if self.parser.total_count > 1 and network_is_tcp:
             ns_server = NameService(self.parser.total_count)
-            if self.app.zerovm_ns_thrdpool.free() <= 0:
+            if self.middleware.zerovm_ns_thrdpool.free() <= 0:
                 return HTTPServiceUnavailable(
                     body='Cluster slot not available',
                     request=req)
-            ns_server.start(self.app.zerovm_ns_thrdpool)
+            ns_server.start(self.middleware.zerovm_ns_thrdpool)
             if not ns_server.port:
                 return HTTPServiceUnavailable(body='Cannot bind name service')
         exec_requests = []
@@ -1112,7 +1073,7 @@ class ClusterController(ObjectController):
                     data_src.bytes_transferred = 0
                     _send_tar_headers(chunked, data_src)
                     while True:
-                        with ChunkReadTimeout(self.app.client_timeout):
+                        with ChunkReadTimeout(self.middleware.client_timeout):
                             try:
                                 data = next(data_src.app_iter)
                             except StopIteration:
@@ -1150,7 +1111,7 @@ class ClusterController(ObjectController):
         if do_defer == 'always':
             defer_timeout = 0
         elif do_defer == 'auto':
-            defer_timeout = self.app.immediate_response_timeout
+            defer_timeout = self.middleware.immediate_response_timeout
         else:
             defer_timeout = None
         conns = []
@@ -1167,7 +1128,7 @@ class ClusterController(ObjectController):
                         conns.append(conn)
                 resp = self.create_final_response(conns, req)
                 path = SwiftPath(deferred_url)
-                container_info = get_info(self.server, req.environ.copy(),
+                container_info = get_info(self.app, req.environ.copy(),
                                           path.account, path.container,
                                           ret_not_found=True)
                 if container_info['status'] == HTTP_NOT_FOUND:
@@ -1177,7 +1138,7 @@ class ClusterController(ObjectController):
                                                      path.container)
                     cont_req.method = 'PUT'
                     cont_resp = \
-                        ContainerController(self.server,
+                        ContainerController(self.app,
                                             path.account,
                                             path.container).PUT(cont_req)
                     if cont_resp.status_int >= 300:
@@ -1199,7 +1160,7 @@ class ClusterController(ObjectController):
                 deferred_put.method = 'PUT'
                 deferred_put.environ['wsgi.input'] = resp
                 deferred_put.content_length = resp.content_length
-                deferred_resp = ObjectController(self.server,
+                deferred_resp = ObjectController(self.app,
                                                  path.account,
                                                  path.container,
                                                  path.obj).PUT(deferred_put)
@@ -1215,7 +1176,7 @@ class ClusterController(ObjectController):
                 deferred_put.environ['wsgi.input'] = resp
                 deferred_put.content_length = len(report)
                 deferred_resp = \
-                    ObjectController(self.server,
+                    ObjectController(self.app,
                                      path.account,
                                      path.container,
                                      path.obj + '.headers').PUT(deferred_put)
@@ -1226,7 +1187,7 @@ class ClusterController(ObjectController):
             if self.container_name:
                 container = self.container_name
             else:
-                container = self.app.zerovm_registry_path
+                container = self.middleware.zerovm_registry_path
             if self.object_name:
                 obj = self.object_name
             else:
@@ -1294,7 +1255,7 @@ class ClusterController(ObjectController):
                     conn.error = error
                     return conn
                 dest_resp = \
-                    ObjectController(self.server,
+                    ObjectController(self.app,
                                      chan.path.account,
                                      chan.path.container,
                                      chan.path.obj).PUT(dest_req)
@@ -1310,26 +1271,27 @@ class ClusterController(ObjectController):
 
     def _process_response(self, conn, request):
         conn.error = None
+        chunk_size = self.middleware.network_chunk_size
         if conn.resp:
             server_response = conn.resp
             resp = Response(status='%d %s' %
                                    (server_response.status,
                                     server_response.reason),
                             app_iter=iter(lambda: server_response.read(
-                                self.app.network_chunk_size), ''),
+                                chunk_size), ''),
                             headers=dict(server_response.getheaders()))
         else:
             try:
-                with Timeout(self.app.node_timeout):
+                with Timeout(self.middleware.node_timeout):
                     server_response = conn.getresponse()
                     resp = Response(status='%d %s' %
                                            (server_response.status,
                                             server_response.reason),
                                     app_iter=iter(lambda: server_response.read(
-                                        self.app.network_chunk_size), ''),
+                                        chunk_size), ''),
                                     headers=dict(server_response.getheaders()))
             except (Exception, Timeout):
-                self.server.exception_occurred(
+                self.app.exception_occurred(
                     conn.node, 'Object',
                     'Trying to get final status of POST to %s'
                     % request.path_info)
@@ -1344,14 +1306,14 @@ class ClusterController(ObjectController):
         conn = None
         for node in obj_nodes:
             try:
-                with ConnectionTimeout(self.app.conn_timeout):
+                with ConnectionTimeout(self.middleware.conn_timeout):
                     request.headers['Connection'] = 'close'
                     request_headers['Expect'] = '100-continue'
                     request_headers['Content-Length'] = str(cnode.size)
                     conn = http_connect(node['ip'], node['port'],
                                         node['device'], part, request.method,
                                         request.path_info, request_headers)
-                with Timeout(self.app.node_timeout):
+                with Timeout(self.middleware.node_timeout):
                     resp = conn.getexpect()
                 conn.node = node
                 conn.cnode = cnode
@@ -1363,8 +1325,8 @@ class ClusterController(ObjectController):
                     conn.resp = resp
                     return conn
                 elif resp.status == HTTP_INSUFFICIENT_STORAGE:
-                    self.server.error_limit(node,
-                                            'ERROR Insufficient Storage')
+                    self.app.error_limit(node,
+                                         'ERROR Insufficient Storage')
                     conn.error = 'Insufficient Storage'
                     conn.resp = resp
                     resp.nuke_from_orbit()
@@ -1384,9 +1346,9 @@ class ClusterController(ObjectController):
                     conn.resp = resp
                     resp.nuke_from_orbit()
             except Exception:
-                self.server.exception_occurred(node, 'Object',
-                                               'Expect: 100-continue on %s'
-                                               % request.path_info)
+                self.app.exception_occurred(node, 'Object',
+                                            'Expect: 100-continue on %s'
+                                            % request.path_info)
                 if getattr(conn, 'resp'):
                     conn.resp.nuke_from_orbit()
                 conn = None
@@ -1412,10 +1374,11 @@ class ClusterController(ObjectController):
                                     connection.nexe_headers['x-nexe-status']))
         else:
             body = ''.join(request.cdr_log)
-            append_req = Request.blank('/%s/%s/%s/%s' % (self.app.version,
-                                                         self.app.cdr_account,
-                                                         self.account_name,
-                                                         acc_object),
+            append_req = Request.blank('/%s/%s/%s/%s'
+                                       % (self.middleware.version,
+                                          self.middleware.cdr_account,
+                                          self.account_name,
+                                          acc_object),
                                        headers={'X-Append-To': '-1',
                                                 'Content-Length': len(body),
                                                 'Content-Type': 'text/plain'},
@@ -1442,7 +1405,7 @@ class ClusterController(ObjectController):
             obj_req.method = 'GET'
             run = True
         controller = ObjectController(
-            self.server,
+            self.app,
             self.account_name,
             self.container_name,
             self.object_name)
@@ -1486,7 +1449,7 @@ class ClusterController(ObjectController):
 
     def _get_content_config(self, req, content_type):
         req.template = None
-        cont = self.app.zerovm_registry_path
+        cont = self.middleware.zerovm_registry_path
         obj = '%s/config' % content_type
         config_path = '/%s/%s/%s' % (self.account_name, cont, obj)
         memcache_client = cache_from_env(req.environ)
@@ -1498,7 +1461,7 @@ class ClusterController(ObjectController):
         config_req = req.copy_get()
         config_req.path_info = config_path
         config_resp = ObjectController(
-            self.server,
+            self.app,
             self.account_name,
             cont,
             obj).GET(config_req)
@@ -1506,7 +1469,7 @@ class ClusterController(ObjectController):
             req.template = ''
             for chunk in config_resp.app_iter:
                 req.template += chunk
-                if self.app.zerovm_maxconfig < len(req.template):
+                if self.middleware.zerovm_maxconfig < len(req.template):
                     req.template = None
                     return HTTPRequestEntityTooLarge(
                         request=config_req,
@@ -1515,7 +1478,7 @@ class ClusterController(ObjectController):
             memcache_client.set(
                 memcache_key,
                 req.template,
-                time=float(self.app.zerovm_cache_config_timeout))
+                time=float(self.middleware.zerovm_cache_config_timeout))
 
     def _create_deferred_report(self, headers):
         # just dumps headers as a json object for now
