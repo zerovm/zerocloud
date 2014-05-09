@@ -2795,3 +2795,46 @@ return open(mnfst.nvram['path']).read()
             config = val[1]
             self.assertEqual(config.exe.image, 'sysimage1')
             self.assertIn(config.exe.path, ('daemon1', 'daemon2'))
+
+    def test_cors(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        self.assertTrue(prosrv.app.strict_cors_mode)
+        nexe = trim(r'''
+            return 'hello, world'
+            ''')
+        self.create_object(prolis, '/v1/a/c/hello.nexe', nexe)
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/c/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        req.headers['origin'] = 'http://example.com'
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, 'hello, world')
+        # Uncomment it when tested on Swift > 1.13.1
+        # the bug with strict_cors_mode is fixed in current trunk
+        # try:
+        #     prosrv.app.strict_cors_mode = False
+        #     req = self.zerovm_request()
+        #     req.body = conf
+        #     req.headers['origin'] = 'http://example.com'
+        #     res = req.get_response(prosrv)
+        #     self.assertEqual(res.status_int, 200)
+        #     self.assertEqual(res.body, 'hello, world')
+        #     self.assertIn('Access-Control-Allow-Origin', res.headers)
+        #     self.assertEqual(res.headers['Access-Control-Allow-Origin'],
+        #                      'http://example.com')
+        #     self.assertIn('Access-Control-Expose-Headers', res.headers)
+        #     self.check_container_integrity(prosrv, '/v1/a/c', {})
+        # finally:
+        #     prosrv.app.strict_cors_mode = True
