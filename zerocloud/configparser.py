@@ -61,17 +61,20 @@ def _tcp_string(replication_level, destination_id, node_count, access_type):
 
 def _opaque_string(replication_level, cluster_id, node_count,
                    source_id, destination_id, access_type):
+    inbound = True
     if access_type & ACCESS_READABLE:
         suffix = ''
     else:
         suffix = '>'
-    proto = ';'.join(map(
-        lambda i: 'opaque:local|%s%s-%d-%d'
-                  % (suffix, cluster_id,
-                     source_id,
-                     (destination_id + i * node_count)),
-        range(replication_level)
-    ))
+        inbound = False
+    fmt_func = lambda i: (
+        'opaque:local|%s%s-%d-%d' %
+        (suffix,
+         cluster_id,
+         source_id if inbound else (destination_id + i * node_count),
+         (destination_id + i * node_count) if inbound else source_id)
+    )
+    proto = ';'.join(map(fmt_func, range(replication_level)))
     return proto
 
 
