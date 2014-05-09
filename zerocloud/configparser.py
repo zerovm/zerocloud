@@ -67,13 +67,14 @@ def _opaque_string(replication_level, cluster_id, node_count,
     else:
         suffix = '>'
         inbound = False
-    proto = ';'.join(map(
-        lambda i: 'opaque:local|%s%s-%d-%d'
-                  % (suffix, cluster_id,
-                     source_id if inbound else (destination_id + i * node_count),
-                     (destination_id + i * node_count) if inbound else source_id),
-        range(replication_level)
-    ))
+    fmt_func = lambda i: (
+        'opaque:local|%s%s-%d-%d' %
+        (suffix,
+         cluster_id,
+         source_id if inbound else (destination_id + i * node_count),
+         (destination_id + i * node_count) if inbound else source_id)
+    )
+    proto = ';'.join(map(fmt_func, range(replication_level)))
     return proto
 
 
