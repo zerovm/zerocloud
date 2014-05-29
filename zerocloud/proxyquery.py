@@ -988,7 +988,7 @@ class ClusterController(ObjectController):
                 node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
             if self.parser.total_count > 1:
                 self.parser.build_connect_string(
-                    node, req.headers.get('x-zerocloud-id', ''))
+                    node, req.headers.get('x-trans-id'))
                 if node.replicate > 1:
                     for i in range(0, node.replicate - 1):
                         node.replicas.append(deepcopy(node))
