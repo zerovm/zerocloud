@@ -2800,7 +2800,8 @@ return open(mnfst.nvram['path']).read()
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        self.assertTrue(prosrv.app.strict_cors_mode)
+        if hasattr(prosrv.app, 'strict_cors_mode'):
+            self.assertTrue(prosrv.app.strict_cors_mode)
         nexe = trim(r'''
             return 'hello, world'
             ''')
