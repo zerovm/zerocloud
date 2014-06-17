@@ -21,23 +21,17 @@ differently:
 
 ## GET
 
-To issue a GET request in Zerocloud you need to specify particular version string in Swift storage url.
+When you use a "dumb client" which cannot issue POST requests or set
+special headers, you can use a GET request instead. To issue a GET
+request in Zerocloud you need to specify a particular version string
+in the Swift storage url.
 
-Just a reminder, Swift url contains the following components:
+As a reminder, the path in a Swift URL has the form
 
-- protocol
-- hostname
-- port
-- `version`
-- account
-- container
-- object
+    /version/account/container/object
 
-<pre>
-protocol://hostname:port/version/account/container/object
-</pre>
-
-The supported version strings are:
+To trigger a ZeroVM job when retrieving the object, you need to
+replace the `version` component with one of:
 
 - open - will execute binary associated with `Content-Type` of the object you're GET-ting, akin to any file manager `double-click` function.
 
