@@ -19,25 +19,6 @@ differently:
 
 - any other `Content-Type` - POST a script to be handled by some interpreter or shell executable.
 
-## GET
-
-When you use a "dumb client" which cannot issue POST requests or set
-special headers, you can use a GET request instead. To issue a GET
-request in Zerocloud you need to specify a particular version string
-in the Swift storage url.
-
-As a reminder, the path in a Swift URL has the form
-
-    /version/account/container/object
-
-To trigger a ZeroVM job when retrieving the object, you need to
-replace the `version` component with one of:
-
-- open - will execute binary associated with `Content-Type` of the object you're GET-ting, akin to any file manager `double-click` function.
-
-- open-with - not implemented yet
-
-
 ### POST a job description
 
 This POST will work only if url path info is of the form:
@@ -93,6 +74,26 @@ Shebang examples:
 When your script is run, the filesystem will have it mounted as a `/script` file (absolute path, directly in root dir).
 The interpreter will have its home dir set to `/` and executed as `/path/to/interpreter script`
 If you want to get stderr or mount any other files into executable filesystem, you have to use other POST formats (preferably: POST a ZeroVM image)
+
+## GET
+
+When you use a "dumb client" which cannot issue POST requests or set
+special headers, you can use a GET request instead. To issue a GET
+request in Zerocloud you need to specify a particular version string
+in the Swift storage url.
+
+As a reminder, the path in a Swift URL has the form
+
+    /version/account/container/object
+
+To trigger a ZeroVM job when retrieving the object, you need to
+replace the `version` component with one of:
+
+- open - will execute binary associated with `Content-Type` of the
+  object you're GET-ting, akin to any file manager `double-click`
+  function.
+
+- open-with - not implemented yet
 
 ### GET with version `open`
 
