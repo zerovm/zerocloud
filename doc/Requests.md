@@ -47,7 +47,8 @@ communicating with each other.
 
 ### POST a ZeroVM image file
 
-This POST will work only if url path info is of the form: /version/account
+This POST will work only if url path info is of the form:
+`/version/account`.
 
 If you issue a POST with `Content-Type: any of the tar file types` and
 `X-Zerovm-Execute: 1.0` it will be interpreted as a ZeroVM image.
@@ -81,25 +82,25 @@ from the same image file to run on different nodes.
 
 ### POST any other file
 
-This POST will work if url path info is of the form: /version/account
-or /version/account/container/object
+This POST will work if url path info is of the form:
+`/version/account` or `/version/account/container/object`.
 
 If you issue a POST with `X-Zerovm-Execute: 1.0` and any other content
 type the data will be interpreted as a script.
 
-Each script must contain a "shebang" line at the top (reminder: #! ).
+Each script must contain a "shebang" line at the top (reminder: `#!`).
 
 Shebang can either include a full path to the executable, or include a
 system image file name (see. `doc/Configuration.md`) and a relative
 path to the executable inside the system image file.
 
-- If you POST to /version/account the script will run on any available
-  node and the result (stdout) will be sent back to you as
-  'text/plain'
+- If you POST to `/version/account` the script will run on any
+  available node and the result (stdout) will be sent back to you as
+  `text/plain`.
 
-- If you POST to /version/account/container/object the script will be
-  run with the object file as input (stdin) and the result (stdout)
-  will be sent back to you as 'text/plain'
+- If you POST to `/version/account/container/object` the script will
+  be run with the object file as input (stdin) and the result (stdout)
+  will be sent back to you as `text/plain`.
 
 Shebang examples:
 
@@ -131,16 +132,16 @@ As a reminder, the path in a Swift URL has the form
 To trigger a ZeroVM job when retrieving the object, you need to
 replace the `version` component with one of:
 
-- open - will execute binary associated with `Content-Type` of the
-  object you're GET-ting, akin to any file manager `double-click`
+- `open` - will execute binary associated with `Content-Type` of the
+  object you're GET-ting, akin to any file manager double-click
   function.
 
-- open-with - not implemented yet
+- `open-with` - not implemented yet
 
 ### GET with version `open`
 
 This GET will work if url path info is of the form:
-/version/account/container/object
+`/version/account/container/object`.
 
 When you issue a GET request with version `open`:
 `/open/account/container/object` the following events will fire:
@@ -187,6 +188,6 @@ of the reserved `{.object_path}` variable.
 Issuing GET request for objects with `Content-Type:
 application/x-nexe` will try to run these objects as ZeroVM
 executables. STDOUT contents will be sent to the user in GET response.
-If you supply the following query string params: "args",
-"content_type" they will be substituted for executable argument string
+If you supply the following query string params: `args`,
+`content_type` they will be substituted for executable argument string
 and response Content-Type respectively.
