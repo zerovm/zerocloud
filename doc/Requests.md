@@ -9,11 +9,13 @@ of the data before it's being served.
 
 To issue POST request in Zerocloud you need to add `X-Zerovm-Execute: 1.0` header to the request.
 
-You can issue several types of POST requests it all depends on what `Content-Type` you pass there.
+This is the most flexible method to start a ZeroVM job. Depending on
+what `Content-Type` you pass there, the POST payload is interpreted
+differently:
 
 - `Content-Type: application/json` - POST a job description
 
-- `Content-Type: application/x-tar` or `Content-Type: application/x-gtar` or `Content-Type: application/x-ustar` - POST ZeroVM image
+- `Content-Type: application/x-tar` or `Content-Type: application/x-gtar` or `Content-Type: application/x-ustar` - POST a ZeroVM image
 
 - any other `Content-Type` - POST a script to be handled by some interpreter or shell executable.
 
