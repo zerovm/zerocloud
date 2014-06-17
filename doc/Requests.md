@@ -1,5 +1,10 @@
 # Zerocloud request types
 
+You can run ZeroVM jobs on ZeroCloud using different kinds of
+requests. You run a job to process the data stored in ZeroCloud. This
+could be a map-reduce job or it could be a simple filtering/processing
+of the data before it's being served.
+
 ## POST
 
 To issue POST request in Zerocloud you need to add `X-Zerovm-Execute: 1.0` header to the request.
