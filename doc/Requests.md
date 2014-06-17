@@ -40,7 +40,9 @@ replace the `version` component with one of:
 
 ### POST a job description
 
-This POST will work only if url path info is of the form: /version/account
+This POST will work only if url path info is of the form:
+`/version/account` where `version` is the normal Swift version string
+(not `open` or `open-with`).
 
 If you issue a POST with `Content-Type: application/json` and `X-Zerovm-Execute: 1.0` it will be interpreted as a job description.
 The data in the POST request will be parsed as a JSON document and then interpreted according to `doc/Servlets.md`.
