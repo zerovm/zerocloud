@@ -88,7 +88,8 @@ This POST will work if url path info is of the form:
 If you issue a POST with a `X-Zerovm-Execute: 1.0` header and any
 other content type, the POST data will be interpreted as a script.
 
-Each script must contain a "shebang" line at the top (reminder: `#!`).
+The script must contain a "shebang" line at the top (a line starting
+with `#!`).
 
 Shebang can either include a full path to the executable, or include a
 system image file name (see. `doc/Configuration.md`) and a relative
