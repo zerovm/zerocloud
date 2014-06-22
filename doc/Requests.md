@@ -50,13 +50,14 @@ This POST will work only if url path info is of the form:
 `/version/account`.
 
 If you issue a POST with `Content-Type: any of the tar file types` and
-`X-Zerovm-Execute: 1.0` it will be interpreted as a ZeroVM image.
-ZeroVM image is a tar file with several files and directories inside.
+a `X-Zerovm-Execute: 1.0` header, the POST data will be interpreted as
+a ZeroVM image. A ZeroVM image is a tar file with several files and
+directories inside. The tar file is used as the root filesystem of the
+ZeroVM instance.
 
-The minimal ZeroVM image contains just a `boot/system.map` file.
-
-This file is a JSON job description file exactly the same as in a
-'POST job description' topic above.
+The minimal ZeroVM image contains just a `boot/system.map` file. This
+file is a JSON job description file exactly the same as in a
+[POST job description](#post-a-job-description) topic above.
 
 Image can contain any number of files, all these files will be visible
 to the running ZeroVM instance as its local `root` filesystem.
