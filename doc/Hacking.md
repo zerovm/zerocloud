@@ -13,7 +13,7 @@ Something like VirtualBox or a cloud server instance will work quite nicely.
 2. Create a `local.conf` file in the DevStack clone root with the following
    contents:
 
-    ```
+    ```ini
     [[local|localrc]]
     disable_all_services
     enable_service key mysql s-proxy s-object s-container s-account
@@ -27,7 +27,7 @@ Something like VirtualBox or a cloud server instance will work quite nicely.
    convenient way.
 5. You can test that Swift is working by uploading a file. Here is an example:
 
-    ```
+    ```sh
     $ touch foo.txt
     $ swift upload test_container foo.txt
     foo.txt
@@ -42,20 +42,20 @@ Something like VirtualBox or a cloud server instance will work quite nicely.
 
 1. Clone the ZeroCloud source:
 
-    ```
+    ```sh
     $ git clone https://github.com/zerovm/zerocloud.git
     ```
 
 2. Install ZeroCloud globally:
 
-    ```
+    ```sh
     $ cd zerocloud
     $ sudo python setup.py install
     ```
 
 3. Verify the installation. This import should succeed with any errors:
 
-    ```
+    ```sh
     $ python -c "import zerocloud"
     ```
 
@@ -66,7 +66,7 @@ We now need to add ZeroCloud to the Swift pipeline.
 
 1. Install the ZeroVM Python (2.7) distribution:
 
-    ```
+    ```sh
     $ sudo mkdir /usr/share/zerovm
     $ cd /usr/share/zerovm
     $ sudo wget http://packages.zerovm.org/zerovm-samples/python.tar
@@ -99,27 +99,27 @@ few additional changes.
    First, copy the `service_id` of the current Swift endpoint. The Swift
    endpoint is the one on port 8080:
 
-    ```
+    ```sh
     $ keystone endpoint-list
     ```
 
    Next, create a similar endpoint to the existing, except using 127.0.0.1 for
    the host:
 
-    ```
+    ```sh
     $ keystone endpoint-create --service-id=_service_id_ --publicurl="http://127.0.0.1:8080/v1/AUTH_\$(tenant_id)s" --internalurl="http://127.0.0.1:8080/v1/AUTH_\$(tenant_id)s" --adminurl=http://127.0.0.1:8080
     ```
 
    Verify that the endpoint was created. It should look identical to the
    original, except for the IP address:
 
-    ```
+    ```sh
     $ keystone endpoint-list
     ```
 
    Finally, delete the original endpoint:
 
-    ```
+    ```sh
     $ keystone endpoint-delete _id_
     ```
 
