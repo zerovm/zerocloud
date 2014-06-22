@@ -91,8 +91,8 @@ other content type, the POST data will be interpreted as a script.
 The script must contain a "shebang" line at the top (a line starting
 with `#!`).
 
-Shebang can either include a full path to the executable, or include a
-system image file name (see. `doc/Configuration.md`) and a relative
+The shebang line can either include a full path to the executable, or
+include a [system image file name](Configuration.md) and a relative
 path to the executable inside the system image file.
 
 - If you POST to `/version/account` the script will run on any
