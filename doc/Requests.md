@@ -60,7 +60,7 @@ file is a JSON job description file exactly the same as in a
 [POST job description](#post-a-job-description) topic above.
 
 Image can contain any number of files, all these files will be visible
-to the running ZeroVM instance as its local `root` filesystem.
+to the running ZeroVM instance as its local root filesystem.
 Essentially it's like "mounting" this tar file to `/`
 
 This tar file can also contain the executable itself. If
