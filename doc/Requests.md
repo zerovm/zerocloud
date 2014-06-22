@@ -85,8 +85,8 @@ from the same image file to run on different nodes.
 This POST will work if url path info is of the form:
 `/version/account` or `/version/account/container/object`.
 
-If you issue a POST with `X-Zerovm-Execute: 1.0` and any other content
-type the data will be interpreted as a script.
+If you issue a POST with a `X-Zerovm-Execute: 1.0` header and any
+other content type, the POST data will be interpreted as a script.
 
 Each script must contain a "shebang" line at the top (reminder: `#!`).
 
