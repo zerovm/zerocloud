@@ -14,14 +14,15 @@ This is the most flexible method to start a ZeroVM job. Depending on
 what `Content-Type` you pass there, the POST payload is interpreted
 differently:
 
-- `Content-Type: application/json` - POST a job description
+- `Content-Type: application/json` -
+  [POST a job description](#post-a-job-description)
 
 - `Content-Type: application/x-tar` or `Content-Type:
-  application/x-gtar` or `Content-Type: application/x-ustar` - POST a
-  ZeroVM image
+  application/x-gtar` or `Content-Type: application/x-ustar` -
+  [POST a ZeroVM image](#post-a-zerovm-image-file)
 
-- any other `Content-Type` - POST a script to be handled by some
-  interpreter or shell executable.
+- any other `Content-Type` - [POST a script](#post-any-other-file) to
+  be handled by some interpreter or shell executable.
 
 ### POST a job description
 
