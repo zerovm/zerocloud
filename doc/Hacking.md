@@ -102,7 +102,8 @@ We now need to add ZeroCloud to the Swift pipeline.
     ```
 
     We then insert the filter into the main pipeline. Here we inserted
-    it just before the final `proxy-server` filter:
+    the `proxy-query` filter just before the final `proxy-server`
+    filter:
 
     ```ini
     [pipeline:main]
