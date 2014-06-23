@@ -106,7 +106,11 @@ We now need to add ZeroCloud to the Swift pipeline.
 
     ```ini
     [pipeline:main]
-    pipeline = catch_errors gatekeeper healthcheck proxy-logging cache container_sync bulk slo dlo ratelimit crossdomain authtoken keystoneauth tempauth tempurl formpost staticweb container-quotas account-quotas proxy-logging proxy-query proxy-server
+    pipeline = catch_errors gatekeeper healthcheck proxy-logging cache
+      container_sync bulk slo dlo ratelimit crossdomain authtoken
+      keystoneauth tempauth tempurl formpost staticweb
+      container-quotas account-quotas proxy-logging proxy-query
+      proxy-server
     ```
 
 Additional ZeroCloud configuration options can be found in
