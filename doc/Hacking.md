@@ -72,11 +72,42 @@ We now need to add ZeroCloud to the Swift pipeline.
     $ sudo wget http://packages.zerovm.org/zerovm-samples/python.tar
     ```
 
-2. Apply [this patch](https://gist.githubusercontent.com/larsbutler/9687830/raw/8d8e49fd6939b8601e74ccd5b3f60de776d5b439/object-server.1.conf.patch)
-   to `/etc/swift/object-server/1.conf`.
+2. Add and enable the `object-query` middleware on the object server.
+   First add this to the top of `/etc/swift/object-server/1.conf`:
 
-3. Apply [this patch](https://gist.githubusercontent.com/larsbutler/9687830/raw/1b4afd0979b8a7e102e93edf7d16689eb5d49669/proxy-server.conf.patch)
-   to `/etc/swift/proxy-server.conf`.
+    ```ini
+    [filter:object-query]
+    use = egg:zerocloud#object_query
+    zerovm_sysimage_devices = python2.7 /usr/share/zerovm/python.tar
+    #zerovm_debug = True
+    ```
+
+   This loads the middleware and configures the `python2.7` system
+   image. Next you need to actually insert the middleware into the
+   main pipeline. Edit the section so it says:
+
+    ```ini
+    [pipeline:main]
+    pipeline = healthcheck recon object-query object-server
+    ```
+
+3. We now do the same for the proxy server. First we register the
+   `object-proxy` filter by adding this to
+   `/etc/swift/proxy-server.conf`:
+
+    ```ini
+    [filter:proxy-query]
+    use = egg:zerocloud#proxy_query
+    zerovm_sysimage_devices = python2.7 /usr/share/zerovm/python.tar
+    ```
+
+    We then insert the filter into the main pipeline. Here we inserted
+    it just before the final `proxy-server` filter:
+
+    ```ini
+    [pipeline:main]
+    pipeline = catch_errors gatekeeper healthcheck proxy-logging cache container_sync bulk slo dlo ratelimit crossdomain authtoken keystoneauth tempauth tempurl formpost staticweb container-quotas account-quotas proxy-logging proxy-query proxy-server
+    ```
 
 Additional ZeroCloud configuration options can be found in
 [Configuration](/doc/Configuration.md/).
