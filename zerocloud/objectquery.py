@@ -6,7 +6,6 @@ import time
 import traceback
 import tarfile
 from contextlib import contextmanager
-from urllib import unquote
 from hashlib import md5
 from tempfile import mkstemp, mkdtemp
 
@@ -19,13 +18,15 @@ import signal
 
 import zlib
 from os.path import exists
+from swift.common.request_helpers import get_name_and_placement
+from swift.common.storage_policy import POLICIES
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
     HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict, \
     HTTPInsufficientStorage
 from swift.common.utils import normalize_timestamp, \
-    split_path, get_logger, mkdirs, disable_fallocate, config_true_value, \
+    get_logger, mkdirs, disable_fallocate, config_true_value, \
     hash_path, storage_directory
 from swift.container.backend import ContainerBroker
 from swift.obj.diskfile import DiskFileManager, DiskFile, DiskFileWriter, \
@@ -82,12 +83,13 @@ class ZDiskFileManager(DiskFileManager):
         super(ZDiskFileManager, self).__init__(conf, logger)
 
     def get_diskfile(self, device, partition, account, container, obj,
-                     **kwargs):
+                     policy_idx=0, **kwargs):
         dev_path = self.get_dev_path(device)
         if not dev_path:
             raise DiskFileDeviceUnavailable()
         return ZDiskFile(self, dev_path, self.threadpools[device],
-                         partition, account, container, obj, **kwargs)
+                         partition, account, container, obj,
+                         policy_idx=policy_idx, **kwargs)
 
     def get_container_broker(self, device, partition, account, container,
                              **kwargs):
@@ -113,10 +115,10 @@ class ZDiskFileManager(DiskFileManager):
 class ZDiskFile(DiskFile):
 
     def __init__(self, mgr, path, threadpool, partition, account,
-                 container, obj, _datadir=None):
+                 container, obj, _datadir=None, policy_idx=0):
         super(ZDiskFile, self).__init__(mgr, path, threadpool,
                                         partition, account, container, obj,
-                                        _datadir)
+                                        _datadir, policy_idx)
         self.tmppath = None
         self.channel_device = None
         self.new_timestamp = None
@@ -361,9 +363,9 @@ class ObjectQueryMiddleware(object):
         self.log_requests = config_true_value(conf.get('log_requests', 'true'))
 
     def get_disk_file(self, device, partition, account, container, obj,
-                      **kwargs):
+                      policy_idx=0, **kwargs):
         return self._diskfile_mgr.get_diskfile(
-            device, partition, account, container, obj, **kwargs)
+            device, partition, account, container, obj, policy_idx, **kwargs)
 
     def send_to_socket(self, sock, zerovm_inputmnfst):
         SIZE = 8
@@ -607,12 +609,9 @@ class ObjectQueryMiddleware(object):
             'x-nexe-system': ''
         }
 
-        try:
-            (device, partition, account, container, obj) = \
-                split_path(unquote(req.path), 3, 5, True)
-        except ValueError, err:
-            return HTTPBadRequest(body=str(err), request=req,
-                                  content_type='text/plain')
+        device, partition, account, container, obj, policy_idx = \
+            get_name_and_placement(req, 3, 5, True)
+        nexe_headers['x-nexe-policy'] = POLICIES.get_by_index(policy_idx).name
         local_object = LocalObject(account, container, obj)
         rbytes = self.parser_config['limits']['rbytes']
         if 'content-length' in req.headers \
@@ -639,7 +638,8 @@ class ObjectQueryMiddleware(object):
                                        partition,
                                        account,
                                        container,
-                                       obj)
+                                       obj,
+                                       policy_idx)
             except DiskFileDeviceUnavailable:
                 return HTTPInsufficientStorage(drive=device,
                                                request=req)
@@ -1076,11 +1076,9 @@ class ObjectQueryMiddleware(object):
                         local_object.channel,
                         local_object.disk_file,
                         nexe_headers['x-nexe-etag'],
-                        account,
-                        container,
-                        obj,
+                        account, container, obj,
                         req,
-                        device)
+                        device, policy_idx)
                     if error:
                         return error
                 sysmap_info = ''
@@ -1244,14 +1242,15 @@ class ObjectQueryMiddleware(object):
 
     def validate(self, req):
         try:
-            (device, partition, account, container, obj) =\
-                split_path(unquote(req.path), 5, 5, True)
+            device, partition, account, container, obj, policy_idx = \
+                get_name_and_placement(req, 5, 5, True)
         except ValueError:
             return False
         try:
             try:
                 disk_file = self.get_disk_file(device, partition,
-                                               account, container, obj)
+                                               account, container, obj,
+                                               policy_idx)
             except DiskFileDeviceUnavailable:
                 return HTTPInsufficientStorage(drive=device, request=req)
         except DiskFileDeviceUnavailable:
@@ -1312,13 +1311,14 @@ class ObjectQueryMiddleware(object):
 
     def is_validated(self, req):
         try:
-            (device, partition, account, container, obj) = \
-                split_path(unquote(req.path), 5, 5, True)
+            device, partition, account, container, obj, policy_idx = \
+                get_name_and_placement(req, 5, 5, True)
         except ValueError:
             return False
         try:
             disk_file = self.get_disk_file(device, partition,
-                                           account, container, obj)
+                                           account, container, obj,
+                                           policy_idx)
         except DiskFileDeviceUnavailable:
                 return HTTPInsufficientStorage(drive=device, request=req)
         with disk_file.open():
@@ -1333,7 +1333,8 @@ class ObjectQueryMiddleware(object):
                 return False
 
     def _finalize_local_file(self, local_object, disk_file, nexe_etag,
-                             account, container, obj, request, device):
+                             account, container, obj, request, device,
+                             policy_idx):
         data = nexe_etag.split(' ')
         # data can contain memory etag, for snapshot usage
         # let's just remember it here: mem_etag
@@ -1419,7 +1420,7 @@ class ObjectQueryMiddleware(object):
                 'x-content-type': metadata['Content-Type'],
                 'x-timestamp': metadata['X-Timestamp'],
                 'x-etag': metadata['ETag']}),
-            device)
+            device, policy_idx)
 
     def _cleanup_daemon(self, daemon_sock):
         for pid in self._get_daemon_pid(daemon_sock):

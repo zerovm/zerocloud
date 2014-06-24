@@ -7,12 +7,13 @@ import time
 import datetime
 import uuid
 from hashlib import md5
-from random import randrange
+from random import randrange, choice
 import greenlet
 from eventlet import GreenPile, GreenPool, Queue, spawn_n
 from eventlet.green import socket
 from eventlet.timeout import Timeout
 import zlib
+from swift.common.storage_policy import POLICIES
 
 from swiftclient.client import quote
 
@@ -437,6 +438,24 @@ class ProxyQueryMiddleware(object):
                 'wbytes': int(conf.get('zerovm_maxinput', 1024 * 1048576))
             }
         }
+        # storage policies that will be used for random node picking
+        policies = [i.strip()
+                    for i in conf.get('standalone_policies', '').split()
+                    if i.strip()]
+        self.standalone_policies = []
+        for pol in policies:
+            try:
+                pol_idx = int(pol)
+                policy = POLICIES.get_by_index(pol_idx)
+            except ValueError:
+                policy = POLICIES.get_by_name(pol)
+            if policy:
+                self.standalone_policies.append(policy.idx)
+            else:
+                self.logger.warning('Could not load storage policy: %s'
+                                    % pol)
+        if not self.standalone_policies:
+            self.standalone_policies = [0]
         # use direct tcp connections (tcp) or intermediate broker (opaque)
         self.network_type = conf.get('zerovm_network_type', 'tcp')
         # opaque network does not support replication right now
@@ -517,6 +536,12 @@ class ProxyQueryMiddleware(object):
         return ClusterController(self.app, account, container, obj, self)
 
 
+def select_random_partition(ring):
+    partition_count = ring.partition_count
+    part = randrange(0, partition_count)
+    return part
+
+
 class ClusterController(ObjectController):
 
     def __init__(self, app, account_name, container_name, obj_name, middleware,
@@ -541,19 +566,20 @@ class ClusterController(ObjectController):
                 return daemon_sock
         return None
 
-    def get_random_partition(self):
-        partition_count = self.app.object_ring.partition_count
-        part = randrange(0, partition_count)
-        return part
+    def get_standalone_policy(self):
+        policy = choice(self.middleware.standalone_policies)
+        ring = self.app.get_object_ring(policy)
+        return ring, policy
 
     def _get_own_address(self):
         if self.middleware.zerovm_ns_hostname:
             addr = self.middleware.zerovm_ns_hostname
         else:
             addr = None
-            partition_count = self.app.object_ring.partition_count
+            object_ring = self.app.get_object_ring(0)
+            partition_count = object_ring.partition_count
             part = randrange(0, partition_count)
-            nodes = self.app.object_ring.get_part_nodes(part)
+            nodes = object_ring.get_part_nodes(part)
             for n in nodes:
                 addr = _get_local_address(n)
                 if addr:
@@ -566,22 +592,32 @@ class ClusterController(ObjectController):
             account, container, obj = \
                 split_path(node.path_info, 1, 3, True)
             if obj:
-                ring = self.app.object_ring
+                container_info = self.container_info(
+                    account, container, exec_request)
+                policy_index = exec_request.headers.get(
+                    'X-Backend-Storage-Policy-Index',
+                    container_info['storage_policy'])
+                ring = self.app.get_object_ring(policy_index)
                 partition = ring.get_part(account, container, obj)
                 node_iter = GreenthreadSafeIterator(
-                    self.iter_nodes_local_first(self.app.object_ring,
+                    self.iter_nodes_local_first(ring,
                                                 partition))
+                exec_request.headers['X-Backend-Storage-Policy-Index'] = \
+                    str(policy_index)
             elif container:
                 ring = self.app.container_ring
                 partition = ring.get_part(account, container)
                 node_iter = GreenthreadSafeIterator(
                     self.app.iter_nodes(ring, partition))
             else:
-                partition = self.get_random_partition()
+                object_ring, policy_index = self.get_standalone_policy()
+                partition = select_random_partition(object_ring)
                 node_iter = GreenthreadSafeIterator(
                     self.iter_nodes_local_first(
-                        self.app.object_ring,
+                        object_ring,
                         partition))
+                exec_request.headers['X-Backend-Storage-Policy-Index'] = \
+                    str(policy_index)
             exec_request.path_info = node.path_info
             exec_request.headers['x-zerovm-access'] = node.access
             if node.replicate > 1:
@@ -920,14 +956,21 @@ class ClusterController(ObjectController):
 
         req.path_info = '/' + self.account_name
         try:
+            replica_count = None
             if self.middleware.ignore_replication:
                 replica_count = 1
-            else:
-                replica_count = self.app.object_ring.replica_count
+
+            def replica_resolver(account, container):
+                container_info = self.container_info(account, container, req)
+                ring = self.app.get_object_ring(
+                    container_info['storage_policy'])
+                return ring.replica_count
+
             self.parser.parse(cluster_config,
                               user_image,
                               self.account_name,
                               replica_count,
+                              replica_resolver=replica_resolver,
                               request=req)
         except ClusterConfigParsingError, e:
             self.app.logger.warn(
@@ -961,7 +1004,8 @@ class ClusterController(ObjectController):
                 'x-nexe-retcode': 0,
                 'x-nexe-etag': '',
                 'x-nexe-validation': 0,
-                'x-nexe-cdr-line': '0.0 0.0 0 0 0 0 0 0 0 0'
+                'x-nexe-cdr-line': '0.0 0.0 0 0 0 0 0 0 0 0',
+                'x-nexe-policy': ''
             }
             path_info = req.path_info
             exec_request = Request.blank(path_info,
@@ -1485,6 +1529,17 @@ class ClusterController(ObjectController):
     def _create_deferred_report(self, headers):
         # just dumps headers as a json object for now
         return json.dumps(dict(headers))
+
+    def replica_resolver(self, path_info, request=None):
+        if not request:
+            return self.app.get_object_ring(0).replica_count
+        try:
+            account, container, obj = split_path(path_info, 3, 3, True)
+        except ValueError:
+            return self.app.get_object_ring(0).replica_count
+        container_info = self.container_info(account, container, request)
+        ring = self.app.get_object_ring(container_info['storage_policy'])
+        return ring.replica_count
 
 
 def _load_channel_data(node, extracted_file):

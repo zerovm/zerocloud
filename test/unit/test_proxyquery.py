@@ -33,6 +33,9 @@ from swift.container import server as container_server
 from swift.obj import server as object_server
 from swift.common.utils import mkdirs, normalize_timestamp, NullLogger
 from swift.common import utils
+from swift.common import storage_policy
+from swift.common.storage_policy import StoragePolicy, \
+    StoragePolicyCollection, POLICIES
 
 from zerocloud import proxyquery, objectquery
 from test.unit import connect_tcp, readuntil2crlfs, fake_http_connect, trim, \
@@ -68,6 +71,7 @@ def do_setup(the_object_server):
     global _testdir, _test_servers, _test_sockets, \
         _orig_container_listing_limit, _test_coros, _orig_SysLogHandler, \
         _orig_POLICIES, _test_POLICIES
+    _orig_POLICIES = storage_policy._POLICIES
     _orig_SysLogHandler = utils.SysLogHandler
     utils.SysLogHandler = mock.MagicMock()
     # Since we're starting up a lot here, we're going to test more than
@@ -109,14 +113,31 @@ def do_setup(the_object_server):
         {'port': con2lis.getsockname()[1]},
     ]
     write_fake_ring(container_ring_path, *container_devs)
-    obj_ring_path = os.path.join(_testdir, 'object.ring.gz')
-    obj_devs = [
-        {'port': obj1lis.getsockname()[1]},
-        {'port': obj2lis.getsockname()[1]},
-    ]
-    write_fake_ring(obj_ring_path, *obj_devs)
+    storage_policy._POLICIES = StoragePolicyCollection([
+        StoragePolicy(0, 'zero', True),
+        StoragePolicy(1, 'one', False),
+        StoragePolicy(2, 'two', False)])
+    obj_rings = {
+        0: ('sda1', 'sdb1'),
+        1: ('sdc1', 'sdd1'),
+        2: ('sde1', 'sdf1'),
+    }
+    for policy_index, devices in obj_rings.items():
+        policy = POLICIES[policy_index]
+        dev1, dev2 = devices
+        obj_ring_path = os.path.join(_testdir, policy.ring_name + '.ring.gz')
+        obj_devs = [
+            {'port': obj1lis.getsockname()[1], 'device': dev1},
+            {'port': obj2lis.getsockname()[1], 'device': dev2},
+        ]
+        write_fake_ring(obj_ring_path, *obj_devs)
     prosrv = proxy_server.Application(conf, FakeMemcacheReturnsNone(),
                                       logger=debug_logger('proxy'))
+    for policy in POLICIES:
+        # make sure all the rings are loaded
+        prosrv.get_object_ring(policy.idx)
+    # don't loose this one!
+    _test_POLICIES = storage_policy._POLICIES
     acc1srv = account_server.AccountController(
         conf, logger=debug_logger('acct1'))
     acc2srv = account_server.AccountController(
@@ -178,7 +199,7 @@ def do_setup(the_object_server):
                                                          'x-trans-id': 'test'})
         resp = conn.getresponse()
         assert(resp.status == 201)
-    # Create containers
+    # Create containers, 1 per test policy
     sock = connect_tcp(('localhost', prolis.getsockname()[1]))
     fd = sock.makefile()
     fd.write('PUT /v1/a/c HTTP/1.1\r\nHost: localhost\r\n'
@@ -190,6 +211,30 @@ def do_setup(the_object_server):
     assert headers[:len(exp)] == exp, "Expected '%s', encountered '%s'" % (
         exp, headers[:len(exp)])
 
+    sock = connect_tcp(('localhost', prolis.getsockname()[1]))
+    fd = sock.makefile()
+    fd.write(
+        'PUT /v1/a/c1 HTTP/1.1\r\nHost: localhost\r\n'
+        'Connection: close\r\nX-Auth-Token: t\r\nX-Storage-Policy: one\r\n'
+        'Content-Length: 0\r\n\r\n')
+    fd.flush()
+    headers = readuntil2crlfs(fd)
+    exp = 'HTTP/1.1 201'
+    assert headers[:len(exp)] == exp, \
+        "Expected '%s', encountered '%s'" % (exp, headers[:len(exp)])
+
+    sock = connect_tcp(('localhost', prolis.getsockname()[1]))
+    fd = sock.makefile()
+    fd.write(
+        'PUT /v1/a/c2 HTTP/1.1\r\nHost: localhost\r\n'
+        'Connection: close\r\nX-Auth-Token: t\r\nX-Storage-Policy: two\r\n'
+        'Content-Length: 0\r\n\r\n')
+    fd.flush()
+    headers = readuntil2crlfs(fd)
+    exp = 'HTTP/1.1 201'
+    assert headers[:len(exp)] == exp, \
+        "Expected '%s', encountered '%s'" % (exp, headers[:len(exp)])
+
 
 def setup():
     do_setup(object_server)
@@ -200,6 +245,7 @@ def teardown():
         server.kill()
     rmtree(os.path.dirname(_testdir))
     utils.SysLogHandler = _orig_SysLogHandler
+    storage_policy._POLICIES = _orig_POLICIES
 
 
 @contextmanager
@@ -228,8 +274,7 @@ class TestProxyQuery(unittest.TestCase):
             proxy_server.Application(None, FakeMemcache(),
                                      logger=debug_logger('proxy-ut'),
                                      account_ring=FakeRing(),
-                                     container_ring=FakeRing(),
-                                     object_ring=FakeRing())
+                                     container_ring=FakeRing())
 
         self.zerovm_mock = None
 
@@ -562,6 +607,89 @@ class TestProxyQuery(unittest.TestCase):
                                                'o2': self.get_sorted_numbers()
                                            })
 
+    def test_sort_store_stdout_policy(self):
+        # store result under different policy
+        self.setup_QUERY()
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout', 'path': 'swift://a/c1/o2'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        prolis = _test_sockets[0]
+        req = self.zerovm_tar_request()
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            req.body_file = open(tar, 'rb')
+            req.content_length = os.path.getsize(tar)
+            res = req.get_response(prosrv)
+            self.executed_successfully(res)
+            self.check_container_integrity(prosrv,
+                                           '/v1/a/c1',
+                                           {
+                                               'o2': self.get_sorted_numbers()
+                                           })
+            self.assertEqual(res.headers['X-Nexe-Policy'], 'zero')
+        # fetch executable from different policy
+        self.create_object(prolis, '/v1/a/c1/exe', self._nexescript)
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c1/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout', 'path': 'swift://a/c1/o2'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_tar_request()
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            req.body_file = open(tar, 'rb')
+            req.content_length = os.path.getsize(tar)
+            res = req.get_response(prosrv)
+            self.executed_successfully(res)
+            self.check_container_integrity(prosrv,
+                                           '/v1/a/c1',
+                                           {
+                                               'o2': self.get_sorted_numbers()
+                                           })
+            self.assertEqual(res.headers['X-Nexe-Policy'], 'zero')
+        # query object from different policy
+        self.create_object(prolis, '/v1/a/c1/o', self._randomnumbers)
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c1/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c1/o'},
+                    {'device': 'stdout', 'path': 'swift://a/c/o3'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_tar_request()
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            req.body_file = open(tar, 'rb')
+            req.content_length = os.path.getsize(tar)
+            res = req.get_response(prosrv)
+            self.executed_successfully(res)
+            self.check_container_integrity(prosrv,
+                                           '/v1/a/c',
+                                           {
+                                               'o3': self.get_sorted_numbers()
+                                           })
+            # is executed under different policy now
+            self.assertEqual(res.headers['X-Nexe-Policy'], 'one')
+
     def test_gzipped_tar(self):
         self.setup_QUERY()
         conf = [
@@ -719,6 +847,44 @@ class TestProxyQuery(unittest.TestCase):
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, 'hello, world')
         self.check_container_integrity(prosrv, '/v1/a/c', {})
+
+    def test_hello_with_policy(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe = trim(r'''
+            return 'hello, world'
+            ''')
+        self.create_object(prolis, '/v1/a/c/hello.nexe', nexe)
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/c/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, 'hello, world')
+        self.check_container_integrity(prosrv, '/v1/a/c', {})
+        self.assertEqual(res.headers['X-Nexe-Policy'], 'zero')
+        _orig_policies = prosrv.standalone_policies
+        try:
+            prosrv.standalone_policies = [1]
+            req = self.zerovm_request()
+            req.body = conf
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.body, 'hello, world')
+            self.check_container_integrity(prosrv, '/v1/a/c', {})
+            self.assertEqual(res.headers['X-Nexe-Policy'], 'one')
+        finally:
+            prosrv.standalone_policies = _orig_policies
 
     def test_QUERY_hello_stderr(self):
         self.setup_QUERY()
@@ -3048,3 +3214,17 @@ class TestProxyQuery(unittest.TestCase):
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 404)
         self.check_container_integrity(prosrv, '/v1/a/c', {})
+
+    def test_policy_config(self):
+        conf = {'devices': _testdir, 'swift_dir': _testdir,
+                'mount_check': 'false', 'allowed_headers':
+            'content-encoding, x-object-manifest, content-disposition, foo',
+                'allow_versions': 'True',
+                'standalone_policies': 'one two three'}
+        pqm = proxyquery.ProxyQueryMiddleware(None, conf,
+                                              logger=debug_logger('pqm'))
+        self.assertTrue(1 in pqm.standalone_policies)
+        self.assertTrue(2 in pqm.standalone_policies)
+        self.assertTrue(3 not in pqm.standalone_policies)
+        self.assertEqual(pqm.logger.lines_dict['warning'][0],
+                         'Could not load storage policy: three')

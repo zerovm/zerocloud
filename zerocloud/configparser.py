@@ -225,7 +225,7 @@ class ClusterConfigParser(object):
                 % node_name)
 
     def parse(self, cluster_config, add_user_image, account_name=None,
-              replica_count=1, **kwargs):
+              replica_count=1, replica_resolver=None, **kwargs):
         """
         Parse deserialized config and build separate job configs per node
 
@@ -415,7 +415,8 @@ class ClusterConfigParser(object):
             for node in self.node_list:
                 node.add_new_channel('image', ACCESS_CDR, removable='yes')
         if account_name:
-            self.resolve_path_info(account_name, replica_count)
+            self.resolve_path_info(account_name, replica_count,
+                                   replica_resolver)
         self.total_count = 0
         for n in self.node_list:
             self.total_count += n.replicate
@@ -731,7 +732,8 @@ class ClusterConfigParser(object):
                                  % config['name_service']
         return zerovm_inputmnfst
 
-    def resolve_path_info(self, account_name, replica_count):
+    def resolve_path_info(self, account_name, replica_count,
+                          replica_resolver=None):
         default_path_info = '/%s' % account_name
         for node in self.node_list:
             top_channel = None
@@ -754,7 +756,12 @@ class ClusterConfigParser(object):
                 elif top_channel.access & ACCESS_WRITABLE \
                         and node.replicate > 0:
                     node.path_info = top_channel.path.path
-                    node.replicate = replica_count
+                    if replica_resolver and replica_count is None:
+                        node.replicate = replica_resolver(
+                            top_channel.path.account,
+                            top_channel.path.container)
+                    else:
+                        node.replicate = replica_count
                     node.access = 'PUT'
                 else:
                     node.path_info = default_path_info
