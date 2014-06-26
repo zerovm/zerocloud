@@ -1,5 +1,6 @@
 from __future__ import with_statement
 from StringIO import StringIO
+import logging
 import re
 import struct
 from eventlet.green import socket
@@ -7,12 +8,15 @@ import tarfile
 import datetime
 import random
 from urllib import urlencode
+import mock
+import sys
 import swift
 
 import unittest
 import os
 import cPickle as pickle
 from time import time
+from swift.common.middleware import proxy_logging
 from swift.common.swob import Request, HTTPUnauthorized
 from hashlib import md5
 from tempfile import mkstemp, mkdtemp
@@ -28,10 +32,11 @@ from swift.account import server as account_server
 from swift.container import server as container_server
 from swift.obj import server as object_server
 from swift.common.utils import mkdirs, normalize_timestamp, NullLogger
-from swift.common import ring
+from swift.common import utils
 
 from zerocloud import proxyquery, objectquery
-from test.unit import connect_tcp, readuntil2crlfs, fake_http_connect, trim
+from test.unit import connect_tcp, readuntil2crlfs, fake_http_connect, trim, \
+    debug_logger, FakeMemcache, write_fake_ring, FakeRing
 from zerocloud.common import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
 from zerocloud.configparser import ClusterConfigParser, \
     ClusterConfigParsingError
@@ -43,78 +48,11 @@ except ImportError:
 
 ZEROVM_DEFAULT_MOCK = 'test/unit/zerovm_mock.py'
 
+logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
 
-class FakeRing(object):
-
-    def __init__(self, replicas=3):
-        # 9 total nodes (6 more past the initial 3) is the cap, no matter if
-        # this is set higher, or R^2 for R replicas
-        self.replicas = replicas
-        self.max_more_nodes = 0
-        self.devs = {}
-
-    def set_replicas(self, replicas):
-        self.replicas = replicas
-        self.devs = {}
-
-    @property
-    def replica_count(self):
-        return self.replicas
-
-    def get_part(self, account, container=None, obj=None):
-        return 1
-
-    def get_nodes(self, account, container=None, obj=None):
-        devs = []
-        for x in xrange(self.replicas):
-            devs.append(self.devs.get(x))
-            if devs[x] is None:
-                self.devs[x] = devs[x] = \
-                    {'ip': '10.0.0.%s' % x,
-                     'port': 1000 + x,
-                     'device': 'sd' + (chr(ord('a') + x)),
-                     'id': x}
-        return 1, devs
-
-    def get_part_nodes(self, part):
-        return self.get_nodes('blah')[1]
-
-    def get_more_nodes(self, nodes):
-        # replicas^2 is the true cap
-        for x in xrange(self.replicas, min(self.replicas + self.max_more_nodes,
-                                           self.replicas * self.replicas)):
-            yield {'ip': '10.0.0.%s' % x, 'port': 1000 + x, 'device': 'sda'}
-
-
-class FakeMemcache(object):
-
-    def __init__(self):
-        self.store = {}
-
-    def get(self, key):
-        return self.store.get(key)
-
-    def keys(self):
-        return self.store.keys()
-
-    def set(self, key, value, time=0):
-        self.store[key] = value
-        return True
-
-    def incr(self, key, time=0):
-        self.store[key] = self.store.setdefault(key, 0) + 1
-        return self.store[key]
-
-    @contextmanager
-    def soft_lock(self, key, timeout=0, retries=5):
-        yield True
-
-    def delete(self, key):
-        try:
-            del self.store[key]
-        except Exception:
-            pass
-        return True
+STATIC_TIME = time()
+_test_coros = _test_servers = _test_sockets = _orig_container_listing_limit = \
+    _testdir = _orig_SysLogHandler = _orig_POLICIES = _test_POLICIES = None
 
 
 class FakeMemcacheReturnsNone(FakeMemcache):
@@ -125,22 +63,31 @@ class FakeMemcacheReturnsNone(FakeMemcache):
         return None
 
 
-def setup():
-    global _testdir, _test_servers, _test_sockets,\
-    _orig_container_listing_limit, _test_coros
-    #monkey_patch_mimetools()
+def do_setup(the_object_server):
+    utils.HASH_PATH_SUFFIX = 'endcap'
+    global _testdir, _test_servers, _test_sockets, \
+        _orig_container_listing_limit, _test_coros, _orig_SysLogHandler, \
+        _orig_POLICIES, _test_POLICIES
+    _orig_SysLogHandler = utils.SysLogHandler
+    utils.SysLogHandler = mock.MagicMock()
     # Since we're starting up a lot here, we're going to test more than
     # just chunked puts; we're also going to test parts of
     # proxy_server.Application we couldn't get to easily otherwise.
-    _testdir = os.path.join(mkdtemp(), 'tmp_test_proxy_server_chunked')
+    _testdir = \
+        os.path.join(mkdtemp(), 'tmp_test_proxy_server_chunked')
     mkdirs(_testdir)
     rmtree(_testdir)
     mkdirs(os.path.join(_testdir, 'sda1'))
     mkdirs(os.path.join(_testdir, 'sda1', 'tmp'))
     mkdirs(os.path.join(_testdir, 'sdb1'))
     mkdirs(os.path.join(_testdir, 'sdb1', 'tmp'))
-    _orig_container_listing_limit = \
-        swift.common.constraints.CONTAINER_LISTING_LIMIT
+    conf = {'devices': _testdir, 'swift_dir': _testdir,
+            'mount_check': 'false',
+            'allowed_headers': 'content-encoding, x-object-manifest, '
+                               'content-disposition, foo',
+            'disable_fallocate': 'true',
+            'allow_versions': 'True',
+            'zerovm_maxoutput': 1024 * 1024 * 10}
     prolis = listen(('localhost', 0))
     acc1lis = listen(('localhost', 0))
     acc2lis = listen(('localhost', 0))
@@ -148,85 +95,90 @@ def setup():
     con2lis = listen(('localhost', 0))
     obj1lis = listen(('localhost', 0))
     obj2lis = listen(('localhost', 0))
-    conf = {'devices': _testdir, 'swift_dir': _testdir,
-            'mount_check': 'false',
-            'allowed_headers': 'content-encoding, x-object-manifest, '
-                               'content-disposition, foo',
-            'disable_fallocate': 'true',
-            'zerovm_proxy': 'http://127.0.0.1:%d/v1/' %
-                            prolis.getsockname()[1],
-            'zerovm_maxoutput': 1024 * 1024 * 10}
     _test_sockets = \
         (prolis, acc1lis, acc2lis, con1lis, con2lis, obj1lis, obj2lis)
-    pickle.dump(ring.RingData([[0, 1, 0, 1], [1, 0, 1, 0]],
-                              [{'id': 0, 'zone': 0, 'device': 'sda1',
-                                'ip': '127.0.0.1',
-                                'port': acc1lis.getsockname()[1]},
-                               {'id': 1, 'zone': 1, 'device': 'sdb1',
-                                'ip': '127.0.0.1',
-                                'port': acc2lis.getsockname()[1]}], 30),
-                GzipFile(os.path.join(_testdir, 'account.ring.gz'), 'wb'))
-    pickle.dump(ring.RingData([[0, 1, 0, 1], [1, 0, 1, 0]],
-                              [{'id': 0, 'zone': 0, 'device': 'sda1',
-                                'ip': '127.0.0.1',
-                                'port': con1lis.getsockname()[1]},
-                               {'id': 1, 'zone': 1, 'device': 'sdb1',
-                                'ip': '127.0.0.1',
-                                'port': con2lis.getsockname()[1]}], 30),
-                GzipFile(os.path.join(_testdir, 'container.ring.gz'), 'wb'))
-    pickle.dump(ring.RingData([[0, 1, 0, 1], [1, 0, 1, 0]],
-                              [{'id': 0, 'zone': 0, 'device': 'sda1',
-                                'ip': '127.0.0.1',
-                                'port': obj1lis.getsockname()[1]},
-                               {'id': 1, 'zone': 1, 'device': 'sdb1',
-                                'ip': '127.0.0.1',
-                                'port': obj2lis.getsockname()[1]}], 30),
-                GzipFile(os.path.join(_testdir, 'object.ring.gz'), 'wb'))
-    prosrv = proxyquery.filter_factory(conf)(
-        proxy_server.Application(conf, memcache=FakeMemcacheReturnsNone())
-    )
-    acc1srv = account_server.AccountController(conf)
-    acc2srv = account_server.AccountController(conf)
-    con1srv = objectquery.filter_factory(conf)(
-        container_server.ContainerController(conf))
-    con2srv = objectquery.filter_factory(conf)(
-        container_server.ContainerController(conf))
-    obj1srv = \
-        objectquery.filter_factory(conf)(object_server.ObjectController(conf))
-    obj2srv = \
-        objectquery.filter_factory(conf)(object_server.ObjectController(conf))
-    _test_servers = \
-        (prosrv, acc1srv, acc2srv, con1srv, con2srv, obj1srv, obj2srv)
+    account_ring_path = os.path.join(_testdir, 'account.ring.gz')
+    account_devs = [
+        {'port': acc1lis.getsockname()[1]},
+        {'port': acc2lis.getsockname()[1]},
+    ]
+    write_fake_ring(account_ring_path, *account_devs)
+    container_ring_path = os.path.join(_testdir, 'container.ring.gz')
+    container_devs = [
+        {'port': con1lis.getsockname()[1]},
+        {'port': con2lis.getsockname()[1]},
+    ]
+    write_fake_ring(container_ring_path, *container_devs)
+    obj_ring_path = os.path.join(_testdir, 'object.ring.gz')
+    obj_devs = [
+        {'port': obj1lis.getsockname()[1]},
+        {'port': obj2lis.getsockname()[1]},
+    ]
+    write_fake_ring(obj_ring_path, *obj_devs)
+    prosrv = proxy_server.Application(conf, FakeMemcacheReturnsNone(),
+                                      logger=debug_logger('proxy'))
+    acc1srv = account_server.AccountController(
+        conf, logger=debug_logger('acct1'))
+    acc2srv = account_server.AccountController(
+        conf, logger=debug_logger('acct2'))
+    con1srv = container_server.ContainerController(
+        conf, logger=debug_logger('cont1'))
+    con2srv = container_server.ContainerController(
+        conf, logger=debug_logger('cont2'))
+    obj1srv = the_object_server.ObjectController(
+        conf, logger=debug_logger('obj1'))
+    obj2srv = the_object_server.ObjectController(
+        conf, logger=debug_logger('obj2'))
+    pqm = proxyquery.ProxyQueryMiddleware(prosrv, conf,
+                                          logger=prosrv.logger)
     nl = NullLogger()
-    prospa = spawn(wsgi.server, prolis, prosrv, nl)
+    logging_prosv = proxy_logging.ProxyLoggingMiddleware(pqm, conf,
+                                                         logger=prosrv.logger)
+    prospa = spawn(wsgi.server, prolis, logging_prosv, nl)
     acc1spa = spawn(wsgi.server, acc1lis, acc1srv, nl)
     acc2spa = spawn(wsgi.server, acc2lis, acc2srv, nl)
-    con1spa = spawn(wsgi.server, con1lis, con1srv, nl)
-    con2spa = spawn(wsgi.server, con2lis, con2srv, nl)
-    obj1spa = spawn(wsgi.server, obj1lis, obj1srv, nl)
-    obj2spa = spawn(wsgi.server, obj2lis, obj2srv, nl)
+    cqm1 = objectquery.ObjectQueryMiddleware(con1srv, conf,
+                                             logger=con1srv.logger)
+    cqm2 = objectquery.ObjectQueryMiddleware(con2srv, conf,
+                                             logger=con2srv.logger)
+    con1spa = spawn(wsgi.server, con1lis, cqm1, nl)
+    con2spa = spawn(wsgi.server, con2lis, cqm2, nl)
+    oqm1 = objectquery.ObjectQueryMiddleware(obj1srv, conf,
+                                             logger=obj1srv.logger)
+    oqm2 = objectquery.ObjectQueryMiddleware(obj2srv, conf,
+                                             logger=obj2srv.logger)
+    obj1spa = spawn(wsgi.server, obj1lis, oqm1, nl)
+    obj2spa = spawn(wsgi.server, obj2lis, oqm2, nl)
+    _test_servers = \
+        (pqm, acc1srv, acc2srv, cqm1, cqm2, oqm1, oqm2)
     _test_coros = \
         (prospa, acc1spa, acc2spa, con1spa, con2spa, obj1spa, obj2spa)
     # Create account
     ts = normalize_timestamp(time())
-    partition, nodes = prosrv.app.account_ring.get_nodes('a')
+    partition, nodes = prosrv.account_ring.get_nodes('a')
     for node in nodes:
-        conn = swift.proxy.controllers.base.http_connect(
-            node['ip'], node['port'],
-            node['device'], partition, 'PUT', '/a',
-            {'X-Timestamp': ts, 'x-trans-id': 'test'})
+        conn = swift.proxy.controllers.obj.http_connect(node['ip'],
+                                                        node['port'],
+                                                        node['device'],
+                                                        partition, 'PUT', '/a',
+                                                        {'X-Timestamp': ts,
+                                                         'x-trans-id': 'test'})
         resp = conn.getresponse()
         assert(resp.status == 201)
+    # Create stats account
     ts = normalize_timestamp(time())
-    partition, nodes = prosrv.app.account_ring.get_nodes('userstats')
+    partition, nodes = prosrv.account_ring.get_nodes('userstats')
     for node in nodes:
-        conn = swift.proxy.controllers.base.http_connect(
-            node['ip'], node['port'],
-            node['device'], partition, 'PUT', '/userstats',
-            {'X-Timestamp': ts, 'x-trans-id': 'test1'})
+        conn = swift.proxy.controllers.obj.http_connect(node['ip'],
+                                                        node['port'],
+                                                        node['device'],
+                                                        partition, 'PUT',
+                                                        '/userstats',
+                                                        {'X-Timestamp': ts,
+                                                         'x-trans-id': 'test'})
         resp = conn.getresponse()
         assert(resp.status == 201)
-    # Create container
+    # Create containers
     sock = connect_tcp(('localhost', prolis.getsockname()[1]))
     fd = sock.makefile()
     fd.write('PUT /v1/a/c HTTP/1.1\r\nHost: localhost\r\n'
@@ -235,15 +187,19 @@ def setup():
     fd.flush()
     headers = readuntil2crlfs(fd)
     exp = 'HTTP/1.1 201'
-    assert(headers[:len(exp)] == exp)
+    assert headers[:len(exp)] == exp, "Expected '%s', encountered '%s'" % (
+        exp, headers[:len(exp)])
+
+
+def setup():
+    do_setup(object_server)
 
 
 def teardown():
     for server in _test_coros:
         server.kill()
-    swift.common.constraints.CONTAINER_LISTING_LIMIT = \
-        _orig_container_listing_limit
     rmtree(os.path.dirname(_testdir))
+    utils.SysLogHandler = _orig_SysLogHandler
 
 
 @contextmanager
@@ -266,18 +222,17 @@ def save_globals():
 class TestProxyQuery(unittest.TestCase):
 
     def setUp(self):
-        obj_ring=FakeRing()
-        obj_ring.partition_count = 1
-        self.proxy_app = proxy_server.Application(None, FakeMemcache(),
-                                                  account_ring=FakeRing(),
-                                                  container_ring=FakeRing(),
-                                                  object_ring=obj_ring)
+        self.proxy_app = \
+            proxy_server.Application(None, FakeMemcache(),
+                                     logger=debug_logger('proxy-ut'),
+                                     account_ring=FakeRing(),
+                                     container_ring=FakeRing())
+
         self.zerovm_mock = None
 
     def tearDown(self):
         if self.zerovm_mock:
             os.unlink(self.zerovm_mock)
-        proxy_server.CONTAINER_LISTING_LIMIT = _orig_container_listing_limit
 
     def create_container(self, prolis, url, auto_account=False):
         sock = connect_tcp(('localhost', prolis.getsockname()[1]))
@@ -293,7 +248,8 @@ class TestProxyQuery(unittest.TestCase):
         status = headers[:len(exp1)]
         self.assert_(exp1 in status or exp2 in status)
 
-    def create_object(self, prolis, url, obj, content_type='application/octet-stream'):
+    def create_object(self, prolis, url, obj,
+                      content_type='application/octet-stream'):
         sock = connect_tcp(('localhost', prolis.getsockname()[1]))
         fd = sock.makefile()
         fd.write('PUT %s HTTP/1.1\r\n'

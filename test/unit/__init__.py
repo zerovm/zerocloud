@@ -1,11 +1,11 @@
+from gzip import GzipFile
 import os
 import copy
 import logging
 import cPickle as pickle
 import random
 import struct
-from sys import exc_info
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 from collections import defaultdict
 import tarfile
 from tempfile import NamedTemporaryFile, mkstemp
@@ -14,11 +14,14 @@ from tempfile import mkdtemp
 from shutil import rmtree
 from test import get_config
 from textwrap import dedent
-from swift.common.utils import config_true_value
+import sys
+from swift.common.ring import RingData, Ring
+from swift.common.utils import config_true_value, LogAdapter
 from hashlib import md5
 from eventlet import sleep, Timeout
 import logging.handlers
 from httplib import HTTPException
+import time
 
 
 def readuntil2crlfs(fd):
@@ -106,43 +109,202 @@ def temptree(files, contents=''):
         rmtree(tempdir)
 
 
+class FakeRing(Ring):
+
+    def __init__(self, replicas=3, max_more_nodes=0, part_power=0):
+        """
+        :param part_power: make part calculation based on the path
+
+        If you set a part_power when you setup your FakeRing the parts you get
+        out of ring methods will actually be based on the path - otherwise we
+        exercise the real ring code, but ignore the result and return 1.
+        """
+        # 9 total nodes (6 more past the initial 3) is the cap, no matter if
+        # this is set higher, or R^2 for R replicas
+        self.set_replicas(replicas)
+        self.max_more_nodes = max_more_nodes
+        self._part_shift = 32 - part_power
+        self._reload()
+
+    def get_part(self, *args, **kwargs):
+        real_part = super(FakeRing, self).get_part(*args, **kwargs)
+        if self._part_shift == 32:
+            return 1
+        return real_part
+
+    def _reload(self):
+        self._rtime = time.time()
+
+    def clear_errors(self):
+        for dev in self.devs:
+            for key in ('errors', 'last_error'):
+                try:
+                    del dev[key]
+                except KeyError:
+                    pass
+
+    def set_replicas(self, replicas):
+        self.replicas = replicas
+        self._devs = []
+        for x in range(self.replicas):
+            ip = '10.0.0.%s' % x
+            port = 1000 + x
+            self._devs.append({
+                'ip': ip,
+                'replication_ip': ip,
+                'port': port,
+                'replication_port': port,
+                'device': 'sd' + (chr(ord('a') + x)),
+                'zone': x % 3,
+                'region': x % 2,
+                'id': x,
+            })
+
+    @property
+    def replica_count(self):
+        return self.replicas
+
+    def _get_part_nodes(self, part):
+        return list(self._devs)
+
+    def get_more_nodes(self, part):
+        # replicas^2 is the true cap
+        for x in xrange(self.replicas, min(self.replicas + self.max_more_nodes,
+                                           self.replicas * self.replicas)):
+            yield {'ip': '10.0.0.%s' % x,
+                   'port': 1000 + x,
+                   'device': 'sda',
+                   'zone': x % 3,
+                   'region': x % 2,
+                   'id': x}
+
+
+def write_fake_ring(path, *devs):
+    """
+    Pretty much just a two node, two replica, 2 part power ring...
+    """
+    dev1 = {'id': 0, 'zone': 0, 'device': 'sda1', 'ip': '127.0.0.1',
+            'port': 6000}
+    dev2 = {'id': 0, 'zone': 0, 'device': 'sdb1', 'ip': '127.0.0.1',
+            'port': 6000}
+
+    dev1_updates, dev2_updates = devs or ({}, {})
+
+    dev1.update(dev1_updates)
+    dev2.update(dev2_updates)
+
+    replica2part2dev_id = [[0, 1, 0, 1], [1, 0, 1, 0]]
+    devs = [dev1, dev2]
+    part_shift = 30
+    with closing(GzipFile(path, 'wb')) as f:
+        pickle.dump(RingData(replica2part2dev_id, devs, part_shift), f)
+
+
+class FakeMemcache(object):
+
+    def __init__(self):
+        self.store = {}
+
+    def get(self, key):
+        return self.store.get(key)
+
+    def keys(self):
+        return self.store.keys()
+
+    def set(self, key, value, time=0):
+        self.store[key] = value
+        return True
+
+    def incr(self, key, time=0):
+        self.store[key] = self.store.setdefault(key, 0) + 1
+        return self.store[key]
+
+    @contextmanager
+    def soft_lock(self, key, timeout=0, retries=5):
+        yield True
+
+    def delete(self, key):
+        try:
+            del self.store[key]
+        except Exception:
+            pass
+        return True
+
+
 class NullLoggingHandler(logging.Handler):
 
     def emit(self, record):
         pass
 
 
-class FakeLogger(object):
+class UnmockTimeModule(object):
+    """
+    Even if a test mocks time.time - you can restore unmolested behavior in a
+    another module who imports time directly by monkey patching it's imported
+    reference to the module with an instance of this class
+    """
+
+    _orig_time = time.time
+
+    def __getattribute__(self, name):
+        if name == 'time':
+            return UnmockTimeModule._orig_time
+        return getattr(time, name)
+
+
+# logging.LogRecord.__init__ calls time.time
+logging.time = UnmockTimeModule()
+
+
+class FakeLogger(logging.Logger):
     # a thread safe logger
 
     def __init__(self, *args, **kwargs):
         self._clear()
+        self.name = 'swift.unit.fake_logger'
         self.level = logging.NOTSET
         if 'facility' in kwargs:
             self.facility = kwargs['facility']
+        self.statsd_client = None
+        self.thread_locals = None
+        self.parent = None
 
     def _clear(self):
         self.log_dict = defaultdict(list)
+        self.lines_dict = defaultdict(list)
 
     def _store_in(store_name):
         def stub_fn(self, *args, **kwargs):
             self.log_dict[store_name].append((args, kwargs))
         return stub_fn
 
-    error = _store_in('error')
-    info = _store_in('info')
-    warning = _store_in('warning')
-    debug = _store_in('debug')
+    def _store_and_log_in(store_name, level):
+        def stub_fn(self, *args, **kwargs):
+            self.log_dict[store_name].append((args, kwargs))
+            self._log(level, args[0], args[1:], **kwargs)
+        return stub_fn
+
+    def get_lines_for_level(self, level):
+        return self.lines_dict[level]
+
+    error = _store_and_log_in('error', logging.ERROR)
+    info = _store_and_log_in('info', logging.INFO)
+    warning = _store_and_log_in('warning', logging.WARNING)
+    warn = _store_and_log_in('warning', logging.WARNING)
+    debug = _store_and_log_in('debug', logging.DEBUG)
 
     def exception(self, *args, **kwargs):
-        self.log_dict['exception'].append((args, kwargs, str(exc_info()[1])))
+        self.log_dict['exception'].append((args, kwargs,
+                                           str(sys.exc_info()[1])))
+        print 'FakeLogger Exception: %s' % self.log_dict
 
     # mock out the StatsD logging methods:
+    update_stats = _store_in('update_stats')
     increment = _store_in('increment')
     decrement = _store_in('decrement')
     timing = _store_in('timing')
     timing_since = _store_in('timing_since')
-    update_stats = _store_in('update_stats')
+    transfer_rate = _store_in('transfer_rate')
     set_statsd_prefix = _store_in('set_statsd_prefix')
 
     def get_increments(self):
@@ -178,14 +340,64 @@ class FakeLogger(object):
     def emit(self, record):
         pass
 
+    def _handle(self, record):
+        try:
+            line = record.getMessage()
+        except TypeError:
+            print 'WARNING: unable to format log message %r %% %r' % (
+                record.msg, record.args)
+            raise
+        self.lines_dict[record.levelname.lower()].append(line)
+
     def handle(self, record):
-        pass
+        self._handle(record)
 
     def flush(self):
         pass
 
     def handleError(self, record):
         pass
+
+
+class DebugLogger(FakeLogger):
+    """A simple stdout logging version of FakeLogger"""
+
+    def __init__(self, *args, **kwargs):
+        FakeLogger.__init__(self, *args, **kwargs)
+        self.formatter = logging.Formatter(
+            "%(server)s %(levelname)s: %(message)s")
+
+    def handle(self, record):
+        self._handle(record)
+        print self.formatter.format(record)
+
+
+class DebugLogAdapter(LogAdapter):
+
+    def _send_to_logger(name):
+        def stub_fn(self, *args, **kwargs):
+            return getattr(self.logger, name)(*args, **kwargs)
+        return stub_fn
+
+    # delegate to FakeLogger's mocks
+    update_stats = _send_to_logger('update_stats')
+    increment = _send_to_logger('increment')
+    decrement = _send_to_logger('decrement')
+    timing = _send_to_logger('timing')
+    timing_since = _send_to_logger('timing_since')
+    transfer_rate = _send_to_logger('transfer_rate')
+    set_statsd_prefix = _send_to_logger('set_statsd_prefix')
+
+    def __getattribute__(self, name):
+        try:
+            return object.__getattribute__(self, name)
+        except AttributeError:
+            return getattr(self.__dict__['logger'], name)
+
+
+def debug_logger(name='test'):
+    """get a named adapted debug logger"""
+    return DebugLogAdapter(DebugLogger(), name)
 
 
 original_syslog_handler = logging.handlers.SysLogHandler
