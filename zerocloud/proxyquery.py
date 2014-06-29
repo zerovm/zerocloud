@@ -711,6 +711,8 @@ class ClusterController(ObjectController):
             if conn.error:
                 conn.nexe_headers['x-nexe-error'] = \
                     conn.error.replace('\n', '')
+                if conn.resp.status_int > final_response.status_int:
+                    final_response.status = conn.resp.status
             else:
                 if is_success(resp.status_int) and not got_nexe_header:
                     # looks like the middleware is not installed
