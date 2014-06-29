@@ -26,7 +26,8 @@ DEVICE_MAP = {
     'output': ACCESS_RANDOM | ACCESS_WRITABLE,
     'debug': ACCESS_NETWORK,
     'image': ACCESS_CDR,
-    'db': ACCESS_CHECKPOINT
+    'db': ACCESS_CHECKPOINT,
+    'script': ACCESS_RANDOM | ACCESS_READABLE,
 }
 
 TAR_MIMES = ['application/x-tar', 'application/x-gtar', 'application/x-ustar']

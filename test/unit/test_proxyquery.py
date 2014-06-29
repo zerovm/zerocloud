@@ -1191,6 +1191,57 @@ return open(mnfst.nvram['path']).read() + \
             self.assertIn('%d %s' % (3, sysimage_path),
                           res.body)
 
+    def test_sysimage_and_script_device(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        image = 'This is image file'
+        sysimage_path = os.path.join(_testdir, 'sysimage.tar')
+
+        nexe = trim(
+            r'''
+            return open(mnfst.nvram['path']).read() + \
+                str(mnfst.channels['/dev/sysimage1']['type']) + ' ' + \
+                str(mnfst.channels['/dev/sysimage1']['path']) + '\n' + \
+                str(mnfst.channels['/dev/script']['path']) + '\n' + \
+                open(mnfst.channels['/dev/script']['path']).read()
+            ''')
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        self.create_object(prolis, '/v1/a/c/script', 'Test script')
+        img = open(sysimage_path, 'wb')
+        img.write(image)
+        img.close()
+        with self.add_sysimage_device(sysimage_path):
+            conf = [
+                {
+                    'name': 'sort',
+                    'exec': {
+                        'path': 'swift://a/c/exe2'
+                    },
+                    'file_list': [
+                        {'device': 'stdin', 'path': 'swift://a/c/o'},
+                        {'device': 'stdout'},
+                        {'device': 'sysimage1'},
+                        {'device': 'script', 'path': 'swift://a/c/script'}
+                    ]
+                }
+            ]
+            conf = json.dumps(conf)
+            req = self.zerovm_request()
+            req.body = conf
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertIn('[fstab]\n'
+                          'channel=/dev/sysimage1, mountpoint=/, '
+                          'access=ro, removable=no\n'
+                          '[args]\n'
+                          'args = sort\n', res.body)
+            self.assertIn('%d %s' % (3, sysimage_path),
+                          res.body)
+            self.assertIn('Test script', res.body)
+            self.assert_(re.search('^%s/sd[ab]1/tmp/' % _testdir, res.body,
+                                   flags=re.M))
+
     def test_QUERY_post_script_sysimage(self):
         self.setup_QUERY()
         prosrv = _test_servers[0]

@@ -13,7 +13,8 @@ CHANNEL_TYPE_MAP = {
     'output': 3,
     'debug': 0,
     'image': 3,
-    'sysimage': 3
+    'sysimage': 3,
+    'script': 3
 }
 ENV_ITEM = 'name=%s, value=%s\n'
 STD_DEVICES = ['stdin', 'stdout', 'stderr']
@@ -735,6 +736,9 @@ class ClusterConfigParser(object):
         for node in self.node_list:
             if node.attach == 'default':
                 top_channel = node.channels[0]
+                if top_channel.device == 'script' \
+                        and len(node.channels) > 1:
+                    top_channel = node.channels[1]
             else:
                 for chan in node.channels:
                     if node.attach == chan.device\
