@@ -226,7 +226,8 @@ class TestProxyQuery(unittest.TestCase):
             proxy_server.Application(None, FakeMemcache(),
                                      logger=debug_logger('proxy-ut'),
                                      account_ring=FakeRing(),
-                                     container_ring=FakeRing())
+                                     container_ring=FakeRing(),
+                                     object_ring=FakeRing())
 
         self.zerovm_mock = None
 
