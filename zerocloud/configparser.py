@@ -387,6 +387,8 @@ class ClusterConfigParser(object):
                         else:
                             new_node = self._get_or_create_node(zvm_node)
                             new_node.add_channel(channel=chan)
+                    if not any(read_list + write_list + other_list):
+                        self._get_or_create_node(zvm_node)
         except ClusterConfigParsingError:
             raise
         except Exception:
@@ -730,19 +732,20 @@ class ClusterConfigParser(object):
 
     def resolve_path_info(self, account_name, replica_count):
         default_path_info = '/%s' % account_name
-        top_channel = None
         for node in self.node_list:
-            if node.attach == 'default':
-                top_channel = node.channels[0]
-                if top_channel.device == 'script' \
-                        and len(node.channels) > 1:
-                    top_channel = node.channels[1]
-            else:
-                for chan in node.channels:
-                    if node.attach == chan.device\
-                            and is_swift_path(chan.path):
-                        top_channel = chan
-                        break
+            top_channel = None
+            if node.channels:
+                if node.attach == 'default':
+                    top_channel = node.channels[0]
+                    if top_channel.device == 'script' \
+                            and len(node.channels) > 1:
+                        top_channel = node.channels[1]
+                else:
+                    for chan in node.channels:
+                        if node.attach == chan.device\
+                                and is_swift_path(chan.path):
+                            top_channel = chan
+                            break
             if top_channel and is_swift_path(top_channel.path):
                 if top_channel.access & (ACCESS_READABLE | ACCESS_CDR):
                     node.path_info = top_channel.path.path
