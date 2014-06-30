@@ -179,7 +179,7 @@ class ClusterConfigParser(object):
                                             % path.url)
         return temp_list
 
-    def _get_new_node(self, zvm_node, index=0):
+    def _get_or_create_node(self, zvm_node, index=0):
         if index == 0:
             new_name = zvm_node.name
         else:
@@ -305,19 +305,20 @@ class ClusterConfigParser(object):
                             node_count = len(object_list)
                             for i in range(node_count):
                                 new_path = object_list[i]
-                                new_node = self._add_new_channel(zvm_node,
-                                                                 chan,
-                                                                 index=(i + 1),
-                                                                 path=new_path)
+                                new_node = self._get_or_create_node(
+                                    zvm_node, index=(i + 1))
+                                new_node.add_channel(channel=chan,
+                                                     path=new_path)
                                 new_node.store_wildcards(new_path, read_mask)
                         else:
                             if node_count > 1:
                                 for i in range(1, node_count + 1):
-                                    self._add_new_channel(zvm_node,
-                                                          chan,
-                                                          index=i)
+                                    new_node = self._get_or_create_node(
+                                        zvm_node, index=i)
+                                    new_node.add_channel(channel=chan)
                             else:
-                                self._add_new_channel(zvm_node, chan)
+                                new_node = self._get_or_create_node(zvm_node)
+                                new_node.add_channel(channel=chan)
                     for chan in write_list:
                         if chan.path and is_swift_path(chan.path):
                             if '*' in chan.path.url:
@@ -341,11 +342,10 @@ class ClusterConfigParser(object):
                                             chan.path.url.replace('*',
                                                                   new_name)
                                         new_loc = parse_location(new_url)
-                                        new_node = self._add_new_channel(
-                                            zvm_node,
-                                            chan,
-                                            index=i,
-                                            path=new_loc)
+                                        new_node = self._get_or_create_node(
+                                            zvm_node, index=i)
+                                        new_node.add_channel(channel=chan,
+                                                             path=new_loc)
                                         new_node.wildcards = \
                                             [new_name] * \
                                             chan.path.url.count('*')
@@ -355,7 +355,8 @@ class ClusterConfigParser(object):
                                         'Single path %s for multiple node '
                                         'definition: %s, please use wildcard'
                                         % (chan.path.url, zvm_node.name))
-                                self._add_new_channel(zvm_node, chan)
+                                new_node = self._get_or_create_node(zvm_node)
+                                new_node.add_channel(channel=chan)
                         else:
                             if 'stdout' not in chan.device \
                                     and 'stderr' not in chan.device:
@@ -364,11 +365,12 @@ class ClusterConfigParser(object):
                                     'for device %s' % chan.device)
                             if node_count > 1:
                                 for i in range(1, node_count + 1):
-                                    self._add_new_channel(zvm_node,
-                                                          chan,
-                                                          index=i)
+                                    new_node = self._get_or_create_node(
+                                        zvm_node, index=i)
+                                    new_node.add_channel(channel=chan)
                             else:
-                                self._add_new_channel(zvm_node, chan)
+                                new_node = self._get_or_create_node(zvm_node)
+                                new_node.add_channel(channel=chan)
                     for chan in other_list:
                         if self.is_sysimage_device(chan.device):
                             chan.access = ACCESS_RANDOM | ACCESS_READABLE
@@ -379,9 +381,14 @@ class ClusterConfigParser(object):
                                     % chan.device)
                         if node_count > 1:
                             for i in range(1, node_count + 1):
-                                self._add_new_channel(zvm_node, chan, index=i)
+                                new_node = self._get_or_create_node(
+                                    zvm_node, index=i)
+                                new_node.add_channel(channel=chan)
                         else:
-                            self._add_new_channel(zvm_node, chan)
+                            new_node = self._get_or_create_node(zvm_node)
+                            new_node.add_channel(channel=chan)
+                    if not any(read_list + write_list + other_list):
+                        self._get_or_create_node(zvm_node)
         except ClusterConfigParsingError:
             raise
         except Exception:
@@ -412,13 +419,6 @@ class ClusterConfigParser(object):
         self.total_count = 0
         for n in self.node_list:
             self.total_count += n.replicate
-
-    def _add_new_channel(self, node, channel, index=0, path=None,
-                         content_type=None):
-        new_node = self._get_new_node(node, index=index)
-        new_node.add_channel(channel=channel, path=path,
-                             content_type=content_type)
-        return new_node
 
     def _add_connection(self, node, bind_name,
                         src_device=None,
@@ -732,19 +732,20 @@ class ClusterConfigParser(object):
 
     def resolve_path_info(self, account_name, replica_count):
         default_path_info = '/%s' % account_name
-        top_channel = None
         for node in self.node_list:
-            if node.attach == 'default':
-                top_channel = node.channels[0]
-                if top_channel.device == 'script' \
-                        and len(node.channels) > 1:
-                    top_channel = node.channels[1]
-            else:
-                for chan in node.channels:
-                    if node.attach == chan.device\
-                            and is_swift_path(chan.path):
-                        top_channel = chan
-                        break
+            top_channel = None
+            if node.channels:
+                if node.attach == 'default':
+                    top_channel = node.channels[0]
+                    if top_channel.device == 'script' \
+                            and len(node.channels) > 1:
+                        top_channel = node.channels[1]
+                else:
+                    for chan in node.channels:
+                        if node.attach == chan.device\
+                                and is_swift_path(chan.path):
+                            top_channel = chan
+                            break
             if top_channel and is_swift_path(top_channel.path):
                 if top_channel.access & (ACCESS_READABLE | ACCESS_CDR):
                     node.path_info = top_channel.path.path

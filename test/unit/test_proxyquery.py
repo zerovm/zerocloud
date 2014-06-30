@@ -1730,8 +1730,88 @@ return 'ok'
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertIn('finished', res.body)
-        #self.assert_(re.match('tcp://127.0.0.1:\d+, /dev/out/%s' % conf[1]['connect'][0], res.body))
 
+    def test_networked_devices_multistage(self):
+        self.setup_QUERY()
+        nexe = trim(
+            r'''
+            for t in bind_list:
+                err.write('%s, %s\n' % (t[1], t[0]))
+            return 'ok'
+            ''')
+        prolis = _test_sockets[0]
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        conf = [
+            {
+                'exec': {
+                    'args': 'cat /dev/stdin',
+                    'path': 'swift://./c/exe2'
+                },
+                'file_list': [
+                    {
+                        'device': 'stdin',
+                        'path': 'swift://./c/o'
+                    },
+                    {
+                        'device': 'stdout',
+                        'path': 'zvm://stage2:/dev/stdin'
+                    },
+                    {
+                        'device': 'stderr',
+                        'path': 'swift://a/c/o2'
+                    }
+                ],
+                'name': 'stage1'
+            },
+            {
+                'exec': {
+                    'args': 'cat',
+                    'path': 'swift://./c/exe2'
+                },
+                'file_list': [
+                    {
+                        'device': 'stdout',
+                        'path': 'zvm://stage3:/dev/stdin'
+                    }
+                ],
+                'name': 'stage2'
+            },
+            {
+                'exec': {
+                    'args': 'cat',
+                    'path': 'swift://./c/exe2'
+                },
+                'file_list': [
+                    {
+                        'device': 'stdout',
+                        'content_type': 'text/plain'
+                    },
+                    {
+                        'device': 'stderr',
+                        'path': 'swift://a/c/o3'
+                    }
+                ],
+                'name': 'stage3'
+            }
+        ]
+        jconf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        req = self.zerovm_request()
+        req.body = jconf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+
+        req = self.object_request('/v1/a/c/o2')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        # connect stdout to network sink
+        self.assert_(re.match('tcp://127.0.0.1:\d+, /dev/stdout', res.body))
+        req = self.object_request('/v1/a/c/o3')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        # bind stdin to network source
+        self.assert_(re.match('tcp://0:\d+, /dev/stdin', res.body))
+        
     def test_QUERY_network_resolve_multiple(self):
         self.setup_QUERY()
         nexe =\

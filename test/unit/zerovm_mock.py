@@ -180,6 +180,7 @@ bind_count = 0
 connect_data = ''
 connect_count = 0
 con_list = []
+bind_list = []
 bind_map = {}
 alias = int(mnfst.Node)
 mnfst.channels = {}
@@ -208,6 +209,7 @@ for fname, device, type, tag, rd, rd_byte, wr, wr_byte \
                     'sock': s}
                 bind_data += struct.pack('!IH', host, int(port))
                 bind_count += 1
+                bind_list.append([device, 'tcp://0:%d' % port])
             else:
                 connect_data += struct.pack('!IH', host, 0)
                 connect_count += 1
