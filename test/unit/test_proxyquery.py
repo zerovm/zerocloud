@@ -2308,7 +2308,7 @@ return json.dumps(con_list)
             req = self.zerovm_request()
             req.body = conf
             res = req.get_response(prosrv)
-            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.status_int, 400)
             self.assertEqual(res.body, ('Could not resolve channel path: '
                                         'swift://a/%s' % path) * 2)
             self.assertEqual(res.headers['x-nexe-system'], 'sort,sort')
