@@ -153,7 +153,7 @@ When you issue a GET request with version `open`:
   `/version/account/.zvm/content-type/config` in Swift
 
 - if the object is found its contents will be used as a JSON job
-  description template
+  description template. This template **is cached for 60 seconds**.
 
 - the template will be filled with details from GET request: object
   url and parts of query string
