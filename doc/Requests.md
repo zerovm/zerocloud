@@ -141,11 +141,8 @@ replace the `version` component with one of:
 
 ### GET with version `open`
 
-This GET will work if url path info is of the form:
-`/version/account/container/object`.
-
 When you issue a GET request with version `open`:
-`/open/account/container/object` the following events will fire:
+`/open/account/container/object`, the following events will fire:
 
 - Zerocloud will get `Content-Type` of the object in url
 
@@ -153,7 +150,7 @@ When you issue a GET request with version `open`:
   `/version/account/.zvm/content-type/config` in Swift
 
 - if the object is found its contents will be used as a JSON job
-  description template
+  description template. This template **is cached for 60 seconds**.
 
 - the template will be filled with details from GET request: object
   url and parts of query string
@@ -170,7 +167,9 @@ Example:
 GET templates format is simple, it's a regular JSON file but with some
 sort of substitution variables.
 
-Each variable has format of `"{.variable_name=default value}"`.
+Each variable has format of `{.variable_name=default value}`. The
+variables can occur at any place in the JSON file, they are
+interpolated before the file is parsed.
 
 If GET request has a query string all query params will be expanded as
 a key->val dictionary and substituted instead of the matching template
