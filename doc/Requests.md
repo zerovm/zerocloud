@@ -167,7 +167,9 @@ Example:
 GET templates format is simple, it's a regular JSON file but with some
 sort of substitution variables.
 
-Each variable has format of `{.variable_name=default value}`.
+Each variable has format of `{.variable_name=default value}`. The
+variables can occur at any place in the JSON file, they are
+interpolated before the file is parsed.
 
 If GET request has a query string all query params will be expanded as
 a key->val dictionary and substituted instead of the matching template
