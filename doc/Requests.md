@@ -141,11 +141,8 @@ replace the `version` component with one of:
 
 ### GET with version `open`
 
-This GET will work if url path info is of the form:
-`/version/account/container/object`.
-
 When you issue a GET request with version `open`:
-`/open/account/container/object` the following events will fire:
+`/open/account/container/object`, the following events will fire:
 
 - Zerocloud will get `Content-Type` of the object in url
 
