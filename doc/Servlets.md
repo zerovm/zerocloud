@@ -8,6 +8,7 @@ JSON format describing a servlet configuration
         <b>"name"</b>:"node name/alias, alphanumeric only", <b>required</b>
         <b>"exec"</b>:{    <b>required</b>
             <b>"path"</b>:"executable path, URL (see Url.md)", <b>required</b>
+            "name":"executable name", <i>optional</i>
             "args":"executable command line", <i>optional</i>
             "env":{    <i>executable environment, optional</i>
                 "key1":"value1",
@@ -215,6 +216,11 @@ It can be controlled with the `attach` keyword.
 Default value for attach is `default` which means that the following strategy will be employed by middleware: _code will be sent to the storage node that holds the first (topmost) `swift://` path encountered in the job config. But before that the paths will be sorted by placing `read only` objects on top, `write only` after the former ones, and all other objects at the bottom. Sort will be a stable one. If such path does not exist the node for a session will be chosen randomly._  
 If another location is desired, user needs to specify a device in `attach`, ex.: `"attach": "stdout"`.  
 If the device is a `swift://` path the session will be started in co-location with the desired object. If such device is not a `swift://` path the node for a session will be chosen randomly.
+
+18. Executable can have `exec.name` property.
+It is an optional argument that sets executable name to the supplied string.  
+Executable name is visible to the application under `ARGV[0]`, as usual.  
+If `exec.name` is not supplied, the name would be set to the cluster node `name` property
 
 ## Examples
 

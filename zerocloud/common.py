@@ -301,7 +301,7 @@ def is_cache_path(location):
 
 class ZvmNode(object):
     def __init__(self, id=None, name=None, exe=None, args=None, env=None,
-                 replicate=1, attach=None):
+                 replicate=1, attach=None, exe_name=None):
         self.id = id
         self.name = name
         self.exe = exe
@@ -316,6 +316,7 @@ class ZvmNode(object):
         self.wildcards = None
         self.attach = attach
         self.access = ''
+        self.exe_name = exe_name
 
     def copy(self, id, name=None):
         newnode = deepcopy(self)
@@ -369,7 +370,8 @@ class ZvmNode(object):
             request.environ.get('SERVER_PROTOCOL', 'HTTP/1.0')
         self.env['SERVER_SOFTWARE'] = 'zerocloud'
         self.env['GATEWAY_INTERFACE'] = 'CGI/1.1'
-        self.env['SCRIPT_NAME'] = self.exe
+        self.env['SCRIPT_NAME'] = self.exe_name or self.name
+        self.env['SCRIPT_FILENAME'] = self.exe
         self.env['PATH_INFO'] = request.path_info
         self.env['REQUEST_METHOD'] = 'GET'
         self.env['HTTP_REFERER'] = request.referer
