@@ -1422,7 +1422,7 @@ return 'slept'
         self.assertEqual(res.status_int, 200)
         raised = 0
         try:
-            rep = json.loads(res.body)
+            json.loads(res.body)
         except Exception:
             raised += 1
         self.assertEqual(raised, 0)
@@ -1482,7 +1482,7 @@ return 'slept'
         self.assertEqual(res.status_int, 200)
         raised = 0
         try:
-            rep = json.loads(res.body)
+            json.loads(res.body)
         except Exception:
             raised += 1
         self.assertEqual(raised, 0)
@@ -2072,7 +2072,6 @@ return json.dumps(con_list)
         req.body = jconf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
-        time_dict = {}
         # each header is duplicated because we have replication level set to 2
         self.assertEqual(
             res.headers['x-nexe-system'], 'sort-1,sort-1,sort-2,sort-2')
@@ -2162,7 +2161,7 @@ return json.dumps(con_list)
             req = self.zerovm_object_request()
             req.environ['swift.authorize'] = authorize
             req.body = '1234'
-            res = req.get_response(prosrv)
+            req.get_response(prosrv)
         self.assert_(called[0])
 
     def test_QUERY_request_client_disconnect_attr(self):

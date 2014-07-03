@@ -353,9 +353,6 @@ return resp + out
             self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
             self.assertEqual(resp.headers['x-nexe-validation'], '0')
             self.assertEqual(resp.headers['x-nexe-system'], 'sort')
-            timestamp = normalize_timestamp(time())
-            # self.assertEqual(math.floor(float(resp.headers['X-Timestamp'])),
-            #     math.floor(float(timestamp)))
             self.assertEquals(
                 resp.headers['content-type'], 'application/x-gtar')
             self.assertEqual(names[0], 'sysmap')
