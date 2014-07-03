@@ -664,10 +664,9 @@ class TestProxyQuery(unittest.TestCase):
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-            r'''
+        nexe = trim(r'''
 return 'Test Test'
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
             {
@@ -700,10 +699,9 @@ return 'Test Test'
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-            r'''
+        nexe = trim(r'''
 return 'hello, world'
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/hello.nexe', nexe)
         conf = [
             {
@@ -726,10 +724,9 @@ return 'hello, world'
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-            r'''
+        nexe = trim(r'''
 return 'hello, world'
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/hello.nexe', nexe)
         conf = [
             {
@@ -754,10 +751,9 @@ return 'hello, world'
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-            r'''
+        nexe = trim(r'''
 return 'hello, world'
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/hello.nexe', nexe)
         conf = [
             {
@@ -781,8 +777,7 @@ return 'hello, world'
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-            r'''
+        nexe = trim(r'''
 resp = '\n'.join([
     'HTTP/1.1 200 OK',
     'Content-Type: text/html',
@@ -792,7 +787,7 @@ resp = '\n'.join([
     ])
 out = '<html><body>Test this</body></html>'
 return resp + out
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
             {
@@ -953,11 +948,10 @@ return resp + out
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-            r'''
+        nexe = trim(r'''
 resp = '<html><body>Test this</body></html>'
 return resp
-'''[1:-1]
+''')
         self.create_object(
             prolis, '/v1/a/c/exe2', nexe, content_type='application/x-nexe')
         req = self.object_request('/v1/a/c/exe2')
@@ -1006,10 +1000,9 @@ return resp
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-            r'''
+        nexe = trim(r'''
 return [open(mnfst.image['path']).read(), sorted(id)]
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         image = 'This is image file'
         self.create_object(prolis, '/v1/a/c/img', image)
@@ -1037,10 +1030,9 @@ return [open(mnfst.image['path']).read(), sorted(id)]
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-            r'''
+        nexe = trim(r'''
 return [open(mnfst.image['path']).read(), sorted(id)]
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         image = 'This is image file'
         self.create_object(prolis, '/v1/a/c/img', image)
@@ -1136,10 +1128,9 @@ return [open(mnfst.image['path']).read(), sorted(id)]
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-            r'''
+        nexe = trim(r'''
 return [open(mnfst.image['path']).read(), sorted(id)]
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         image = 'This is image file'
         image_gz = StringIO('')
@@ -1172,10 +1163,9 @@ return [open(mnfst.image['path']).read(), sorted(id)]
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-            r'''
+        nexe = trim(r'''
     return [open(mnfst.image['path']).read(), sorted(id)]
-    '''[1:-1]
+    ''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         image = 'This is image file' * 10000
         self.create_object(prolis, '/v1/a/c/img', image)
@@ -1206,12 +1196,11 @@ return [open(mnfst.image['path']).read(), sorted(id)]
         image = 'This is image file'
         sysimage_path = os.path.join(_testdir, 'sysimage.tar')
 
-        nexe =\
-            r'''
+        nexe = trim(r'''
 return open(mnfst.nvram['path']).read() + \
     str(mnfst.channels['/dev/sysimage1']['type']) + ' ' + \
     str(mnfst.channels['/dev/sysimage1']['path'])
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         img = open(sysimage_path, 'wb')
         img.write(image)
@@ -1253,8 +1242,7 @@ return open(mnfst.nvram['path']).read() + \
         image = 'This is image file'
         sysimage_path = os.path.join(_testdir, 'sysimage.tar')
 
-        nexe = trim(
-            r'''
+        nexe = trim(r'''
             return open(mnfst.nvram['path']).read() + \
                 str(mnfst.channels['/dev/sysimage1']['type']) + ' ' + \
                 str(mnfst.channels['/dev/sysimage1']['path']) + '\n' + \
@@ -1300,20 +1288,18 @@ return open(mnfst.nvram['path']).read() + \
     def test_QUERY_post_script_sysimage(self):
         self.setup_QUERY()
         prosrv = _test_servers[0]
-        script = \
-            r'''
+        script = trim(r'''
 #! file://sysimage1:bin/sh
 print 'Test'
-'''[1:-1]
-        nexe = \
-            r'''
+''')
+        nexe = trim(r'''
 import tarfile
 tar = tarfile.open(mnfst.image['path'])
 members = tar.getmembers()
 names = tar.getnames()
 file = tar.extractfile(members[0])
 return names[0] + '\n' + file.read()
-'''[1:-1]
+''')
         shell = StringIO(nexe)
         with self.create_tar({'bin/sh': shell}) as tar:
             with self.add_sysimage_device(tar):
@@ -1330,40 +1316,36 @@ return names[0] + '\n' + file.read()
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe = \
-            r'''
+        nexe = trim(r'''
 import tarfile
 tar = tarfile.open(mnfst.image['path'])
 members = tar.getmembers()
 file = tar.extractfile(members[0])
 return file.read()
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
-        script = \
-            r'''
+        script = trim(r'''
 #! swift://a/c/exe2
 print 'Test'
-'''[1:-1]
+''')
         req = self.zerovm_request()
         req.body = script
         req.headers['content-type'] = 'application/x-python'
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertIn(script, res.body)
-        script = \
-            r'''
+        script = trim(r'''
 #! swift://a/aaa/bbb
 print 'Test'
-'''[1:-1]
+''')
         req.body = script
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 404)
         self.assertIn(' /a/aaa/bbb', res.body)
-        script = \
-            r'''
+        script = trim(r'''
 #! aaa/bbb
 print 'Test'
-'''[1:-1]
+''')
         req.body = script
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 400)
@@ -1375,12 +1357,11 @@ print 'Test'
         prosrv = _test_servers[0]
         orig_timeout = prosrv.immediate_response_timeout
         prosrv.immediate_response_timeout = 0.5
-        nexe = \
-            r'''
+        nexe = trim(r'''
 from time import sleep
 sleep(1)
 return 'slept'
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/slow.nexe', nexe)
         conf = [
             {
@@ -1434,12 +1415,11 @@ return 'slept'
         prosrv = _test_servers[0]
         orig_timeout = prosrv.immediate_response_timeout
         prosrv.immediate_response_timeout = 0.5
-        nexe = \
-            r'''
+        nexe = trim(r'''
 from time import sleep
 sleep(1)
 return 'slept'
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/slow.nexe', nexe)
         conf = [
             {
@@ -1492,10 +1472,9 @@ return 'slept'
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-            r'''
+        nexe = trim(r'''
 return open(mnfst.nvram['path']).read()
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
             {
@@ -1751,10 +1730,9 @@ return open(mnfst.nvram['path']).read()
 
     def test_QUERY_networked_devices(self):
         self.setup_QUERY()
-        nexe =\
-            r'''
+        nexe = trim(r'''
 return 'ok'
-'''[1:-1]
+''')
         prolis = _test_sockets[0]
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
@@ -1794,8 +1772,7 @@ return 'ok'
 
     def test_networked_devices_multistage(self):
         self.setup_QUERY()
-        nexe = trim(
-            r'''
+        nexe = trim(r'''
             for t in bind_list:
                 err.write('%s, %s\n' % (t[1], t[0]))
             return 'ok'
@@ -1875,14 +1852,13 @@ return 'ok'
 
     def test_QUERY_network_resolve_multiple(self):
         self.setup_QUERY()
-        nexe = \
-            r'''
+        nexe = trim(r'''
 con_list.insert(
     0,
     re.sub(r'(?s).*args = ([^\n]+).*', r'\1', open(mnfst.nvram['path']).read())
 )
 return json.dumps(con_list)
-'''[1:-1]
+''')
         prolis = _test_sockets[0]
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
@@ -2553,10 +2529,9 @@ return json.dumps(con_list)
                            self.get_random_numbers())
         self.create_object(prolis, '/v1/a/terasort/input/4.txt',
                            self.get_random_numbers())
-        nexe =\
-            r'''
+        nexe = trim(r'''
 return open(mnfst.nvram['path']).read()
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/terasort/bin/map', nexe)
         self.create_object(prolis, '/v1/a/terasort/bin/reduce', nexe)
         conf = [
@@ -2704,10 +2679,10 @@ return open(mnfst.nvram['path']).read()
         try:
             prosrv.network_type = 'opaque'
             prosrv.ignore_replication = True
-            nexe =\
+            nexe = trim(
                 r'''
 return open(mnfst.nvram['path']).read()
-'''[1:-1]
+''')
             self.create_object(prolis, '/v1/a/terasort/bin/map', nexe)
             self.create_object(prolis, '/v1/a/terasort/bin/reduce', nexe)
             conf = [

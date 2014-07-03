@@ -21,6 +21,7 @@ from swift.common.utils import mkdirs, normalize_timestamp, get_logger
 from swift.obj.server import ObjectController
 from test.unit import FakeLogger, create_random_numbers, get_sorted_numbers, \
     create_tar
+from test.unit import trim
 
 from test_proxyquery import ZEROVM_DEFAULT_MOCK
 from zerocloud.common import ZvmNode, ACCESS_READABLE, ACCESS_WRITABLE, \
@@ -321,7 +322,7 @@ class TestObjectQuery(unittest.TestCase):
             'stdout', ACCESS_WRITABLE, content_type='message/http')
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        nexefile = StringIO(r'''
+        nexefile = StringIO(trim(r'''
 resp = '\n'.join([
     'HTTP/1.1 200 OK',
     'Content-Type: application/json',
@@ -331,7 +332,7 @@ resp = '\n'.join([
     ])
 out = str(sorted(id))
 return resp + out
-'''[1:-1])
+'''))
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
@@ -375,7 +376,7 @@ return resp + out
             'stdout', ACCESS_WRITABLE, content_type='message/cgi')
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        nexefile = StringIO(r'''
+        nexefile = StringIO(trim(r'''
 resp = '\n'.join([
     'Content-Type: application/json',
     'X-Object-Meta-Key1: value1',
@@ -384,7 +385,7 @@ resp = '\n'.join([
     ])
 out = str(sorted(id))
 return resp + out
-'''[1:-1])
+'''))
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
@@ -431,11 +432,11 @@ return resp + out
             'stdout', ACCESS_WRITABLE, content_type='message/http')
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
-        nexefile = StringIO('''
+        nexefile = StringIO(trim('''
 resp = '\\n'.join(['Status: 200 OK', 'Content-Type: application/json', '', ''])
 out = str(sorted(id))
 return resp + out
-'''[1:-1])
+'''))
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
