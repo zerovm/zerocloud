@@ -323,16 +323,16 @@ class TestObjectQuery(unittest.TestCase):
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
         nexefile = StringIO(trim(r'''
-resp = '\n'.join([
-    'HTTP/1.1 200 OK',
-    'Content-Type: application/json',
-    'X-Object-Meta-Key1: value1',
-    'X-Object-Meta-Key2: value2',
-    '', ''
-    ])
-out = str(sorted(id))
-return resp + out
-'''))
+            resp = '\n'.join([
+                'HTTP/1.1 200 OK',
+                'Content-Type: application/json',
+                'X-Object-Meta-Key1: value1',
+                'X-Object-Meta-Key2: value2',
+                '', ''
+                ])
+            out = str(sorted(id))
+            return resp + out
+            '''))
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
@@ -377,15 +377,15 @@ return resp + out
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
         nexefile = StringIO(trim(r'''
-resp = '\n'.join([
-    'Content-Type: application/json',
-    'X-Object-Meta-Key1: value1',
-    'X-Object-Meta-Key2: value2',
-    '', ''
-    ])
-out = str(sorted(id))
-return resp + out
-'''))
+            resp = '\n'.join([
+                'Content-Type: application/json',
+                'X-Object-Meta-Key1: value1',
+                'X-Object-Meta-Key2: value2',
+                '', ''
+                ])
+            out = str(sorted(id))
+            return resp + out
+            '''))
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
@@ -433,10 +433,11 @@ return resp + out
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
         nexefile = StringIO(trim('''
-resp = '\\n'.join(['Status: 200 OK', 'Content-Type: application/json', '', ''])
-out = str(sorted(id))
-return resp + out
-'''))
+            resp = '\\n'.join(['Status: 200 OK',
+                               'Content-Type: application/json', '', ''])
+            out = str(sorted(id))
+            return resp + out
+            '''))
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
@@ -1006,11 +1007,10 @@ return resp + out
         self.assertEquals(resp.status_int, 499)
 
     def test_QUERY_zerovm_stderr(self):
-        self.setup_zerovm_query(
-            r'''
-import sys
-sys.stderr.write('some shit happened\n')
-''')
+        self.setup_zerovm_query(trim(r'''
+            import sys
+            sys.stderr.write('some shit happened\n')
+            '''))
         req = self.zerovm_object_request()
 
         nexefile = StringIO(self._nexescript)
@@ -1030,15 +1030,14 @@ sys.stderr.write('some shit happened\n')
                           'zerovm_stdout=some shit happened',
                           resp.body)
 
-        self.setup_zerovm_query(
-            r'''
-import sys
-import time
-sys.stdout.write('0\n\nok.\n')
-for i in range(20):
-    time.sleep(0.1)
-    sys.stderr.write(''.zfill(4096))
-''')
+        self.setup_zerovm_query(trim(r'''
+            import sys
+            import time
+            sys.stdout.write('0\n\nok.\n')
+            for i in range(20):
+                time.sleep(0.1)
+                sys.stderr.write(''.zfill(4096))
+            '''))
         nexefile = StringIO(self._nexescript)
         conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
         conf.add_new_channel(
@@ -1054,14 +1053,13 @@ for i in range(20):
             self.assertEqual(resp.status_int, 500)
             self.assertIn('ERROR OBJ.QUERY retcode=Output too long', resp.body)
 
-        self.setup_zerovm_query(
-            r'''
-import sys, time, signal
-signal.signal(signal.SIGTERM, signal.SIG_IGN)
-time.sleep(0.9)
-sys.stdout.write('0\n\nok.\n')
-sys.stderr.write(''.zfill(4096*20))
-''')
+        self.setup_zerovm_query(trim(r'''
+            import sys, time, signal
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            time.sleep(0.9)
+            sys.stdout.write('0\n\nok.\n')
+            sys.stderr.write(''.zfill(4096*20))
+            '''))
         nexefile = StringIO(self._nexescript)
         conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
         conf.add_new_channel(
@@ -1084,11 +1082,10 @@ sys.stderr.write(''.zfill(4096*20))
                 self.app.parser_config['manifest']['Timeout'] = orig_timeout
 
     def test_QUERY_zerovm_term_timeouts(self):
-        self.setup_zerovm_query(
-            r'''
-from time import sleep
-sleep(10)
-''')
+        self.setup_zerovm_query(trim(r'''
+            from time import sleep
+            sleep(10)
+            '''))
         req = self.zerovm_object_request()
         nexefile = StringIO(self._nexescript)
         conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
@@ -1111,12 +1108,11 @@ sleep(10)
                 self.app.parser_config['manifest']['Timeout'] = orig_timeout
 
     def test_QUERY_zerovm_kill_timeouts(self):
-        self.setup_zerovm_query(
-            r'''
-import signal, time
-signal.signal(signal.SIGTERM, signal.SIG_IGN)
-time.sleep(10)
-''')
+        self.setup_zerovm_query(trim(r'''
+            import signal, time
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            time.sleep(10)
+            '''))
         req = self.zerovm_object_request()
         nexefile = StringIO(self._nexescript)
         conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
@@ -1644,12 +1640,10 @@ time.sleep(10)
         self.setup_zerovm_query()
         with save_zerovm_exename():
             (zfd, zerovm) = mkstemp()
-            os.write(zfd,
-                     r'''
-from sys import exit
-exit(255)
-'''
-                     )
+            os.write(zfd, trim(r'''
+                from sys import exit
+                exit(255)
+                '''))
             os.close(zfd)
             self.app.zerovm_exename = ['python', zerovm]
             req = self.zerovm_object_request()
