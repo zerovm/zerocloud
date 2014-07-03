@@ -56,6 +56,7 @@ JSON format describing a servlet configuration
     output
     image
     debug
+    script
     </pre>
 
     _All other device names are invalid_  
@@ -139,6 +140,7 @@ Keys must be alphanumeric, cannot contain whitespace characters
     output: <i>RANDOM + WRITABLE</i>
     image: <i>CDR</i>
     debug: <i>NETWORK</i>
+    script: <i>RANDOM + READABLE</i>
     </pre>
 
     All system image devices are <i>RANDOM + READABLE</i>
@@ -164,6 +166,7 @@ Keys must be alphanumeric, cannot contain whitespace characters
     stdin
     input
     image
+    script
     </pre>
 
     `exec` property _must_ have existing, readable `path`  
@@ -222,6 +225,11 @@ It is an optional argument that sets executable name to the supplied string.
 Executable name is visible to the application under `ARGV[0]`, as usual.  
 If `exec.name` is not supplied, the name would be set to the cluster node `name` property
 
+19. There is a special device called `script`. It has all the functionality of `input` device,
+with some key difference: it is never co-located with the executable 
+(unless this is the only `READABLE` device). Its primarily purpose is to be used as a script source input 
+for apps written in a scripting language (python, for example).
+  
 ## Examples
 
 
