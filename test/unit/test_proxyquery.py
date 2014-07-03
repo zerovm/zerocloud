@@ -491,7 +491,7 @@ class TestProxyQuery(unittest.TestCase):
                 bind_data + connect_data
             ns = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             ns.connect(('localhost', int(ns_port)))
-            ns.sendto(request, ('localhost', int(ns_port)))
+            ns.send(request)
             ns_host = ns.getpeername()[0]
             ns_port = ns.getpeername()[1]
             while 1:
