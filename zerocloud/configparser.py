@@ -704,7 +704,8 @@ class ClusterConfigParser(object):
             for k, v in config['env'].iteritems():
                 if v:
                     env += ENV_ITEM % (k, quote_for_env(v))
-        args = '[args]\nargs = %s' % config['name']
+        exe_name = config.get('exe_name') or config['name']
+        args = '[args]\nargs = %s' % exe_name
         if config.get('args'):
             args += ' %s' % config['args']
         args += '\n'
@@ -819,7 +820,8 @@ def _create_node(node_config):
             'Invalid nexe property for %s' % name)
     replicate = node_config.get('replicate', 1)
     attach = node_config.get('attach', 'default')
-    return ZvmNode(0, name, exe, args, env, replicate, attach)
+    exe_name = nexe.get('name')
+    return ZvmNode(0, name, exe, args, env, replicate, attach, exe_name)
 
 
 def _create_channel(channel, node, default_content_type=None):
