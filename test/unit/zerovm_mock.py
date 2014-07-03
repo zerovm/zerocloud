@@ -254,7 +254,7 @@ if getattr(mnfst, 'NameServer', None):
     ns_proto, ns_host, ns_port = mnfst.NameServer.split(':')
     ns = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     ns.connect((ns_host, int(ns_port)))
-    ns.sendto(request, (ns_host, int(ns_port)))
+    ns.send(request)
     ns_host = ns.getpeername()[0]
     ns_port = ns.getpeername()[1]
     while 1:
