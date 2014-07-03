@@ -238,6 +238,7 @@ class NullLoggingHandler(logging.Handler):
 
 
 class UnmockTimeModule(object):
+
     """
     Even if a test mocks time.time - you can restore unmolested behavior in a
     another module who imports time directly by monkey patching it's imported
@@ -360,6 +361,7 @@ class FakeLogger(logging.Logger):
 
 
 class DebugLogger(FakeLogger):
+
     """A simple stdout logging version of FakeLogger"""
 
     def __init__(self, *args, **kwargs):
@@ -419,6 +421,7 @@ if config_true_value(get_config('unit_test').get('fake_syslog', 'False')):
 
 
 class MockTrue(object):
+
     """
     Instances of MockTrue evaluate like True
     Any attr accessed on an instance of MockTrue will return a MockTrue
@@ -622,7 +625,7 @@ def create_random_numbers(max_num, proto='pickle'):
         randindex1 = random.randrange(max_num)
         randindex2 = random.randrange(max_num)
         numlist[randindex1], numlist[randindex2] =\
-        numlist[randindex2], numlist[randindex1]
+            numlist[randindex2], numlist[randindex1]
     if proto == 'binary':
         return struct.pack('%sI' % len(numlist), *numlist)
     else:
@@ -630,7 +633,7 @@ def create_random_numbers(max_num, proto='pickle'):
 
 
 def get_sorted_numbers(min_num=0, max_num=10, proto='pickle'):
-    numlist = [i for i in range(min_num,max_num)]
+    numlist = [i for i in range(min_num, max_num)]
     if proto == 'binary':
         return struct.pack('%sI' % len(numlist), *numlist)
     else:

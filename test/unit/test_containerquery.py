@@ -23,6 +23,7 @@ except ImportError:
 
 
 class FakeApp(ContainerController):
+
     def __init__(self, conf):
         ContainerController.__init__(self, conf)
         self.bytes_per_sync = 1
@@ -48,7 +49,7 @@ class TestContainerQuery(unittest.TestCase):
                      'zerovm_sysimage_devices':
                          'sysimage1 /opt/zerovm/sysimage1 '
                          'sysimage2 /opt/zerovm/sysimage2'
-        }
+                     }
         self.cont_controller = FakeApp(self.conf)
         self.app = objectquery.ObjectQueryMiddleware(self.cont_controller,
                                                      self.conf,
