@@ -204,9 +204,11 @@ def teardown():
 
 @contextmanager
 def save_globals():
-    orig_http_connect = getattr(swift.proxy.controllers.base, 'http_connect', None)
+    orig_http_connect = getattr(
+        swift.proxy.controllers.base, 'http_connect', None)
     orig_query_connect = getattr(proxyquery, 'http_connect', None)
-    orig_account_info = getattr(proxy_server.ObjectController, 'account_info', None)
+    orig_account_info = getattr(
+        proxy_server.ObjectController, 'account_info', None)
     try:
         yield True
     finally:
@@ -274,14 +276,14 @@ class TestProxyQuery(unittest.TestCase):
             randindex1 = random.randrange(count)
             randindex2 = random.randrange(count)
             numlist[randindex1], numlist[randindex2] =\
-            numlist[randindex2], numlist[randindex1]
+                numlist[randindex2], numlist[randindex1]
         if proto == 'binary':
             return struct.pack('%sI' % len(numlist), *numlist)
         else:
             return pickle.dumps(numlist, protocol=0)
 
     def get_sorted_numbers(self, min_num=0, max_num=10, proto='pickle'):
-        numlist = [i for i in range(min_num,max_num)]
+        numlist = [i for i in range(min_num, max_num)]
         if proto == 'binary':
             return struct.pack('%sI' % len(numlist), *numlist)
         else:
@@ -322,14 +324,14 @@ class TestProxyQuery(unittest.TestCase):
         self.create_object(prolis, '/v1/a/c/exe', self._nexescript)
 
         self.create_object(prolis, '/v1/a/c_in1/input1',
-                           self.get_random_numbers(0,10))
+                           self.get_random_numbers(0, 10))
         self.create_object(prolis, '/v1/a/c_in1/input2',
-                           self.get_random_numbers(10,20))
+                           self.get_random_numbers(10, 20))
         self.create_object(prolis, '/v1/a/c_in1/junk', 'junk')
         self.create_object(prolis, '/v1/a/c_in2/input1',
-                           self.get_random_numbers(20,30))
+                           self.get_random_numbers(20, 30))
         self.create_object(prolis, '/v1/a/c_in2/input2',
-                           self.get_random_numbers(30,40))
+                           self.get_random_numbers(30, 40))
         self.create_object(prolis, '/v1/a/c_in2/junk', 'junk')
         self.create_container(prolis, '/v1/userstats/a')
 
@@ -509,11 +511,16 @@ class TestProxyQuery(unittest.TestCase):
                     self.assertEqual(connect_count, len(conf[1]))
                     offset += len(bind_data)
                     for i in range(connect_count):
-                        host, port = struct.unpack_from('!4sH', reply, offset)[0:2]
+                        host, port = struct.unpack_from(
+                            '!4sH', reply, offset)[0:2]
                         offset += 6
                         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        s.connect((socket.inet_ntop(socket.AF_INET, host), port))
-                        self.assertEqual(connection_map['%d->%d' % (id, connect_list[i])], port)
+                        s.connect(
+                            (socket.inet_ntop(socket.AF_INET, host), port))
+                        self.assertEqual(
+                            connection_map['%d->%d' % (id, connect_list[i])],
+                            port
+                        )
                     break
             sleep(0.2)
 
@@ -578,18 +585,18 @@ class TestProxyQuery(unittest.TestCase):
                 req.content_length = os.path.getsize(tar)
                 res = req.get_response(prosrv)
                 self.executed_successfully(res)
-                self.check_container_integrity(prosrv,
-                                               '/v1/a/c',
-                                               {
-                                                   'o2': self.get_sorted_numbers()
-                                               })
+                self.check_container_integrity(
+                    prosrv,
+                    '/v1/a/c',
+                    {'o2': self.get_sorted_numbers()}
+                )
 
     def test_QUERY_sort_store_stdout_stderr(self):
         self.setup_QUERY()
         conf = [
             {
                 'name': 'sort',
-                'exec':{'path': 'swift://a/c/exe'},
+                'exec': {'path': 'swift://a/c/exe'},
                 'file_list': [
                     {'device': 'stdin', 'path': 'swift://a/c/o'},
                     {'device': 'stdout', 'path': 'swift://a/c/o2'},
@@ -639,7 +646,8 @@ class TestProxyQuery(unittest.TestCase):
                 'exec': {'path': 'swift://a/c/exe'},
                 'file_list': [
                     {'device': 'stdin', 'path': 'swift://a/c/o'},
-                    {'device': 'stdout', 'content_type': 'application/x-pickle'}
+                    {'device': 'stdout',
+                        'content_type': 'application/x-pickle'}
                 ]
             }
         ]
@@ -656,10 +664,9 @@ class TestProxyQuery(unittest.TestCase):
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-r'''
+        nexe = trim(r'''
 return 'Test Test'
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
             {
@@ -692,10 +699,9 @@ return 'Test Test'
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-r'''
+        nexe = trim(r'''
 return 'hello, world'
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/hello.nexe', nexe)
         conf = [
             {
@@ -718,10 +724,9 @@ return 'hello, world'
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-r'''
+        nexe = trim(r'''
 return 'hello, world'
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/hello.nexe', nexe)
         conf = [
             {
@@ -746,10 +751,9 @@ return 'hello, world'
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-r'''
+        nexe = trim(r'''
 return 'hello, world'
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/hello.nexe', nexe)
         conf = [
             {
@@ -773,8 +777,7 @@ return 'hello, world'
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-r'''
+        nexe = trim(r'''
 resp = '\n'.join([
     'HTTP/1.1 200 OK',
     'Content-Type: text/html',
@@ -784,7 +787,7 @@ resp = '\n'.join([
     ])
 out = '<html><body>Test this</body></html>'
 return resp + out
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
             {
@@ -945,23 +948,26 @@ return resp + out
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-r'''
+        nexe = trim(r'''
 resp = '<html><body>Test this</body></html>'
 return resp
-'''[1:-1]
-        self.create_object(prolis, '/v1/a/c/exe2', nexe, content_type='application/x-nexe')
+''')
+        self.create_object(
+            prolis, '/v1/a/c/exe2', nexe, content_type='application/x-nexe')
         req = self.object_request('/v1/a/c/exe2')
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, nexe)
-        req = Request.blank('/open/a/c/exe2?' + urlencode({'content_type': 'text/html'}))
+        req = Request.blank(
+            '/open/a/c/exe2?' + urlencode({'content_type': 'text/html'}))
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, '<html><body>Test this</body></html>')
         self.assertEqual(res.headers['content-type'], 'text/html')
-        self.create_object(prolis, '/v1/a/c/my.nexe', nexe, content_type='application/x-nexe')
-        req = Request.blank('/open/a/c/my.nexe?' + urlencode({'content_type':'text/html'}))
+        self.create_object(
+            prolis, '/v1/a/c/my.nexe', nexe, content_type='application/x-nexe')
+        req = Request.blank(
+            '/open/a/c/my.nexe?' + urlencode({'content_type': 'text/html'}))
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, '<html><body>Test this</body></html>')
@@ -972,7 +978,8 @@ return resp
                 'exec': {'path': 'swift://a/c/exe'},
                 'file_list': [
                     {'device': 'stdin', 'path': '{.object_path}'},
-                    {'device': 'stdout', 'content_type': 'application/x-pickle'}
+                    {'device': 'stdout',
+                        'content_type': 'application/x-pickle'}
                 ]
             }
         ]
@@ -993,10 +1000,9 @@ return resp
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-r'''
+        nexe = trim(r'''
 return [open(mnfst.image['path']).read(), sorted(id)]
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         image = 'This is image file'
         self.create_object(prolis, '/v1/a/c/img', image)
@@ -1024,10 +1030,9 @@ return [open(mnfst.image['path']).read(), sorted(id)]
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-r'''
+        nexe = trim(r'''
 return [open(mnfst.image['path']).read(), sorted(id)]
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         image = 'This is image file'
         self.create_object(prolis, '/v1/a/c/img', image)
@@ -1123,10 +1128,9 @@ return [open(mnfst.image['path']).read(), sorted(id)]
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-r'''
+        nexe = trim(r'''
 return [open(mnfst.image['path']).read(), sorted(id)]
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         image = 'This is image file'
         image_gz = StringIO('')
@@ -1156,35 +1160,34 @@ return [open(mnfst.image['path']).read(), sorted(id)]
                               pickle.loads(self.get_sorted_numbers())]))
 
     def test_QUERY_use_large_image(self):
-            self.setup_QUERY()
-            prolis = _test_sockets[0]
-            prosrv = _test_servers[0]
-            nexe =\
-    r'''
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe = trim(r'''
     return [open(mnfst.image['path']).read(), sorted(id)]
-    '''[1:-1]
-            self.create_object(prolis, '/v1/a/c/exe2', nexe)
-            image = 'This is image file' * 10000
-            self.create_object(prolis, '/v1/a/c/img', image)
-            conf = [
-                {
-                    'name': 'sort',
-                    'exec': {'path': 'swift://a/c/exe2'},
-                    'file_list': [
-                        {'device': 'stdin', 'path': 'swift://a/c/o'},
-                        {'device': 'stdout'},
-                        {'device': 'image', 'path': 'swift://a/c/img'}
-                    ]
-                }
-            ]
-            conf = json.dumps(conf)
-            req = self.zerovm_request()
-            req.body = conf
-            res = req.get_response(prosrv)
-            self.assertEqual(res.status_int, 200)
-            self.assertEqual(res.body,
-                             str(['This is image file' * 10000,
-                                  pickle.loads(self.get_sorted_numbers())]))
+    ''')
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        image = 'This is image file' * 10000
+        self.create_object(prolis, '/v1/a/c/img', image)
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe2'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {'device': 'stdout'},
+                    {'device': 'image', 'path': 'swift://a/c/img'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body,
+                         str(['This is image file' * 10000,
+                              pickle.loads(self.get_sorted_numbers())]))
 
     def test_QUERY_use_sysimage(self):
         self.setup_QUERY()
@@ -1193,12 +1196,11 @@ return [open(mnfst.image['path']).read(), sorted(id)]
         image = 'This is image file'
         sysimage_path = os.path.join(_testdir, 'sysimage.tar')
 
-        nexe =\
-r'''
+        nexe = trim(r'''
 return open(mnfst.nvram['path']).read() + \
     str(mnfst.channels['/dev/sysimage1']['type']) + ' ' + \
     str(mnfst.channels['/dev/sysimage1']['path'])
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         img = open(sysimage_path, 'wb')
         img.write(image)
@@ -1222,10 +1224,14 @@ return open(mnfst.nvram['path']).read() + \
             req.body = conf
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 200)
-            self.assertIn('[fstab]\n'
-                          'channel=/dev/sysimage1, mountpoint=/, access=ro, removable=no\n'
-                          '[args]\n'
-                          'args = sort\n', res.body)
+            self.assertIn(
+                '[fstab]\n'
+                'channel=/dev/sysimage1, mountpoint=/, access=ro, '
+                'removable=no\n'
+                '[args]\n'
+                'args = sort\n',
+                res.body
+            )
             self.assertIn('%d %s' % (3, sysimage_path),
                           res.body)
 
@@ -1236,8 +1242,7 @@ return open(mnfst.nvram['path']).read() + \
         image = 'This is image file'
         sysimage_path = os.path.join(_testdir, 'sysimage.tar')
 
-        nexe = trim(
-            r'''
+        nexe = trim(r'''
             return open(mnfst.nvram['path']).read() + \
                 str(mnfst.channels['/dev/sysimage1']['type']) + ' ' + \
                 str(mnfst.channels['/dev/sysimage1']['path']) + '\n' + \
@@ -1283,20 +1288,18 @@ return open(mnfst.nvram['path']).read() + \
     def test_QUERY_post_script_sysimage(self):
         self.setup_QUERY()
         prosrv = _test_servers[0]
-        script = \
-r'''
+        script = trim(r'''
 #! file://sysimage1:bin/sh
 print 'Test'
-'''[1:-1]
-        nexe = \
-r'''
+''')
+        nexe = trim(r'''
 import tarfile
 tar = tarfile.open(mnfst.image['path'])
 members = tar.getmembers()
 names = tar.getnames()
 file = tar.extractfile(members[0])
 return names[0] + '\n' + file.read()
-'''[1:-1]
+''')
         shell = StringIO(nexe)
         with self.create_tar({'bin/sh': shell}) as tar:
             with self.add_sysimage_device(tar):
@@ -1313,40 +1316,36 @@ return names[0] + '\n' + file.read()
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe = \
-r'''
+        nexe = trim(r'''
 import tarfile
 tar = tarfile.open(mnfst.image['path'])
 members = tar.getmembers()
 file = tar.extractfile(members[0])
 return file.read()
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
-        script = \
-r'''
+        script = trim(r'''
 #! swift://a/c/exe2
 print 'Test'
-'''[1:-1]
+''')
         req = self.zerovm_request()
         req.body = script
         req.headers['content-type'] = 'application/x-python'
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertIn(script, res.body)
-        script = \
-r'''
+        script = trim(r'''
 #! swift://a/aaa/bbb
 print 'Test'
-'''[1:-1]
+''')
         req.body = script
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 404)
         self.assertIn(' /a/aaa/bbb', res.body)
-        script = \
-r'''
+        script = trim(r'''
 #! aaa/bbb
 print 'Test'
-'''[1:-1]
+''')
         req.body = script
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 400)
@@ -1358,12 +1357,11 @@ print 'Test'
         prosrv = _test_servers[0]
         orig_timeout = prosrv.immediate_response_timeout
         prosrv.immediate_response_timeout = 0.5
-        nexe = \
-r'''
+        nexe = trim(r'''
 from time import sleep
 sleep(1)
 return 'slept'
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/slow.nexe', nexe)
         conf = [
             {
@@ -1405,7 +1403,7 @@ return 'slept'
         self.assertEqual(res.status_int, 200)
         raised = 0
         try:
-            rep = json.loads(res.body)
+            json.loads(res.body)
         except Exception:
             raised += 1
         self.assertEqual(raised, 0)
@@ -1417,12 +1415,11 @@ return 'slept'
         prosrv = _test_servers[0]
         orig_timeout = prosrv.immediate_response_timeout
         prosrv.immediate_response_timeout = 0.5
-        nexe = \
-r'''
+        nexe = trim(r'''
 from time import sleep
 sleep(1)
 return 'slept'
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/slow.nexe', nexe)
         conf = [
             {
@@ -1465,7 +1462,7 @@ return 'slept'
         self.assertEqual(res.status_int, 200)
         raised = 0
         try:
-            rep = json.loads(res.body)
+            json.loads(res.body)
         except Exception:
             raised += 1
         self.assertEqual(raised, 0)
@@ -1475,10 +1472,9 @@ return 'slept'
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        nexe =\
-r'''
+        nexe = trim(r'''
 return open(mnfst.nvram['path']).read()
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
             {
@@ -1538,10 +1534,13 @@ return open(mnfst.nvram['path']).read()
         req = self.zerovm_request()
         req.body = conf
         res = req.get_response(prosrv)
-        self.assertIn('[fstab]\n'
-                      'channel=/dev/image, mountpoint=/, access=ro, removable=no\n'
-                      '[args]\n'
-                      'args = sort\n', res.body)
+        self.assertIn(
+            '[fstab]\n'
+            'channel=/dev/image, mountpoint=/, access=ro, removable=no\n'
+            '[args]\n'
+            'args = sort\n',
+            res.body
+        )
         conf = [
             {
                 'name': 'sort',
@@ -1582,7 +1581,8 @@ return open(mnfst.nvram['path']).read()
                     'path': 'swift://a/c/exe2'
                 },
                 'file_list': [
-                    {'device': 'input', 'path': 'swift://a/c/o', 'mode': 'file'},
+                    {'device': 'input', 'path': 'swift://a/c/o',
+                        'mode': 'file'},
                     {'device': 'stdout', 'mode': 'char'},
                     {'device': 'image', 'path': 'swift://a/c/img'}
                 ]
@@ -1718,20 +1718,21 @@ return open(mnfst.nvram['path']).read()
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertIn('finished', res.body)
-        self.assert_(re.match('tcp://127.0.0.1:\d+, /dev/out/%s' % conf[0]['connect'][0], res.body))
+        self.assert_(re.match('tcp://127.0.0.1:\d+, /dev/out/%s' %
+                              conf[0]['connect'][0], res.body))
 
         req = self.object_request('/v1/a/c/o3')
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertIn('finished', res.body)
-        self.assert_(re.match('tcp://127.0.0.1:\d+, /dev/out/%s' % conf[1]['connect'][0], res.body))
+        self.assert_(re.match('tcp://127.0.0.1:\d+, /dev/out/%s' %
+                              conf[1]['connect'][0], res.body))
 
     def test_QUERY_networked_devices(self):
         self.setup_QUERY()
-        nexe =\
-r'''
+        nexe = trim(r'''
 return 'ok'
-'''[1:-1]
+''')
         prolis = _test_sockets[0]
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
@@ -1771,8 +1772,7 @@ return 'ok'
 
     def test_networked_devices_multistage(self):
         self.setup_QUERY()
-        nexe = trim(
-            r'''
+        nexe = trim(r'''
             for t in bind_list:
                 err.write('%s, %s\n' % (t[1], t[0]))
             return 'ok'
@@ -1849,14 +1849,16 @@ return 'ok'
         self.assertEqual(res.status_int, 200)
         # bind stdin to network source
         self.assert_(re.match('tcp://0:\d+, /dev/stdin', res.body))
-        
+
     def test_QUERY_network_resolve_multiple(self):
         self.setup_QUERY()
-        nexe =\
-r'''
-con_list.insert(0, re.sub(r'(?s).*args = ([^\n]+).*', r'\1', open(mnfst.nvram['path']).read()))
+        nexe = trim(r'''
+con_list.insert(
+    0,
+    re.sub(r'(?s).*args = ([^\n]+).*', r'\1', open(mnfst.nvram['path']).read())
+)
 return json.dumps(con_list)
-'''[1:-1]
+''')
         prolis = _test_sockets[0]
         self.create_object(prolis, '/v1/a/c/exe2', nexe)
         conf = [
@@ -1887,7 +1889,8 @@ return json.dumps(con_list)
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
 
-        results = [json.loads(r) for r in re.findall(r'(?s)(\[.*?\](?=\[|$))', res.body)]
+        results = [json.loads(r) for r in re.findall(
+            r'(?s)(\[.*?\](?=\[|$))', res.body)]
         pattern = '/dev/out/([^\s]+)\', \'tcp://127.0.0.1:\d+'
         for r in results:
             if 'sort-1' in r[0]:
@@ -1940,7 +1943,8 @@ return json.dumps(con_list)
         req.body = jconf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, self.get_sorted_numbers(0, 10) + self.get_sorted_numbers(10, 20))
+        self.assertEqual(res.body, self.get_sorted_numbers(
+            0, 10) + self.get_sorted_numbers(10, 20))
 
     def test_QUERY_read_container_wildcard(self):
         self.setup_QUERY()
@@ -2044,9 +2048,9 @@ return json.dumps(con_list)
         req.body = jconf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
-        time_dict = {}
         # each header is duplicated because we have replication level set to 2
-        self.assertEqual(res.headers['x-nexe-system'], 'sort-1,sort-1,sort-2,sort-2')
+        self.assertEqual(
+            res.headers['x-nexe-system'], 'sort-1,sort-1,sort-2,sort-2')
         self.assertEqual(res.headers['x-nexe-status'], 'ok.,ok.,ok.,ok.')
         self.assertEqual(res.headers['x-nexe-retcode'], '0,0,0,0')
         self.check_container_integrity(prosrv,
@@ -2100,36 +2104,40 @@ return json.dumps(con_list)
         req.body = jconf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.headers['x-nexe-system'], 'sort-1,sort-2,sort-3,sort-4')
+        self.assertEqual(
+            res.headers['x-nexe-system'], 'sort-1,sort-2,sort-3,sort-4')
         self.assertEqual(res.headers['x-nexe-status'], 'ok.,ok.,ok.,ok.')
         self.assertEqual(res.headers['x-nexe-retcode'], '0,0,0,0')
-        self.check_container_integrity(prosrv,
-                                       '/v1/a/c_out1',
-                                       {
-                                           'output1': self.get_sorted_numbers(0, 10),
-                                           'output2': self.get_sorted_numbers(10, 20)
-                                       })
-        self.check_container_integrity(prosrv,
-                                       '/v1/a/c_out2',
-                                       {
-                                           'output1': self.get_sorted_numbers(20, 30),
-                                           'output2': self.get_sorted_numbers(30, 40)
-                                       })
+        self.check_container_integrity(
+            prosrv,
+            '/v1/a/c_out1',
+            {'output1': self.get_sorted_numbers(0, 10),
+             'output2': self.get_sorted_numbers(10, 20)}
+        )
+        self.check_container_integrity(
+            prosrv,
+            '/v1/a/c_out2',
+            {'output1': self.get_sorted_numbers(20, 30),
+             'output2': self.get_sorted_numbers(30, 40)}
+        )
 
     def test_QUERY_calls_authorize(self):
-        raise SkipTest # there is no pre-authorization right now, maybe we do not need it at all
+        # there is no pre-authorization right now, maybe we do not need it at
+        # all
+        raise SkipTest
         called = [False]
+
         def authorize(req):
             called[0] = True
             return HTTPUnauthorized(request=req)
         with save_globals():
             proxy_server.http_connect =\
-            fake_http_connect(200, 200, 201, 201, 201)
+                fake_http_connect(200, 200, 201, 201, 201)
             prosrv = _test_servers[0]
             req = self.zerovm_object_request()
             req.environ['swift.authorize'] = authorize
             req.body = '1234'
-            res = req.get_response(prosrv)
+            req.get_response(prosrv)
         self.assert_(called[0])
 
     def test_QUERY_request_client_disconnect_attr(self):
@@ -2198,7 +2206,8 @@ return json.dumps(con_list)
         req = self.zerovm_request()
         req.body = conf
         res = req.get_response(prosrv)
-        self.assertEqual(res.body, 'Error 404 Not Found while fetching /a/c/error')
+        self.assertEqual(
+            res.body, 'Error 404 Not Found while fetching /a/c/error')
         self.assertEqual(res.status_int, 404)
 
     def test_QUERY_missing_required_fields(self):
@@ -2461,7 +2470,8 @@ return json.dumps(con_list)
             req.body = conf
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 400)
-            self.assertEqual(res.body, 'Error querying object server for account: a')
+            self.assertEqual(
+                res.body, 'Error querying object server for account: a')
 
     def test_QUERY_config_parser(self):
 
@@ -2519,10 +2529,9 @@ return json.dumps(con_list)
                            self.get_random_numbers())
         self.create_object(prolis, '/v1/a/terasort/input/4.txt',
                            self.get_random_numbers())
-        nexe =\
-r'''
+        nexe = trim(r'''
 return open(mnfst.nvram['path']).read()
-'''[1:-1]
+''')
         self.create_object(prolis, '/v1/a/terasort/bin/map', nexe)
         self.create_object(prolis, '/v1/a/terasort/bin/reduce', nexe)
         conf = [
@@ -2596,7 +2605,8 @@ return open(mnfst.nvram['path']).read()
         # for name, node in controller.nodes.iteritems():
         #     self.assertEqual(node.replicate, 1)
         #     self.assertEqual(node.replicas, [])
-        #print json.dumps(controller.nodes, sort_keys=True, indent=2, cls=proxyquery.NodeEncoder)
+        # print json.dumps(controller.nodes, sort_keys=True, indent=2,
+        # cls=proxyquery.NodeEncoder)
 
     def test_opaque_config(self):
 
@@ -2669,10 +2679,10 @@ return open(mnfst.nvram['path']).read()
         try:
             prosrv.network_type = 'opaque'
             prosrv.ignore_replication = True
-            nexe =\
-r'''
+            nexe = trim(
+                r'''
 return open(mnfst.nvram['path']).read()
-'''[1:-1]
+''')
             self.create_object(prolis, '/v1/a/terasort/bin/map', nexe)
             self.create_object(prolis, '/v1/a/terasort/bin/reduce', nexe)
             conf = [
