@@ -13,33 +13,43 @@ header a comma-separated list of values
 Contains a list of node names for the job. Each node name is unique
 for the job and specifies a separate ZeroVM instance.
 
-Example: `X-Nexe-System: map-1,map-2,map-3,reduce-1,reduce-2`
+Example:
+
+    X-Nexe-System: map-1,map-2,map-3,reduce-1,reduce-2
 
 ### `X-Nexe-Status`
 
 Contains a list of status lines from ZeroVM execution report.
 
-Example: `X-Nexe-Status: ok,ok,ok,ok,ZeroVM did not run`
+Example:
+
+    X-Nexe-Status: ok,ok,ok,ok,ZeroVM did not run
 
 ### `X-Nexe-Retcode`
 
 Contains a list of application return codes from ZeroVM execution
 report.
 
-Example: `X-Nexe-Retcode: 0,2,0,0`
+Example:
+
+    X-Nexe-Retcode: 0,2,0,0
 
 ### `X-Nexe-Etag`
 
 Contains a list of check sums for specific channels from ZeroVM
 execution report.
 
-Example: `X-Nexe-Etag: disabled,disabled`
+Example:
+
+    X-Nexe-Etag: disabled,disabled
 
 ### `X-Nexe-Validation`
 
 Contains a list of validation statuses from ZeroVM execution report.
 
-Example: `X-Nexe-Validation: 0,2,0,0`
+Example:
+
+    X-Nexe-Validation: 0,2,0,0
 
 *Note*: current validation statuses are: 
 
@@ -51,8 +61,9 @@ Example: `X-Nexe-Validation: 0,2,0,0`
 
 Contains an accounting report from ZeroVM execution report.
 
-Example: `X-Nexe-Cdr-Line: 4.251, 3.994, 0.11 3.53 1262 75929984 34
-199 0 0 0 0`
+Example:
+
+    X-Nexe-Cdr-Line: 4.251, 3.994, 0.11 3.53 1262 75929984 34 199 0 0 0 0
 
 *Note*: current accounting stats format is: 
 
@@ -87,7 +98,9 @@ If errors were encountered during execution the `X-Nexe-Error` will be
 populated. If no errors encountered the header will not be set on
 response at all.
 
-Example: `X-Nexe-Error: 404 Not found while fetching /a/c/o`
+Example:
+
+    X-Nexe-Error: 404 Not found while fetching /a/c/o
 
 ### `X-Nexe-Cached`
 
@@ -95,11 +108,15 @@ If the job was run from daemonized ZeroVM instance `X-Nexe-Cached`
 will be set. Value will be always set to `true`. For non-daemon jobs
 the header will not be set on response at all.
 
-Example: `X-Nexe-Cached: true`
+Example:
+
+    X-Nexe-Cached: true
 
 ### `Etag`
 
 Each job will have `Etag` header set to md5 hash of the current
 timestamp.
 
-Example: `Etag: 7afac020e1053dddced8997dd44097af`
+Example:
+
+    Etag: 7afac020e1053dddced8997dd44097af
