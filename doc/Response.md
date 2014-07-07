@@ -5,8 +5,9 @@ the response.
 
 ## HTTP response headers
 
-All `X-Nexe-*` headers are "aggregating" ones. Which means that each
-header a comma-separated list of values
+All `X-Nexe-*` headers are "aggregating" ones. This means that each
+header a comma-separated list of values. The values come from each
+ZeroVM instance.
 
 ### `X-Nexe-System`
 
