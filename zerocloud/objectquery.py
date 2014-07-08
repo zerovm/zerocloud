@@ -1050,6 +1050,8 @@ class ObjectQueryMiddleware(object):
                     else:
                         ch['size'] = \
                             self.os_interface.path.getsize(ch['lpath'])
+                    if ch['size'] < ch['min_size']:
+                        continue
                     info = tar_stream.create_tarinfo(ftype=REGTYPE,
                                                      name=ch['device'],
                                                      size=ch['size'])

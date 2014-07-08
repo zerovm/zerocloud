@@ -409,7 +409,7 @@ class ZvmNode(object):
 class ZvmChannel(object):
     def __init__(self, device, access, path=None,
                  content_type=None, meta_data=None,
-                 mode=None, removable='no', mountpoint='/'):
+                 mode=None, removable='no', mountpoint='/', min_size=0):
         self.device = device
         self.access = access
         self.path = path
@@ -418,6 +418,7 @@ class ZvmChannel(object):
         self.mode = mode
         self.removable = removable
         self.mountpoint = mountpoint
+        self.min_size = min_size
 
 
 class NodeEncoder(json.JSONEncoder):
