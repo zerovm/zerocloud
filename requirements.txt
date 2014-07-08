@@ -1,8 +1,9 @@
---find-links https://launchpad.net/swift/
 eventlet>=0.9.15
 greenlet>=0.3.1
 pastedeploy>=1.3.3
 simplejson>=2.0.9
 xattr>=0.4
 python-swiftclient
-swift>=1.13.0
+# NOTE(larsbutler): ZeroCloud tests break with swift 2.0.0,
+# and the one of the only sources for a 1.13.x verison is github.
+-e git+https://github.com/openstack/swift.git@1.13.1#egg=swift
