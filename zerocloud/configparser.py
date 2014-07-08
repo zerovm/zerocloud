@@ -836,6 +836,7 @@ def _create_channel(channel, node, default_content_type=None):
     access = DEVICE_MAP.get(device, -1)
     mode = channel.get('mode', None)
     meta = channel.get('meta', {})
+    min_size = channel.get('min_size', 0)
     content_type = channel.get('content_type',
                                default_content_type if path else 'text/html')
     if access & ACCESS_READABLE and path:
@@ -846,4 +847,5 @@ def _create_channel(channel, node, default_content_type=None):
             raise ClusterConfigParsingError('Invalid path %s in %s'
                                             % (path.url, node.name))
     return ZvmChannel(device, access, path=path,
-                      content_type=content_type, meta_data=meta, mode=mode)
+                      content_type=content_type, meta_data=meta,
+                      mode=mode, min_size=min_size)

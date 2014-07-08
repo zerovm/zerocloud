@@ -27,6 +27,7 @@ JSON format describing a servlet configuration
                 "metakey2":"value2"
                 }
             "mode": "changes stat() type of device, can be 'file', 'block', 'char' or 'pipe'", <i>optional</i>
+            "min_size":0, <i>minimal data size in bytes, optional, ignored for read-only devices</i>
             },
         ],
         "count":1, <i>number of nodes, optional</i>
@@ -229,7 +230,12 @@ If `exec.name` is not supplied, the name would be set to the cluster node `name`
 with some key difference: it is never co-located with the executable 
 (unless this is the only `READABLE` device). Its primarily purpose is to be used as a script source input 
 for apps written in a scripting language (python, for example).
-  
+
+20. Each `WRITABLE` device can have `min_size` property set. 
+It defines what will be the minimal data size produced by the device. 
+If device produced less than the amount it won't be processed, saved or otherwise used.
+Default is `min_size: 0` which means that even totally empty data files will be written to disk or serialized to user.
+
 ## Examples
 
 

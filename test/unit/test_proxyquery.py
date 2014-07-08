@@ -2982,3 +2982,69 @@ class TestProxyQuery(unittest.TestCase):
         #     self.check_container_integrity(prosrv, '/v1/a/c', {})
         # finally:
         #     prosrv.app.strict_cors_mode = True
+
+    def test_min_size(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe = trim(r'''
+            return ''
+            ''')
+        self.create_object(prolis, '/v1/a/c/hello.nexe', nexe)
+        conf = [
+            {
+                'name': 'hello',
+                'exec': {'path': 'swift://a/c/hello.nexe'},
+                'file_list': [
+                    {'device': 'stderr',
+                     'path': 'swift://a/c/stderr.log',
+                     'min_size': 0},
+                    {'device': 'stdout',
+                     'path': 'swift://a/c/stdout.log',
+                     'min_size': 0}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, '')
+        req = self.object_request('/v1/a/c/stderr.log')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, '\nfinished\n')
+        req = self.object_request('/v1/a/c/stdout.log')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, '')
+        self.check_container_integrity(prosrv, '/v1/a/c', {})
+        conf = [
+            {
+                'name': 'hello',
+                'exec': {'path': 'swift://a/c/hello.nexe'},
+                'file_list': [
+                    {'device': 'stderr',
+                     'path': 'swift://a/c/stderr_m.log',
+                     'min_size': 1},
+                    {'device': 'stdout',
+                     'path': 'swift://a/c/stdout_m.log',
+                     'min_size': 1}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, '')
+        req = self.object_request('/v1/a/c/stderr_m.log')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, '\nfinished\n')
+        req = self.object_request('/v1/a/c/stdout_m.log')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 404)
+        self.check_container_integrity(prosrv, '/v1/a/c', {})
