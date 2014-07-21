@@ -32,7 +32,7 @@ from swift.common.constraints import check_utf8, MAX_FILE_SIZE
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
-    HTTPClientDisconnect, wsgify
+    HTTPClientDisconnect, wsgify, HTTPNotImplemented
 from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, \
     CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
@@ -481,12 +481,16 @@ class ProxyQueryMiddleware(object):
         if account and \
                 (self.zerovm_execute in req.headers
                  or version in self.zerovm_allowed_commands):
+            exec_ver = '%s/%s' % (version, self.zerovm_execute_ver)
+            exec_header_ver = req.headers.get(self.zerovm_execute, exec_ver)
+            req.headers[self.zerovm_execute] = exec_header_ver
             if req.content_length and req.content_length < 0:
                 return HTTPBadRequest(request=req,
                                       body='Invalid Content-Length')
             if not check_utf8(req.path_info):
                 return HTTPPreconditionFailed(request=req, body='Invalid UTF8')
-            controller = self.get_controller(account, container, obj)
+            controller = self.get_controller(exec_header_ver, account,
+                                             container, obj)
             if not controller:
                 return HTTPPreconditionFailed(request=req, body='Bad URL')
             if 'swift.trans_id' not in req.environ:
@@ -498,11 +502,7 @@ class ProxyQueryMiddleware(object):
             controller.trans_id = req.environ['swift.trans_id']
             self.logger.client_ip = get_remote_client(req)
             if path_parts['version']:
-                controller.command = path_parts['version']
                 req.path_info_pop()
-            if self.zerovm_execute not in req.headers:
-                req.headers[self.zerovm_execute] = \
-                    self.zerovm_execute_ver
             try:
                 handler = getattr(controller, req.method)
             except AttributeError:
@@ -532,8 +532,12 @@ class ProxyQueryMiddleware(object):
             return res
         return self.app
 
-    def get_controller(self, account, container, obj):
-        return ClusterController(self.app, account, container, obj, self)
+    def get_controller(self, version, account, container, obj):
+        if version == 'open/1.0':
+            return RestController(self.app, account, container, obj, self,
+                                  version)
+        return ClusterController(self.app, account, container, obj, self,
+                                 version)
 
 
 def select_random_partition(ring):
@@ -545,13 +549,13 @@ def select_random_partition(ring):
 class ClusterController(ObjectController):
 
     def __init__(self, app, account_name, container_name, obj_name, middleware,
-                 **kwargs):
+                 command, **kwargs):
         ObjectController.__init__(self, app,
                                   account_name,
                                   container_name or '',
                                   obj_name or '')
         self.middleware = middleware
-        self.command = None
+        self.command = command
         self.parser = ClusterConfigParser(
             self.middleware.zerovm_sysimage_devices,
             self.middleware.zerovm_content_type,
@@ -1436,6 +1440,57 @@ class ClusterController(ObjectController):
                     'ERROR Cannot write stats for account %s',
                     self.account_name)
 
+    def _create_deferred_report(self, headers):
+        # just dumps headers as a json object for now
+        return json.dumps(dict(headers))
+
+    def replica_resolver(self, path_info, request=None):
+        if not request:
+            return self.app.get_object_ring(0).replica_count
+        try:
+            account, container, obj = split_path(path_info, 3, 3, True)
+        except ValueError:
+            return self.app.get_object_ring(0).replica_count
+        container_info = self.container_info(account, container, request)
+        ring = self.app.get_object_ring(container_info['storage_policy'])
+        return ring.replica_count
+
+
+class RestController(ClusterController):
+
+    def _get_content_config(self, req, content_type):
+        req.template = None
+        cont = self.middleware.zerovm_registry_path
+        obj = '%s/config' % content_type
+        config_path = '/%s/%s/%s' % (self.account_name, cont, obj)
+        memcache_client = cache_from_env(req.environ)
+        memcache_key = 'zvmconf' + config_path
+        if memcache_client:
+            req.template = memcache_client.get(memcache_key)
+            if req.template:
+                return
+        config_req = req.copy_get()
+        config_req.path_info = config_path
+        config_resp = ObjectController(
+            self.app,
+            self.account_name,
+            cont,
+            obj).GET(config_req)
+        if config_resp.status_int == 200:
+            req.template = ''
+            for chunk in config_resp.app_iter:
+                req.template += chunk
+                if self.middleware.zerovm_maxconfig < len(req.template):
+                    req.template = None
+                    return HTTPRequestEntityTooLarge(
+                        request=config_req,
+                        body='Config file at %s is too large' % config_path)
+        if memcache_client and req.template:
+            memcache_client.set(
+                memcache_key,
+                req.template,
+                time=float(self.middleware.zerovm_cache_config_timeout))
+
     @delay_denial
     @cors_validation
     def GET(self, req):
@@ -1491,55 +1546,28 @@ class ClusterController(ObjectController):
         exe_resp = None
         if obj_req.method in 'GET':
             exe_resp = obj_resp
-        return self.POST(post_req, exe_resp=exe_resp, cluster_config=config)
+        method = super(RestController, self).POST
+        return method(post_req, exe_resp=exe_resp, cluster_config=config)
 
-    def _get_content_config(self, req, content_type):
-        req.template = None
-        cont = self.middleware.zerovm_registry_path
-        obj = '%s/config' % content_type
-        config_path = '/%s/%s/%s' % (self.account_name, cont, obj)
-        memcache_client = cache_from_env(req.environ)
-        memcache_key = 'zvmconf' + config_path
-        if memcache_client:
-            req.template = memcache_client.get(memcache_key)
-            if req.template:
-                return
-        config_req = req.copy_get()
-        config_req.path_info = config_path
-        config_resp = ObjectController(
-            self.app,
-            self.account_name,
-            cont,
-            obj).GET(config_req)
-        if config_resp.status_int == 200:
-            req.template = ''
-            for chunk in config_resp.app_iter:
-                req.template += chunk
-                if self.middleware.zerovm_maxconfig < len(req.template):
-                    req.template = None
-                    return HTTPRequestEntityTooLarge(
-                        request=config_req,
-                        body='Config file at %s is too large' % config_path)
-        if memcache_client and req.template:
-            memcache_client.set(
-                memcache_key,
-                req.template,
-                time=float(self.middleware.zerovm_cache_config_timeout))
+    @delay_denial
+    @cors_validation
+    def POST(self, req, **kwargs):
+        return HTTPNotImplemented(request=req)
 
-    def _create_deferred_report(self, headers):
-        # just dumps headers as a json object for now
-        return json.dumps(dict(headers))
+    @delay_denial
+    @cors_validation
+    def PUT(self, req, **kwargs):
+        return HTTPNotImplemented(request=req)
 
-    def replica_resolver(self, path_info, request=None):
-        if not request:
-            return self.app.get_object_ring(0).replica_count
-        try:
-            account, container, obj = split_path(path_info, 3, 3, True)
-        except ValueError:
-            return self.app.get_object_ring(0).replica_count
-        container_info = self.container_info(account, container, request)
-        ring = self.app.get_object_ring(container_info['storage_policy'])
-        return ring.replica_count
+    @delay_denial
+    @cors_validation
+    def DELETE(self, req, **kwargs):
+        return HTTPNotImplemented(request=req)
+
+    @delay_denial
+    @cors_validation
+    def HEAD(self, req, **kwargs):
+        return HTTPNotImplemented(request=req)
 
 
 def _load_channel_data(node, extracted_file):
