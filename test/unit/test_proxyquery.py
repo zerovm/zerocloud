@@ -31,7 +31,8 @@ from swift.proxy import server as proxy_server
 from swift.account import server as account_server
 from swift.container import server as container_server
 from swift.obj import server as object_server
-from swift.common.utils import mkdirs, normalize_timestamp, NullLogger
+from swift.common.utils import mkdirs, normalize_timestamp, NullLogger, \
+    hash_path
 from swift.common import utils
 from swift.common import storage_policy
 from swift.common.storage_policy import StoragePolicy, \
@@ -2773,6 +2774,136 @@ class TestProxyQuery(unittest.TestCase):
         #     self.assertEqual(node.replicas, [])
         # print json.dumps(controller.nodes, sort_keys=True, indent=2,
         # cls=proxyquery.NodeEncoder)
+
+    def test_single_wildcard(self):
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        self.setup_QUERY()
+        self.create_container(prolis, '/v1/a/single')
+        self.create_object(prolis, '/v1/a/single/input1.txt',
+                           self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/single/script1.py',
+                           self.get_random_numbers())
+        self.create_object(prolis, '/v1/a/single/script2.py',
+                           self.get_random_numbers())
+        nexe = trim(r'''
+            err.write('%s:%s\n' % (mnfst.channels['/dev/stdin']['device'],
+                                   mnfst.channels['/dev/stdin']['path']))
+            err.write('%s:%s\n' % (mnfst.channels['/dev/stdout']['device'],
+                                   mnfst.channels['/dev/stdout']['path']))
+            err.write('%s:%s\n' % (mnfst.channels['/dev/stderr']['device'],
+                                   mnfst.channels['/dev/stderr']['path']))
+            err.write('%s:%s\n' % (mnfst.channels['/dev/python']['device'],
+                                   mnfst.channels['/dev/python']['path']))
+            if mnfst.channels.get('/dev/input'):
+                err.write('%s:%s\n' % (mnfst.channels['/dev/input']['device'],
+                                       mnfst.channels['/dev/input']['path']))
+            return 'ok'
+            ''')
+        py = StringIO(nexe)
+        with self.create_tar({'python': py}) as tar:
+            with self.add_sysimage_device(tar, name='python'):
+                conf = [
+                    {
+                        "name": "mapper",
+                        "exec": {
+                            "path": "file://python:python"
+                        },
+
+                        "args": "arg1 arg2",
+
+                        "file_list": [
+                            {
+                                "device": "stdin",
+                                "path": "swift://./single/script1.py"
+                            },
+                            {
+                                "device": "input",
+                                "path": "swift://./single/input*.txt"
+                            },
+                            {
+                                "device": "stderr",
+                                "path": "swift://./single/output*.err",
+                                "content_type": "text/plain"
+                            },
+                            {
+                                "device": "python"
+                            }
+                        ],
+                        "connect": [
+                            "reducer"
+                        ]
+                    },
+                    {
+                        "name": "reducer",
+                        "exec": {
+                            "path": "file://python:python"
+                        },
+                        "file_list": [
+                            {
+                                "device": "stdin",
+                                "path": "swift://./single/script2.py"
+                            },
+                            {
+                                "device": "stdout"
+                            },
+                            {
+                                "device": "python"
+                            },
+                            {
+                                "device": "stderr",
+                                "path": "swift://./single/script2.err",
+                                "content_type": "text/plain"
+                            }
+                        ]
+                    }
+                ]
+                jconf = json.dumps(conf)
+                req = self.zerovm_request()
+                req.body = jconf
+                res = req.get_response(prosrv)
+                self.executed_successfully(res)
+                self.assertEqual(res.headers['x-nexe-system'],
+                                 'mapper-1,reducer')
+                self.assertEqual(res.body, 'ok')
+            req = self.object_request('/v1/a/single/output1.err')
+            res = req.get_response(prosrv)
+            body = res.body.split('\n')
+            test_path = os.path.abspath(_testdir)
+            dev, path = body[0].split(':')
+            self.assertEqual(dev, '/dev/stdin')
+            self.assertTrue(path.startswith(test_path))
+            dev, path = body[1].split(':')
+            self.assertEqual(dev, '/dev/stdout')
+            self.assertEqual(path, '/dev/null')
+            dev, path = body[2].split(':')
+            self.assertEqual(dev, '/dev/stderr')
+            self.assertTrue(path.startswith(test_path))
+            dev, path = body[3].split(':')
+            self.assertEqual(dev, '/dev/python')
+            self.assertEqual(path, tar)
+            dev, path = body[4].split(':')
+            self.assertEqual(dev, '/dev/input')
+            self.assertTrue(path.startswith(test_path))
+            obj_path = '/%s/' % hash_path('a', 'single', 'input1.txt')
+            self.assertTrue(obj_path in path)
+            dev, path = body[5].split(', ')
+            self.assertEqual(path, '/dev/out/reducer')
+            req = self.object_request('/v1/a/single/script2.err')
+            res = req.get_response(prosrv)
+            body = res.body.split('\n')
+            dev, path = body[0].split(':')
+            self.assertEqual(dev, '/dev/stdin')
+            self.assertTrue(path.startswith(test_path))
+            dev, path = body[1].split(':')
+            self.assertEqual(dev, '/dev/stdout')
+            self.assertTrue(path.startswith(test_path))
+            dev, path = body[2].split(':')
+            self.assertEqual(dev, '/dev/stderr')
+            self.assertTrue(path.startswith(test_path))
+            dev, path = body[3].split(':')
+            self.assertEqual(dev, '/dev/python')
+            self.assertEqual(path, tar)
 
     def test_opaque_config(self):
 
