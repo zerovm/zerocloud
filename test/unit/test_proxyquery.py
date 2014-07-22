@@ -1124,20 +1124,32 @@ class TestProxyQuery(unittest.TestCase):
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, nexe)
-        req = Request.blank(
-            '/open/a/c/exe2?' + urlencode({'content_type': 'text/html'}))
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, '<html><body>Test this</body></html>')
-        self.assertEqual(res.headers['content-type'], 'text/html')
+
+        for ver in ['v1', 'open']:
+            url = '/%s/a/c/exe2?' % ver
+            req = Request.blank(
+                url + urlencode({'content_type': 'text/html'}))
+            if ver == 'v1':
+                req.headers['x-zerovm-execute'] = 'open/1.0'
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.body, '<html><body>Test this</body></html>')
+            self.assertEqual(res.headers['content-type'], 'text/html')
+
         self.create_object(
             prolis, '/v1/a/c/my.nexe', nexe, content_type='application/x-nexe')
-        req = Request.blank(
-            '/open/a/c/my.nexe?' + urlencode({'content_type': 'text/html'}))
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.body, '<html><body>Test this</body></html>')
-        self.assertEqual(res.headers['content-type'], 'text/html')
+
+        for ver in ['v1', 'open']:
+            url = '/%s/a/c/my.nexe?' % ver
+            req = Request.blank(
+                url + urlencode({'content_type': 'text/html'}))
+            if ver == 'v1':
+                req.headers['x-zerovm-execute'] = 'open/1.0'
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.body, '<html><body>Test this</body></html>')
+            self.assertEqual(res.headers['content-type'], 'text/html')
+
         conf = [
             {
                 'name': 'sort',
@@ -1155,11 +1167,17 @@ class TestProxyQuery(unittest.TestCase):
                                    % (prosrv.zerovm_registry_path,
                                       'application/octet-stream/config'),
                            conf, content_type='application/json')
-        req = Request.blank('/open/a/c/o')
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 200)
-        self.assertEqual(res.headers['content-type'], 'application/x-pickle')
-        self.assertEqual(res.body, self.get_sorted_numbers())
+
+        for ver in ['v1', 'open']:
+            url = '/%s/a/c/o' % ver
+            req = Request.blank(url)
+            if ver == 'v1':
+                req.headers['x-zerovm-execute'] = 'open/1.0'
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.headers['content-type'],
+                             'application/x-pickle')
+            self.assertEqual(res.body, self.get_sorted_numbers())
         self.check_container_integrity(prosrv, '/v1/a/c', {})
 
     def test_QUERY_use_image(self):
