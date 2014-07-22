@@ -844,10 +844,10 @@ class ObjectQueryMiddleware(object):
                     if not ch.get('lpath'):
                         if not chan_path or is_image_path(chan_path)\
                                 or is_swift_path(chan_path):
-                            return HTTPBadRequest(request=req,
-                                                  body='Could not resolve '
-                                                       'channel path: %s'
-                                                       % ch['path'])
+                            return HTTPBadRequest(
+                                request=req,
+                                body='Could not resolve channel path %s for '
+                                     'device: %s' % (ch['path'], ch['device']))
                 elif ch['access'] & ACCESS_WRITABLE:
                     writable_tmpdir = self.get_writable_tmpdir(device)
                     (output_fd, output_fn) = mkstemp(dir=writable_tmpdir)

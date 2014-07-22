@@ -2621,8 +2621,9 @@ class TestProxyQuery(unittest.TestCase):
             req.body = conf
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 400)
-            self.assertEqual(res.body, ('Could not resolve channel path: '
-                                        'swift://a/%s' % path) * 2)
+            self.assertEqual(res.body, ('Could not resolve channel path '
+                                        'swift://a/%s for device: stdin'
+                                        % path) * 2)
             self.assertEqual(res.headers['x-nexe-system'], 'sort,sort')
             self.assertEqual(res.headers['x-nexe-status'],
                              'ZeroVM did not run,ZeroVM did not run')
