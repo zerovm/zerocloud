@@ -1,11 +1,13 @@
-from eventlet import sleep, spawn, wsgi, listen, GreenPool
+from eventlet import spawn, wsgi, listen
 import mock
 from eventlet.green import os
 from tempfile import mkdtemp
 from shutil import rmtree
 from time import time
 import unittest
+
 import swift
+
 try:
     import simplejson as json
 except ImportError:
@@ -22,9 +24,11 @@ from swift.common import utils
 from swift.common import storage_policy
 from swift.common.storage_policy import StoragePolicy, \
     StoragePolicyCollection, POLICIES
-from test.unit import connect_tcp, readuntil2crlfs, fake_http_connect, trim, \
-    debug_logger, FakeMemcache, write_fake_ring, FakeRing
+from test.unit import debug_logger, FakeMemcache, write_fake_ring, FakeRing
 from zerocloud import queue
+
+_test_coros = _test_servers = _test_sockets = _orig_container_listing_limit = \
+    _testdir = _orig_SysLogHandler = _orig_POLICIES = _test_POLICIES = None
 
 
 class FakeMemcacheReturnsNone(FakeMemcache):
@@ -312,5 +316,6 @@ class TestQueue(unittest.TestCase):
         self.assertEqual(resp_data['claim_id'][-len(tail):], tail)
         resp = self.list_messages('test', echo=True)
         list_data = json.loads(resp.body)
+        print list_data
         # something strange here, works well on real Swift
         self.clear_queue('test')

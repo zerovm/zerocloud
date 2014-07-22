@@ -3217,8 +3217,9 @@ class TestProxyQuery(unittest.TestCase):
 
     def test_policy_config(self):
         conf = {'devices': _testdir, 'swift_dir': _testdir,
-                'mount_check': 'false', 'allowed_headers':
-            'content-encoding, x-object-manifest, content-disposition, foo',
+                'mount_check': 'false',
+                'allowed_headers': 'content-encoding, x-object-manifest, '
+                                   'content-disposition, foo',
                 'allow_versions': 'True',
                 'standalone_policies': 'one two three'}
         pqm = proxyquery.ProxyQueryMiddleware(None, conf,
