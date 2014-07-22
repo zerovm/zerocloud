@@ -24,6 +24,16 @@ differently:
 - any other `Content-Type` - [POST a script](#post-any-other-file) to
   be handled by some interpreter or shell executable.
 
+You can also add `X-Zerovm-Source` header to the POST request  
+The header accepts the following format:  
+`X-Zerovm-Source: <Swift Url>` (please see doc/Url.md on Swift Url format)  
+If `X-Zerovm-Source` was supplied the job description file, 
+image file or script file will be fetched from that url.
+And POST request payload can be attached to any readable (`stdin`, `input` or 
+`script`) channel instead.  
+Notice: the object that `X-Zerovm-Source` points to should have a 
+proper `Content-Type` set to get the behaviour described above.
+
 ### POST a job description
 
 This POST will work only if url path info is of the form:

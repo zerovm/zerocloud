@@ -3379,3 +3379,62 @@ class TestProxyQuery(unittest.TestCase):
         self.assertTrue(3 not in pqm.standalone_policies)
         self.assertEqual(pqm.logger.lines_dict['warning'][0],
                          'Could not load storage policy: three')
+
+    def test_sort_from_request(self):
+        self.setup_QUERY()
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/c/exe'},
+                'devices': [
+                    {'name': 'stdin'},
+                    {'name': 'stdout', 'path': 'swift://a/c/o2'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        prolis = _test_sockets[0]
+        req = self.zerovm_tar_request()
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            req.body_file = open(tar, 'rb')
+            req.content_length = os.path.getsize(tar)
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 400)
+            self.create_object(prolis, '/v1/a/c/myapp',
+                               open(tar, 'rb').read(),
+                               content_type='application/x-tar')
+            req = self.zerovm_request()
+            req.headers['x-zerovm-source'] = 'swift://a/c/myapp'
+            req.headers['content-type'] = 'application/x-pickle'
+            random_data = self.get_random_numbers()
+            data = StringIO(random_data)
+            req.body_file = data
+            req.content_length = len(random_data)
+            res = req.get_response(prosrv)
+            self.executed_successfully(res)
+            self.check_container_integrity(prosrv,
+                                           '/v1/a/c',
+                                           {
+                                               'o2': self.get_sorted_numbers(),
+                                               'myapp': open(tar, 'rb').read()
+                                           })
+        self.create_object(prolis, '/v1/a/c/sort.json',
+                           conf,
+                           content_type='application/json')
+        req = self.zerovm_request()
+        req.headers['x-zerovm-source'] = 'swift://a/c/sort.json'
+        req.headers['content-type'] = 'application/x-pickle'
+        random_data = self.get_random_numbers()
+        data = StringIO(random_data)
+        req.body_file = data
+        req.content_length = len(random_data)
+        res = req.get_response(prosrv)
+        self.executed_successfully(res)
+        self.check_container_integrity(prosrv,
+                                       '/v1/a/c',
+                                       {
+                                           'o2': self.get_sorted_numbers(),
+                                           'sort.json': conf
+                                       })

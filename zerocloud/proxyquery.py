@@ -5,6 +5,7 @@ import struct
 import traceback
 import time
 import datetime
+from urllib import unquote
 import uuid
 from hashlib import md5
 from random import randrange, choice
@@ -14,6 +15,7 @@ from eventlet.green import socket
 from eventlet.timeout import Timeout
 import zlib
 from swift.common.storage_policy import POLICIES
+from swift.common.wsgi import make_subrequest
 
 from swiftclient.client import quote
 
@@ -672,6 +674,20 @@ class ClusterController(ObjectController):
             conn.tar_stream = TarStream()
             pool.spawn(self._send_file, conn, req.path)
 
+    def _needs_request_data(self, node, req):
+        dev = None
+        for ch in node.channels:
+            if not ch.path and ch.device != 'image' \
+                    and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
+                    and not self.parser.is_sysimage_device(ch.device):
+                if dev:
+                    raise HTTPPreconditionFailed(
+                        request=req,
+                        body='Multiple readable devices without path: %s, '
+                             '%s' % (dev, ch.device))
+                dev = ch.device
+        return dev
+
     def _create_request_for_remote_object(self, data_sources, channel,
                                           req, nexe_headers, node):
         source_resp = None
@@ -792,17 +808,48 @@ class ClusterController(ObjectController):
                                   body='Must specify Content-Type')
         upload_expiration = time.time() + self.middleware.max_upload_time
         etag = md5()
-        req.bytes_transferred = 0
         path_list = [StringBuffer(CLUSTER_CONFIG_FILENAME),
                      StringBuffer(NODE_CONFIG_FILENAME)]
         rdata = req.environ['wsgi.input']
-        read_iter = iter(lambda: rdata.read(chunk_size), '')
+        req_iter = iter(lambda: rdata.read(chunk_size), '')
+        data_resp = None
+        source_header = req.headers.get('X-Zerovm-Source')
+        if source_header:
+            source_loc = parse_location(unquote(source_header))
+            if not is_swift_path(source_loc):
+                return HTTPPreconditionFailed(
+                    request=req,
+                    body='X-Zerovm-Source format is '
+                         'swift://account/container/object')
+            data_resp = Response(
+                app_iter=iter(lambda: rdata.read(chunk_size), ''),
+                headers={
+                    'Content-Length': req.headers['content-length'],
+                    'Content-Type': req.headers['content-type']})
+            data_resp.nodes = []
+            source_loc = expand_account_path(self.account_name, source_loc)
+            source_req = make_subrequest(req.environ, method='GET',
+                                         swift_source='zerocloud')
+            source_req.path_info = source_loc.path
+            sink_req = Request.blank(req.path_info,
+                                     environ=req.environ, headers=req.headers)
+            source_resp = source_req.get_response(self.app)
+            if not is_success(source_resp.status_int):
+                return source_resp
+            del sink_req.headers['X-Zerovm-Source']
+            sink_req.content_length = source_resp.content_length
+            sink_req.content_type = source_resp.headers['Content-Type']
+            sink_req.etag = source_resp.etag
+            req_iter = iter(source_resp.app_iter)
+            req = sink_req
+        req.bytes_transferred = 0
         orig_content_type = req.content_type
         if req.content_type in ['application/x-gzip']:
-            orig_iter = read_iter
-            read_iter = gunzip_iter(orig_iter,
+            read_iter = gunzip_iter(req_iter,
                                     chunk_size)
             req.content_type = TAR_MIMES[0]
+        else:
+            read_iter = req_iter
         if req.content_type in TAR_MIMES:
             # we must have Content-Length set for tar-based requests
             # as it will be impossible to stream them otherwise
@@ -1057,6 +1104,16 @@ class ClusterController(ObjectController):
                     repl_node.last_data = image_resp
                     image_resp.nodes.append({'node': repl_node,
                                              'dev': 'image'})
+            if data_resp:
+                dev = self._needs_request_data(node, req)
+                if dev:
+                    node.last_data = data_resp
+                    data_resp.nodes.append({'node': node,
+                                            'dev': dev})
+                    for repl_node in node.replicas:
+                        repl_node.last_data = data_resp
+                        data_resp.nodes.append({'node': repl_node,
+                                                'dev': dev})
             if not getattr(node, 'path_info', None):
                 node.path_info = path_info
             exec_request.node = node
@@ -1066,8 +1123,10 @@ class ClusterController(ObjectController):
                 exec_request.headers['x-zerovm-daemon'] = str(sock)
             exec_requests.append(exec_request)
 
-        if user_image:
+        if image_resp and image_resp.nodes:
             data_sources.append(image_resp)
+        if data_resp and data_resp.nodes:
+            data_sources.append(data_resp)
         tstream = TarStream()
         for data_src in data_sources:
             for n in data_src.nodes:
