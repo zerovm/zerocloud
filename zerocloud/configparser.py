@@ -311,7 +311,7 @@ class ClusterConfigParser(object):
                                                      path=new_path)
                                 new_node.store_wildcards(new_path, read_mask)
                         else:
-                            if node_count > 1:
+                            if node_count > 1 or read_group:
                                 for i in range(1, node_count + 1):
                                     new_node = self._get_or_create_node(
                                         zvm_node, index=i)
@@ -335,6 +335,7 @@ class ClusterConfigParser(object):
                                         new_node.add_channel(channel=chan,
                                                              path=new_loc)
                                 else:
+                                    read_group = True
                                     for i in range(1, node_count + 1):
                                         new_name = \
                                             _create_node_name(zvm_node.name, i)
@@ -379,7 +380,7 @@ class ClusterConfigParser(object):
                                 raise ClusterConfigParsingError(
                                     'Path is required for device: %s'
                                     % chan.device)
-                        if node_count > 1:
+                        if node_count > 1 or read_group:
                             for i in range(1, node_count + 1):
                                 new_node = self._get_or_create_node(
                                     zvm_node, index=i)
