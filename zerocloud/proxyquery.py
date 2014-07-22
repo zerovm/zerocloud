@@ -37,8 +37,9 @@ from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, \
     CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
     merge_headers, update_metadata, DEFAULT_EXE_SYSTEM_MAP, \
-    STREAM_CACHE_SIZE, ZvmChannel, parse_location, is_swift_path, \
-    is_image_path, can_run_as_daemon, SwiftPath, load_server_conf
+    STREAM_CACHE_SIZE, parse_location, is_swift_path, \
+    is_image_path, can_run_as_daemon, SwiftPath, load_server_conf, \
+    expand_account_path
 from zerocloud.configparser import ClusterConfigParser, \
     ClusterConfigParsingError
 from zerocloud.tarstream import StringBuffer, UntarStream, \
@@ -671,20 +672,8 @@ class ClusterController(ObjectController):
             conn.tar_stream = TarStream()
             pool.spawn(self._send_file, conn, req.path)
 
-    def _get_remote_objects(self, node):
-        channels = []
-        if is_swift_path(node.exe):
-            channels.append(ZvmChannel('boot', None, path=node.exe))
-        for ch in node.channels:
-            if is_swift_path(ch.path) \
-                    and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
-                    and not self.parser.is_sysimage_device(ch.device) \
-                    and ch.path.path != getattr(node, 'path_info', None):
-                channels.append(ch)
-        return channels
-
     def _create_request_for_remote_object(self, data_sources, channel,
-                                          exe_resp, req, nexe_headers, node):
+                                          req, nexe_headers, node):
         source_resp = None
         load_from = channel.path.path
         if is_swift_path(channel.path) and not channel.path.obj:
@@ -696,34 +685,31 @@ class ClusterController(ObjectController):
                 source_resp = resp
                 break
         if not source_resp:
-            if exe_resp and load_from == exe_resp.request.path_info:
-                source_resp = exe_resp
-            else:
-                source_req = req.copy_get()
-                source_req.path_info = load_from
-                if self.middleware.zerovm_uses_newest:
-                    source_req.headers['X-Newest'] = 'true'
-                if self.middleware.zerovm_prevalidate \
-                        and 'boot' in channel.device:
-                    source_req.headers['X-Zerovm-Valid'] = 'true'
-                acct, src_container_name, src_obj_name =\
-                    split_path(load_from, 1, 3, True)
-                container_info = self.container_info(acct, src_container_name)
-                source_req.acl = container_info['read_acl']
-                # left here for exec_acl support
-                # if 'boot' in ch.device:
-                #     source_req.acl = container_info['exec_acl']
-                source_resp = \
-                    ObjectController(self.app,
-                                     acct,
-                                     src_container_name,
-                                     src_obj_name).GET(source_req)
-                if source_resp.status_int >= 300:
-                    update_headers(source_resp, nexe_headers)
-                    source_resp.body = 'Error %s while fetching %s' \
-                                       % (source_resp.status,
-                                          source_req.path_info)
-                    return source_resp
+            source_req = req.copy_get()
+            source_req.path_info = load_from
+            if self.middleware.zerovm_uses_newest:
+                source_req.headers['X-Newest'] = 'true'
+            if self.middleware.zerovm_prevalidate \
+                    and 'boot' in channel.device:
+                source_req.headers['X-Zerovm-Valid'] = 'true'
+            acct, src_container_name, src_obj_name =\
+                split_path(load_from, 1, 3, True)
+            container_info = self.container_info(acct, src_container_name)
+            source_req.acl = container_info['read_acl']
+            # left here for exec_acl support
+            # if 'boot' in ch.device:
+            #     source_req.acl = container_info['exec_acl']
+            source_resp = \
+                ObjectController(self.app,
+                                 acct,
+                                 src_container_name,
+                                 src_obj_name).GET(source_req)
+            if source_resp.status_int >= 300:
+                update_headers(source_resp, nexe_headers)
+                source_resp.body = 'Error %s while fetching %s' \
+                                   % (source_resp.status,
+                                      source_req.path_info)
+                return source_resp
             source_resp.nodes = []
             data_sources.append(source_resp)
         node.last_data = source_resp
@@ -985,6 +971,9 @@ class ClusterController(ObjectController):
         #     print n.dumps(indent=2)
 
         data_sources = []
+        if exe_resp:
+            exe_resp.nodes = []
+            data_sources.append(exe_resp)
         addr = self._get_own_address()
         if not addr:
             return HTTPServiceUnavailable(
@@ -1051,11 +1040,10 @@ class ClusterController(ObjectController):
                 repl_node.copy_cgi_env(exec_request)
                 resp = repl_node.create_sysmap_resp()
                 repl_node.add_data_source(data_sources, resp, 'sysmap')
-            channels = self._get_remote_objects(node)
+            channels = self.parser.get_list_of_remote_objects(node)
             for ch in channels:
                 error = self._create_request_for_remote_object(data_sources,
                                                                ch,
-                                                               exe_resp,
                                                                req,
                                                                nexe_headers,
                                                                node)
