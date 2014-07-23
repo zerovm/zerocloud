@@ -1481,7 +1481,8 @@ class TestObjectQuery(unittest.TestCase):
             fd, name = mkstemp()
             self.assertEqual(resp.status_int, 400)
             self.assertEqual(
-                resp.body, 'Could not resolve channel path: bla-bla')
+                resp.body, 'Could not resolve channel path bla-bla for '
+                           'device: stdin')
 
     def test_QUERY_filter_factory(self):
         app = objectquery.filter_factory(self.conf)(FakeApp(self.conf))

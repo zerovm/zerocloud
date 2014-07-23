@@ -79,6 +79,15 @@ Only the following devices can be supplied without `path` property set
     If the device is a 'system image' it also does not have a path,
     its path is predefined in `zerovm_sysimage_devices` configuration directive
 
+    Devices `stdin`, `input` and `script` can be supplied without path in 
+    case where the `X-Zerovm-Source` header is used in request.
+    
+    If `X-Zerovm-Source` header is used the POST payload will be used as a 
+    channel payload for these devices. You cannot have multiple readable 
+    devices without a path. But the same POST payload can be sent to 
+    different job nodes if each one of then has one readable device with no 
+    path.
+    
 3. Path property `devices[i].path` can contain wild-card(s)  
 Asterisk `*` character must be used as wild-card  
 Any number of wild-cards is allowed in one path  

@@ -771,6 +771,18 @@ class ClusterConfigParser(object):
             if node.replicate == 0:
                 node.replicate = 1
 
+    def get_list_of_remote_objects(self, node):
+        channels = []
+        if is_swift_path(node.exe):
+            channels.append(ZvmChannel('boot', None, path=node.exe))
+        for ch in node.channels:
+            if is_swift_path(ch.path) \
+                    and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
+                    and not self.is_sysimage_device(ch.device) \
+                    and ch.path.path != getattr(node, 'path_info', None):
+                channels.append(ch)
+        return channels
+
 
 def _add_connected_device(devices, channel, zvm_node):
     if not devices.get(zvm_node.name, None):
