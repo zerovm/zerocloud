@@ -43,6 +43,8 @@ See below.
 
 `zerovm_daemons = ''` - list of json encoded job descriptions that will be used as daemon configs on the server startup. Format of the jobs is exactly as described in `Servlets.md`. The daemonized versions of the jobs will be lazy-loaded, i.e. no daemon will run until some user requests a job that matches one of the job configs passed in that variable.
 
+`zerovm_timeout = 10` - time to wait for ZeroVM session to end, in seconds
+
 ### objectquery middleware
 
 Configuration file: `object-server.conf`
@@ -60,7 +62,7 @@ Other configuration strings (default value after equals sign):
 
 `zerovm_maxqueue = 3` - maximum number of ZeroVM execution requests in queue, waiting for their run.
 
-`zerovm_timeout = 5` - timeout for each ZeroVM session, in seconds. Hypervisor process is terminated after timeout.
+`zerovm_timeout = 10` - timeout for ZeroVM session in pre-vaidation time, in seconds
 
 `zerovm_kill_timeout = 1` - if after termination signal ZeroVM hypervisor is not dead Zerocloud waits this amount of time in seconds and then issues a kill signal.
 

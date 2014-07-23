@@ -41,7 +41,7 @@ from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, \
     merge_headers, update_metadata, DEFAULT_EXE_SYSTEM_MAP, \
     STREAM_CACHE_SIZE, parse_location, is_swift_path, \
     is_image_path, can_run_as_daemon, SwiftPath, load_server_conf, \
-    expand_account_path
+    expand_account_path, TIMEOUT_GRACE
 from zerocloud.configparser import ClusterConfigParser, \
     ClusterConfigParsingError
 from zerocloud.tarstream import StringBuffer, UntarStream, \
@@ -366,9 +366,12 @@ class ProxyQueryMiddleware(object):
             self.logger = get_logger(conf, log_route='proxy-query')
         # let's load appropriate server config sections here
         load_server_conf(conf, ['app:proxy-server'])
-        self.node_timeout = int(conf.get('node_timeout', 10))
-        self.immediate_response_timeout = \
-            int(conf.get('interactive_timeout', self.node_timeout))
+        timeout = int(conf.get('zerovm_timeout',
+                               conf.get('node_timeout', 10)))
+        self.zerovm_timeout = timeout
+        self.node_timeout = timeout + (TIMEOUT_GRACE * 2)
+        self.immediate_response_timeout = float(conf.get(
+            'interactive_timeout', timeout)) + (TIMEOUT_GRACE * 2)
         self.ignore_replication = conf.get(
             'zerovm_ignore_replication', 'f').lower() in TRUE_VALUES
         # network chunk size for all network ops
@@ -376,7 +379,7 @@ class ProxyQueryMiddleware(object):
                                                65536))
         # max time to wait for upload to finish, used in POST requests
         self.max_upload_time = int(conf.get('max_upload_time', 86400))
-        self.client_timeout = int(conf.get('client_timeout', 60))
+        self.client_timeout = float(conf.get('client_timeout', 60))
         self.put_queue_depth = int(conf.get('put_queue_depth', 10))
         self.conn_timeout = float(conf.get('conn_timeout', 0.5))
         # header for "execute by POST"
@@ -627,6 +630,8 @@ class ClusterController(ObjectController):
                     str(policy_index)
             exec_request.path_info = node.path_info
             exec_request.headers['x-zerovm-access'] = node.access
+            exec_request.headers['x-zerovm-timeout'] = \
+                self.middleware.zerovm_timeout
             if node.replicate > 1:
                 container_info = self.container_info(account, container)
                 container_partition = container_info['partition']

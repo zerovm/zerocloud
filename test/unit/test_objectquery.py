@@ -1068,18 +1068,14 @@ class TestObjectQuery(unittest.TestCase):
         conf = json.dumps(conf, cls=NodeEncoder)
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
-            orig_timeout = self.app.parser_config['manifest']['Timeout']
-            try:
-                self.app.parser_config['manifest']['Timeout'] = 1
-                length = os.path.getsize(tar)
-                req.body_file = Input(open(tar, 'rb'), length)
-                req.content_length = length
-                resp = self.app.zerovm_query(req)
-                self.assertEqual(resp.status_int, 500)
-                self.assertIn(
-                    'ERROR OBJ.QUERY retcode=Output too long', resp.body)
-            finally:
-                self.app.parser_config['manifest']['Timeout'] = orig_timeout
+            length = os.path.getsize(tar)
+            req.body_file = Input(open(tar, 'rb'), length)
+            req.content_length = length
+            req.headers['x-zerovm-timeout'] = 1
+            resp = self.app.zerovm_query(req)
+            self.assertEqual(resp.status_int, 500)
+            self.assertIn(
+                'ERROR OBJ.QUERY retcode=Output too long', resp.body)
 
     def test_QUERY_zerovm_term_timeouts(self):
         self.setup_zerovm_query(trim(r'''
@@ -1098,14 +1094,10 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            orig_timeout = self.app.parser_config['manifest']['Timeout']
-            try:
-                self.app.parser_config['manifest']['Timeout'] = 1
-                resp = self.app.zerovm_query(req)
-                self.assertEquals(resp.status_int, 500)
-                self.assertIn('ERROR OBJ.QUERY retcode=Timed out', resp.body)
-            finally:
-                self.app.parser_config['manifest']['Timeout'] = orig_timeout
+            req.headers['x-zerovm-timeout'] = 1
+            resp = self.app.zerovm_query(req)
+            self.assertEquals(resp.status_int, 500)
+            self.assertIn('ERROR OBJ.QUERY retcode=Timed out', resp.body)
 
     def test_QUERY_zerovm_kill_timeouts(self):
         self.setup_zerovm_query(trim(r'''
@@ -1125,16 +1117,14 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            orig_timeout = self.app.parser_config['manifest']['Timeout']
             orig_kill_timeout = self.app.zerovm_kill_timeout
             try:
-                self.app.parser_config['manifest']['Timeout'] = 1
-                self.app.zerovm_kill_timeout = 1
+                self.app.zerovm_kill_timeout = 0.1
+                req.headers['x-zerovm-timeout'] = 1
                 resp = self.app.zerovm_query(req)
                 self.assertEquals(resp.status_int, 500)
                 self.assertIn('ERROR OBJ.QUERY retcode=Killed', resp.body)
             finally:
-                self.app.parser_config['manifest']['Timeout'] = orig_timeout
                 self.app.zerovm_kill_timeout = orig_kill_timeout
 
     def test_QUERY_simulteneous_running_zerovm_limits(self):
@@ -1149,9 +1139,7 @@ class TestObjectQuery(unittest.TestCase):
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
             orig_zerovm_threadpools = self.app.zerovm_thread_pools
-            orig_timeout = self.app.parser_config['manifest']['Timeout']
             try:
-                self.app.parser_config['manifest']['Timeout'] = 5
                 pool = GreenPool()
                 t = copy(r)
 
@@ -1160,6 +1148,7 @@ class TestObjectQuery(unittest.TestCase):
                         req[i] = self.zerovm_free_request()
                         req[i].body_file = Input(open(tar, 'rb'), length)
                         req[i].content_length = length
+                        req[i].headers['x-zerovm-timeout'] = 5
                     size = int(maxreq_factor * pool_factor * 5)
                     queue = int(maxreq_factor * queue_factor * 5)
                     self.app.zerovm_thread_pools[
@@ -1185,7 +1174,6 @@ class TestObjectQuery(unittest.TestCase):
                 make_requests_storm(0, 0.1)
 
             finally:
-                self.app.parser_config['manifest']['Timeout'] = orig_timeout
                 self.app.zerovm_thread_pools = orig_zerovm_threadpools
 
     def test_QUERY_max_input_size(self):

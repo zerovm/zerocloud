@@ -1,5 +1,4 @@
 from StringIO import StringIO
-from greenlet import GreenletExit
 import re
 import shutil
 import time
@@ -9,7 +8,6 @@ from contextlib import contextmanager
 from hashlib import md5
 from tempfile import mkstemp, mkdtemp
 
-from eventlet import sleep
 from eventlet.green import select, subprocess, os, socket
 from eventlet.timeout import Timeout
 from eventlet.green.httplib import HTTPResponse
@@ -39,7 +37,7 @@ from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, \
     ACCESS_WRITABLE, MD5HASH_LENGTH, parse_location, is_image_path, \
     ACCESS_NETWORK, ACCESS_RANDOM, REPORT_VALIDATOR, REPORT_RETCODE, \
     REPORT_ETAG, REPORT_CDR, REPORT_STATUS, SwiftPath, REPORT_LENGTH, \
-    REPORT_DAEMON, load_server_conf, is_swift_path
+    REPORT_DAEMON, load_server_conf, is_swift_path, TIMEOUT_GRACE
 from zerocloud.configparser import ClusterConfigParser
 from zerocloud.proxyquery import gunzip_iter
 
@@ -274,7 +272,7 @@ class ObjectQueryMiddleware(object):
                                conf.get('zerovm_exename', 'zerovm').split()
                                if i.strip()]
         # timeout for zerovm between TERM signal and KILL signal
-        self.zerovm_kill_timeout = int(conf.get('zerovm_kill_timeout', 1))
+        self.zerovm_kill_timeout = float(conf.get('zerovm_kill_timeout', 1))
         # maximum nexe binary size
         self.zerovm_maxnexe = int(conf.get('zerovm_maxnexe', 256 * 1048576))
         # run the middleware in debug mode
@@ -345,7 +343,7 @@ class ObjectQueryMiddleware(object):
                 # zerovm manifest version
                 'Version': conf.get('zerovm_manifest_ver', '20130611'),
                 # timeout for zerovm to finish execution
-                'Timeout': int(conf.get('zerovm_timeout', 5)),
+                'Timeout': int(conf.get('zerovm_timeout', 10)),
                 # max nexe memory size
                 'Memory': int(conf.get('zerovm_maxnexemem',
                                        4 * 1024 * 1048576))
@@ -367,11 +365,11 @@ class ObjectQueryMiddleware(object):
         return self._diskfile_mgr.get_diskfile(
             device, partition, account, container, obj, policy_idx, **kwargs)
 
-    def send_to_socket(self, sock, zerovm_inputmnfst):
+    def send_to_socket(self, sock, zerovm_inputmnfst, timeout):
         SIZE = 8
         size = '0x%06x' % len(zerovm_inputmnfst)
         try:
-            with Timeout(self.parser_config['manifest']['Timeout']):
+            with Timeout(timeout + TIMEOUT_GRACE):
                 sock.sendall(size + zerovm_inputmnfst)
                 try:
                     size = int(sock.recv(SIZE), 0)
@@ -390,7 +388,7 @@ class ObjectQueryMiddleware(object):
         finally:
             sock.close()
 
-    def execute_zerovm(self, zerovm_inputmnfst_fn, zerovm_args=None):
+    def execute_zerovm(self, zerovm_inputmnfst_fn, timeout, zerovm_args=None):
         """
         Executes zerovm in a subprocess
 
@@ -421,8 +419,7 @@ class ObjectQueryMiddleware(object):
 
         def read_from_std(readable, stdout_data, stderr_data):
             rlist, _junk, __junk = \
-                select.select(readable, [], [],
-                              self.parser_config['manifest']['Timeout'])
+                select.select(readable, [], [], timeout + TIMEOUT_GRACE)
             if rlist:
                 for stream in rlist:
                     data = self.os_interface.read(stream.fileno(), 4096)
@@ -439,7 +436,7 @@ class ObjectQueryMiddleware(object):
         stderr_data = ''
         readable = [proc.stdout, proc.stderr]
         try:
-            with Timeout(self.parser_config['manifest']['Timeout'] + 1):
+            with Timeout(timeout + TIMEOUT_GRACE):
                 start = time.time()
                 perf = ''
                 while len(readable) > 0:
@@ -493,12 +490,6 @@ class ObjectQueryMiddleware(object):
         finally:
             tar.close()
         return False
-
-    def _placeholder(self):
-        try:
-            sleep(self.parser_config['manifest']['Timeout'])
-        except GreenletExit:
-            return
 
     def _debug_init(self, req):
         trans_id = req.headers.get('x-trans-id', '-')
@@ -558,7 +549,7 @@ class ObjectQueryMiddleware(object):
 
     def _create_zerovm_thread(self, zerovm_inputmnfst, zerovm_inputmnfst_fd,
                               zerovm_inputmnfst_fn, zerovm_valid,
-                              thrdpool, job_id):
+                              thrdpool, job_id, timeout):
         while zerovm_inputmnfst:
             written = self.os_interface.write(zerovm_inputmnfst_fd,
                                               zerovm_inputmnfst)
@@ -567,7 +558,7 @@ class ObjectQueryMiddleware(object):
         if zerovm_valid:
             zerovm_args = ['-s']
         thrd = thrdpool.spawn(job_id, self.execute_zerovm,
-                              zerovm_inputmnfst_fn, zerovm_args)
+                              zerovm_inputmnfst_fn, timeout, zerovm_args)
         return thrd
 
     def _create_exec_error(self, nexe_headers, zerovm_retcode, zerovm_stdout):
@@ -861,7 +852,9 @@ class ObjectQueryMiddleware(object):
                             response_channels.insert(0, ch)
                 elif ch['access'] & ACCESS_NETWORK:
                     ch['lpath'] = chan_path.path
-
+            timeout = int(req.headers.get(
+                'x-zerovm-timeout',
+                self.parser.parser_config['manifest']['Timeout']))
             with tmpdir.mkstemp() as (zerovm_inputmnfst_fd,
                                       zerovm_inputmnfst_fn):
                 (output_fd, nvram_file) = mkstemp()
@@ -879,7 +872,7 @@ class ObjectQueryMiddleware(object):
                     try:
                         sock.connect(daemon_sock)
                         thrd = thrdpool.spawn(job_id, self.send_to_socket,
-                                              sock, zerovm_inputmnfst)
+                                              sock, zerovm_inputmnfst, timeout)
                     except IOError:
                         self._cleanup_daemon(daemon_sock)
                         sysimage_path = \
@@ -910,7 +903,8 @@ class ObjectQueryMiddleware(object):
                             zerovm_inputmnfst_fd,
                             zerovm_inputmnfst_fn,
                             zerovm_valid, thrdpool,
-                            job_id)
+                            job_id,
+                            timeout)
                         if thrd is None:
                             # something strange happened, let's log it
                             self.logger.warning('Slot not available after '
@@ -959,7 +953,7 @@ class ObjectQueryMiddleware(object):
                             thrd = thrdpool.spawn(job_id,
                                                   self.send_to_socket,
                                                   sock,
-                                                  zerovm_inputmnfst)
+                                                  zerovm_inputmnfst, timeout)
                         except IOError:
                             return HTTPInternalServerError(
                                 body='Cannot connect to daemon '
@@ -978,7 +972,8 @@ class ObjectQueryMiddleware(object):
                                                       zerovm_inputmnfst_fd,
                                                       zerovm_inputmnfst_fn,
                                                       zerovm_valid, thrdpool,
-                                                      job_id)
+                                                      job_id,
+                                                      timeout)
                 if thrd is None:
                     # something strange happened, let's log it
                     self.logger.warning('Slot not available after '
@@ -1267,6 +1262,7 @@ class ObjectQueryMiddleware(object):
                 )
                 with tmpdir.mkstemp() as (zerovm_inputmnfst_fd,
                                           zerovm_inputmnfst_fn):
+                    timeout = self.parser_config['manifest']['Timeout']
                     zerovm_inputmnfst = (
                         'Version=%s\n'
                         'Program=%s\n'
@@ -1278,7 +1274,7 @@ class ObjectQueryMiddleware(object):
                         % (
                             self.parser_config['manifest']['Version'],
                             disk_file.data_file,
-                            self.parser_config['manifest']['Timeout'],
+                            timeout,
                             self.parser_config['manifest']['Memory']
                         ))
                     while zerovm_inputmnfst:
@@ -1289,6 +1285,7 @@ class ObjectQueryMiddleware(object):
                     thrdpool = self.zerovm_thread_pools['default']
                     thrd = thrdpool.force_spawn(self.execute_zerovm,
                                                 zerovm_inputmnfst_fn,
+                                                timeout,
                                                 ['-F'])
                     (zerovm_retcode, zerovm_stdout, zerovm_stderr) = \
                         thrd.wait()
