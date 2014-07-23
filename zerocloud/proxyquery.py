@@ -797,9 +797,7 @@ class ClusterController(ObjectController):
         final_response.headers['Etag'] = etag.hexdigest()
         return final_response
 
-    @delay_denial
-    @cors_validation
-    def POST(self, req, exe_resp=None, cluster_config=''):
+    def post_job(self, req, exe_resp=None, cluster_config=''):
         image_resp = None
         user_image = False
         chunk_size = self.middleware.network_chunk_size
@@ -1502,6 +1500,31 @@ class ClusterController(ObjectController):
         ring = self.app.get_object_ring(container_info['storage_policy'])
         return ring.replica_count
 
+    @delay_denial
+    @cors_validation
+    def GET(self, req):
+        return HTTPNotImplemented(request=req)
+
+    @delay_denial
+    @cors_validation
+    def PUT(self, req):
+        return HTTPNotImplemented(request=req)
+
+    @delay_denial
+    @cors_validation
+    def DELETE(self, req):
+        return HTTPNotImplemented(request=req)
+
+    @delay_denial
+    @cors_validation
+    def HEAD(self, req):
+        return HTTPNotImplemented(request=req)
+
+    @delay_denial
+    @cors_validation
+    def POST(self, req):
+        return self.post_job(req)
+
 
 class RestController(ClusterController):
 
@@ -1593,27 +1616,27 @@ class RestController(ClusterController):
         exe_resp = None
         if obj_req.method in 'GET':
             exe_resp = obj_resp
-        method = super(RestController, self).POST
-        return method(post_req, exe_resp=exe_resp, cluster_config=config)
+        return self.post_job(post_req, exe_resp=exe_resp,
+                             cluster_config=config)
 
     @delay_denial
     @cors_validation
-    def POST(self, req, **kwargs):
+    def POST(self, req):
         return HTTPNotImplemented(request=req)
 
     @delay_denial
     @cors_validation
-    def PUT(self, req, **kwargs):
+    def PUT(self, req):
         return HTTPNotImplemented(request=req)
 
     @delay_denial
     @cors_validation
-    def DELETE(self, req, **kwargs):
+    def DELETE(self, req):
         return HTTPNotImplemented(request=req)
 
     @delay_denial
     @cors_validation
-    def HEAD(self, req, **kwargs):
+    def HEAD(self, req):
         return HTTPNotImplemented(request=req)
 
 

@@ -3438,3 +3438,19 @@ class TestProxyQuery(unittest.TestCase):
                                            'o2': self.get_sorted_numbers(),
                                            'sort.json': conf
                                        })
+
+    def test_invalid_methods(self):
+        prosrv = _test_servers[0]
+        for method in ['GET', 'HEAD', 'DELETE', 'PUT']:
+            req = self.zerovm_request()
+            req.body = ''
+            req.method = method
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 501)
+        for method in ['POST', 'HEAD', 'DELETE', 'PUT']:
+            req = self.zerovm_request()
+            req.body = ''
+            req.method = method
+            req.headers['x-zerovm-execute'] = 'open/1.0'
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 501)
