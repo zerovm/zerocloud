@@ -529,30 +529,33 @@ class ClusterConfigParser(object):
         return self.sysimage_devices.get(device_name, None)
 
     def prepare_for_daemon(self, config, nvram_file, zerovm_nexe,
-                           local_object, daemon_sock):
+                           local_object, daemon_sock, timeout=None):
         return self.prepare_zerovm_files(config, nvram_file,
                                          local_object=local_object,
                                          zerovm_nexe=zerovm_nexe,
                                          use_dev_self=False,
-                                         job=daemon_sock)
+                                         job=daemon_sock,
+                                         timeout=timeout)
 
-    def prepare_for_forked(self, config, nvram_file, local_object):
+    def prepare_for_forked(self, config, nvram_file, local_object,
+                           timeout=None):
         return self.prepare_zerovm_files(config, nvram_file,
                                          local_object=local_object,
                                          zerovm_nexe=None,
                                          use_dev_self=False,
-                                         job=None)
+                                         job=None, timeout=timeout)
 
     def prepare_for_standalone(self, config, nvram_file, zerovm_nexe,
-                               local_object):
+                               local_object, timeout=None):
         return self.prepare_zerovm_files(config, nvram_file,
                                          local_object=local_object,
                                          zerovm_nexe=zerovm_nexe,
                                          use_dev_self=True,
-                                         job=None)
+                                         job=None, timeout=timeout)
 
     def prepare_zerovm_files(self, config, nvram_file, local_object=None,
-                             zerovm_nexe=None, use_dev_self=True, job=None):
+                             zerovm_nexe=None, use_dev_self=True, job=None,
+                             timeout=None):
         """
         Prepares all the files needed for zerovm session run
 
@@ -565,6 +568,8 @@ class ClusterConfigParser(object):
 
         :returns zerovm manifest data as string
         """
+        if not timeout:
+            timeout = self.parser_config['manifest']['Timeout']
         zerovm_inputmnfst = (
             'Version=%s\n'
             'Program=%s\n'
@@ -573,7 +578,7 @@ class ClusterConfigParser(object):
             % (
                 self.parser_config['manifest']['Version'],
                 zerovm_nexe or '/dev/null',
-                self.parser_config['manifest']['Timeout'],
+                timeout,
                 self.parser_config['manifest']['Memory']
             ))
         if job:
