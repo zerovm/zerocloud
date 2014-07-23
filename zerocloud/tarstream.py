@@ -943,7 +943,7 @@ class StringBuffer:
 
 class TarStream(object):
 
-    errors = None
+    errors = 'strict'
 
     def __init__(self, tar_iter=None, path_list=None, chunk_size=65536,
                  format=DEFAULT_FORMAT, encoding=ENCODING, append=False):
@@ -968,7 +968,8 @@ class TarStream(object):
         else:
             self.data += buf
 
-    def create_tarinfo(self, path=None, ftype=None, name=None, size=None):
+    def create_tarinfo(self, path=None, ftype=None, name=None, size=None,
+                       headers=None):
         tarinfo = TarInfo()
         tarinfo.tarfile = None
         if path:
@@ -980,6 +981,8 @@ class TarStream(object):
             tarinfo.name = name
             tarinfo.size = size
         tarinfo.mtime = time.time()
+        if headers:
+            tarinfo.pax_headers = dict(headers)
         buf = tarinfo.tobuf(self.format, self.encoding, self.errors)
         return buf
 
