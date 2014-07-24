@@ -38,7 +38,7 @@ from swift.common import storage_policy
 from swift.common.storage_policy import StoragePolicy, \
     StoragePolicyCollection, POLICIES
 
-from zerocloud import proxyquery, objectquery
+from zerocloud import proxyquery, objectquery, chain
 from test.unit import connect_tcp, readuntil2crlfs, fake_http_connect, trim, \
     debug_logger, FakeMemcache, write_fake_ring, FakeRing
 from zerocloud.common import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
@@ -57,6 +57,7 @@ logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
 STATIC_TIME = time()
 _test_coros = _test_servers = _test_sockets = _orig_container_listing_limit = \
     _testdir = _orig_SysLogHandler = _orig_POLICIES = _test_POLICIES = None
+_pqm = None
 
 
 class FakeMemcacheReturnsNone(FakeMemcache):
@@ -71,7 +72,7 @@ def do_setup(the_object_server):
     utils.HASH_PATH_SUFFIX = 'endcap'
     global _testdir, _test_servers, _test_sockets, \
         _orig_container_listing_limit, _test_coros, _orig_SysLogHandler, \
-        _orig_POLICIES, _test_POLICIES
+        _orig_POLICIES, _test_POLICIES, _pqm
     _orig_POLICIES = storage_policy._POLICIES
     _orig_SysLogHandler = utils.SysLogHandler
     utils.SysLogHandler = mock.MagicMock()
@@ -153,8 +154,9 @@ def do_setup(the_object_server):
         conf, logger=debug_logger('obj2'))
     pqm = proxyquery.ProxyQueryMiddleware(prosrv, conf,
                                           logger=prosrv.logger)
+    cmdlwr = chain.ChainMiddleware(pqm, conf, logger=prosrv.logger)
     nl = NullLogger()
-    logging_prosv = proxy_logging.ProxyLoggingMiddleware(pqm, conf,
+    logging_prosv = proxy_logging.ProxyLoggingMiddleware(cmdlwr, conf,
                                                          logger=prosrv.logger)
     prospa = spawn(wsgi.server, prolis, logging_prosv, nl)
     acc1spa = spawn(wsgi.server, acc1lis, acc1srv, nl)
@@ -172,9 +174,10 @@ def do_setup(the_object_server):
     obj1spa = spawn(wsgi.server, obj1lis, oqm1, nl)
     obj2spa = spawn(wsgi.server, obj2lis, oqm2, nl)
     _test_servers = \
-        (pqm, acc1srv, acc2srv, cqm1, cqm2, oqm1, oqm2)
+        (logging_prosv, acc1srv, acc2srv, cqm1, cqm2, oqm1, oqm2)
     _test_coros = \
         (prospa, acc1spa, acc2spa, con1spa, con2spa, obj1spa, obj2spa)
+    _pqm = pqm
     # Create account
     ts = normalize_timestamp(time())
     partition, nodes = prosrv.account_ring.get_nodes('a')
@@ -276,6 +279,11 @@ class TestProxyQuery(unittest.TestCase):
                                      logger=debug_logger('proxy-ut'),
                                      account_ring=FakeRing(),
                                      container_ring=FakeRing())
+        self.pqm = proxyquery.ProxyQueryMiddleware(
+            self.proxy_app, {},
+            logger=self.proxy_app.logger,
+            object_ring=FakeRing(),
+            container_ring=FakeRing())
 
         self.zerovm_mock = None
 
@@ -454,17 +462,16 @@ class TestProxyQuery(unittest.TestCase):
 
     @contextmanager
     def add_sysimage_device(self, sysimage_path, name='sysimage1'):
-        prosrv = _test_servers[0]
         _con1srv = _test_servers[3]
         _con2srv = _test_servers[4]
         _obj1srv = _test_servers[5]
         _obj2srv = _test_servers[6]
-        zerovm_sysimage_devices = prosrv.zerovm_sysimage_devices
+        zerovm_sysimage_devices = _pqm.zerovm_sysimage_devices
         zerovm_sysimage_devices1 = _obj1srv.parser.sysimage_devices
         zerovm_sysimage_devices2 = _obj2srv.parser.sysimage_devices
         zerovm_sysimage_devices3 = _con1srv.parser.sysimage_devices
         zerovm_sysimage_devices4 = _con2srv.parser.sysimage_devices
-        prosrv.zerovm_sysimage_devices = {name: None}
+        _pqm.zerovm_sysimage_devices = {name: None}
         _con1srv.parser.sysimage_devices = {name: sysimage_path}
         _con2srv.parser.sysimage_devices = {name: sysimage_path}
         _obj1srv.parser.sysimage_devices = {name: sysimage_path}
@@ -472,7 +479,7 @@ class TestProxyQuery(unittest.TestCase):
         try:
             yield True
         finally:
-            prosrv.zerovm_sysimage_devices = zerovm_sysimage_devices
+            _pqm.zerovm_sysimage_devices = zerovm_sysimage_devices
             _obj1srv.parser.sysimage_devices = zerovm_sysimage_devices1
             _obj2srv.parser.sysimage_devices = zerovm_sysimage_devices2
             _con1srv.parser.sysimage_devices = zerovm_sysimage_devices3
@@ -507,6 +514,9 @@ class TestProxyQuery(unittest.TestCase):
             self.assertEqual(file_ts, cont_ts)
             self.assertEqual(str(f['bytes']), res.headers['content-length'])
             self.assertEqual(f['hash'], res.headers['etag'])
+            if res.app_iter:
+                for _ in res.app_iter:
+                    pass
         self.assertEqual(len(objdict), 0)
 
     def test_QUERY_name_service(self):
@@ -874,9 +884,9 @@ class TestProxyQuery(unittest.TestCase):
         self.assertEqual(res.body, 'hello, world')
         self.check_container_integrity(prosrv, '/v1/a/c', {})
         self.assertEqual(res.headers['X-Nexe-Policy'], 'zero')
-        _orig_policies = prosrv.standalone_policies
+        _orig_policies = _pqm.standalone_policies
         try:
-            prosrv.standalone_policies = [1]
+            _pqm.standalone_policies = [1]
             req = self.zerovm_request()
             req.body = conf
             res = req.get_response(prosrv)
@@ -885,7 +895,7 @@ class TestProxyQuery(unittest.TestCase):
             self.check_container_integrity(prosrv, '/v1/a/c', {})
             self.assertEqual(res.headers['X-Nexe-Policy'], 'one')
         finally:
-            prosrv.standalone_policies = _orig_policies
+            _pqm.standalone_policies = _orig_policies
 
     def test_QUERY_hello_stderr(self):
         self.setup_QUERY()
@@ -1162,9 +1172,10 @@ class TestProxyQuery(unittest.TestCase):
             }
         ]
         conf = json.dumps(conf)
-        self.create_container(prolis, '/v1/a/%s' % prosrv.zerovm_registry_path)
+        self.create_container(prolis, '/v1/a/%s' %
+                              self.pqm.zerovm_registry_path)
         self.create_object(prolis, '/v1/a/%s/%s'
-                                   % (prosrv.zerovm_registry_path,
+                                   % (self.pqm.zerovm_registry_path,
                                       'application/octet-stream/config'),
                            conf, content_type='application/json')
 
@@ -1539,8 +1550,8 @@ class TestProxyQuery(unittest.TestCase):
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        orig_timeout = prosrv.immediate_response_timeout
-        prosrv.immediate_response_timeout = 0.5
+        orig_timeout = _pqm.immediate_response_timeout
+        _pqm.immediate_response_timeout = 0.5
         nexe = trim(r'''
             from time import sleep
             sleep(1)
@@ -1591,14 +1602,14 @@ class TestProxyQuery(unittest.TestCase):
         except Exception:
             raised += 1
         self.assertEqual(raised, 0)
-        prosrv.immediate_response_timeout = orig_timeout
+        _pqm.immediate_response_timeout = orig_timeout
 
     def test_deferred_with_obj(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        orig_timeout = prosrv.immediate_response_timeout
-        prosrv.immediate_response_timeout = 0.5
+        orig_timeout = _pqm.immediate_response_timeout
+        _pqm.immediate_response_timeout = 0.5
         nexe = trim(r'''
             from time import sleep
             sleep(1)
@@ -1650,7 +1661,7 @@ class TestProxyQuery(unittest.TestCase):
         except Exception:
             raised += 1
         self.assertEqual(raised, 0)
-        prosrv.immediate_response_timeout = orig_timeout
+        _pqm.immediate_response_timeout = orig_timeout
 
     def test_QUERY_use_nvram(self):
         self.setup_QUERY()
@@ -2344,17 +2355,17 @@ class TestProxyQuery(unittest.TestCase):
                 return '1'
 
         prosrv = _test_servers[0]
-        orig_upload_time = prosrv.max_upload_time
+        orig_upload_time = _pqm.max_upload_time
         with save_globals():
             proxy_server.http_connect = \
                 fake_http_connect(200, 200, 201, 201, 201)
-            prosrv.max_upload_time = 1
+            _pqm.max_upload_time = 1
             req = self.zerovm_request()
             req.body_file = SlowFile()
             req.content_length = 100
             res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 408)
-        prosrv.max_upload_time = orig_upload_time
+        _pqm.max_upload_time = orig_upload_time
 
     def test_QUERY_invalid_etag(self):
         conf = [
@@ -2784,7 +2795,7 @@ class TestProxyQuery(unittest.TestCase):
             print res.status
             print res.headers
             print res.body
-        # controller = prosrv.get_controller('a', None, None)
+        # controller = _pqm.get_controller('a', None, None)
         # error = controller.parse_cluster_config(req, conf)
         # self.assertIsNone(error)
         # self.assertEqual(len(controller.nodes), 8)
@@ -2990,11 +3001,11 @@ class TestProxyQuery(unittest.TestCase):
                            self.get_random_numbers())
         mapper_count = 4
         reducer_count = 4
-        orig_network_type = prosrv.network_type
-        orig_repl = prosrv.ignore_replication
+        orig_network_type = _pqm.network_type
+        orig_repl = _pqm.ignore_replication
         try:
-            prosrv.network_type = 'opaque'
-            prosrv.ignore_replication = True
+            _pqm.network_type = 'opaque'
+            _pqm.ignore_replication = True
             nexe = trim(r'''
                 return open(mnfst.nvram['path']).read()
                 ''')
@@ -3098,8 +3109,8 @@ class TestProxyQuery(unittest.TestCase):
                 con_list = red_out.findall(res.body)
                 self.assertEqual(len(con_list), 0)
         finally:
-            prosrv.network_type = orig_network_type
-            prosrv.ignore_replication = orig_repl
+            _pqm.network_type = orig_network_type
+            _pqm.ignore_replication = orig_repl
 
     def test_container_query(self):
         self.setup_QUERY()
@@ -3259,8 +3270,8 @@ class TestProxyQuery(unittest.TestCase):
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
-        if hasattr(prosrv.app, 'strict_cors_mode'):
-            self.assertTrue(prosrv.app.strict_cors_mode)
+        if hasattr(_pqm.app, 'strict_cors_mode'):
+            self.assertTrue(_pqm.app.strict_cors_mode)
         nexe = trim(r'''
             return 'hello, world'
             ''')
@@ -3284,7 +3295,7 @@ class TestProxyQuery(unittest.TestCase):
         # Uncomment it when tested on Swift > 1.13.1
         # the bug with strict_cors_mode is fixed in current trunk
         # try:
-        #     prosrv.app.strict_cors_mode = False
+        #     _pqm.app.strict_cors_mode = False
         #     req = self.zerovm_request()
         #     req.body = conf
         #     req.headers['origin'] = 'http://example.com'
@@ -3297,7 +3308,7 @@ class TestProxyQuery(unittest.TestCase):
         #     self.assertIn('Access-Control-Expose-Headers', res.headers)
         #     self.check_container_integrity(prosrv, '/v1/a/c', {})
         # finally:
-        #     prosrv.app.strict_cors_mode = True
+        #     _pqm.app.strict_cors_mode = True
 
     def test_min_size(self):
         self.setup_QUERY()
@@ -3454,6 +3465,126 @@ class TestProxyQuery(unittest.TestCase):
             req.headers['x-zerovm-execute'] = 'open/1.0'
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 501)
+
+    def test_job_chain(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe = trim(r'''
+            import json
+            conf = [
+                {
+                    'name': 'http',
+                    'exec': {'path': 'swift://a/c/exe2'},
+                    'file_list': [
+                        {
+                            'device': 'stdout',
+                            'content_type': 'message/http'
+                        }
+                    ]
+                }
+            ]
+            out = json.dumps(conf)
+            resp = '\n'.join([
+                'HTTP/1.1 200 OK',
+                'Content-Type: application/json',
+                'X-Zerovm-Execute: 1.0',
+                '', ''
+                ])
+            return resp + out
+            ''')
+        self.create_object(prolis, '/v1/a/c/chainer', nexe)
+        nexe = trim(r'''
+            resp = '\n'.join([
+                'HTTP/1.1 200 OK',
+                'Content-Type: text/html',
+                'X-Object-Meta-Key1: value1',
+                'X-Object-Meta-Key2: value2',
+                '', ''
+                ])
+            out = '<html><body>Test this</body></html>'
+            return resp + out
+            ''')
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        conf = [
+            {
+                'name': 'http',
+                'exec': {'path': 'swift://a/c/chainer'},
+                'file_list': [
+                    {
+                        'device': 'stdout',
+                        'content_type': 'message/http'
+                    }
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.headers['content-type'], 'text/html')
+        self.assertEqual(res.headers['x-object-meta-key1'], 'value1')
+        self.assertEqual(res.headers['x-object-meta-key2'], 'value2')
+        self.assertEqual(res.body, '<html><body>Test this</body></html>')
+        self.check_container_integrity(prosrv, '/v1/a/c', {})
+
+    def test_job_chain_timeout(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe = trim(r'''
+            import json
+            conf = [
+                {
+                    'name': 'http',
+                    'exec': {'path': 'swift://a/c/chainer'},
+                    'file_list': [
+                        {
+                            'device': 'stdout',
+                            'content_type': 'message/http'
+                        }
+                    ]
+                }
+            ]
+            out = json.dumps(conf)
+            resp = '\n'.join([
+                'HTTP/1.1 200 OK',
+                'Content-Type: application/json',
+                'X-Zerovm-Execute: 1.0',
+                '', ''
+                ])
+            sleep(0.3)
+            return resp + out
+            ''')
+        self.create_object(prolis, '/v1/a/c/chainer', nexe)
+        conf = [
+            {
+                'name': 'http',
+                'exec': {'path': 'swift://a/c/chainer'},
+                'file_list': [
+                    {
+                        'device': 'stdout',
+                        'content_type': 'message/http'
+                    }
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        _orig_chain_timeout = prosrv.app.chain_timeout
+        try:
+            prosrv.app.chain_timeout = 1
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.headers['content-type'], 'application/json')
+            self.assertEqual(res.body, conf)
+            self.assertTrue(res.headers['x-chain-total-time'] >
+                            prosrv.app.chain_timeout)
+            self.check_container_integrity(prosrv, '/v1/a/c', {})
+        finally:
+            prosrv.app.chain_timeout = _orig_chain_timeout
 
     def test_setting_nexe_headers(self):
         self.setup_QUERY()

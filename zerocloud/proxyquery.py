@@ -50,6 +50,8 @@ from zerocloud.tarstream import StringBuffer, UntarStream, \
     TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile, Path, ReadError
 from zerocloud.thread_pool import Zuid
 
+ZEROVM_COMMANDS = ['open']
+ZEROVM_EXECUTE = 'x-zerovm-execute'
 
 try:
     import simplejson as json
@@ -117,6 +119,11 @@ def check_headers_metadata(new_req, headers, target_type, req, add_all=False):
                 body='Total metadata too large; max %d'
                      % MAX_META_OVERALL_SIZE,
                 request=req, content_type='text/plain')
+
+
+def is_zerocloud_request(version, account, headers):
+    return account and (ZEROVM_EXECUTE in headers or version in
+                        ZEROVM_COMMANDS)
 
 
 class GreenPileEx(GreenPile):
@@ -427,8 +434,6 @@ class ProxyQueryMiddleware(object):
         self.client_timeout = float(conf.get('client_timeout', 60))
         self.put_queue_depth = int(conf.get('put_queue_depth', 10))
         self.conn_timeout = float(conf.get('conn_timeout', 0.5))
-        # header for "execute by POST"
-        self.zerovm_execute = 'x-zerovm-execute'
         # execution engine version
         self.zerovm_execute_ver = '1.0'
         # maximum size of a system map file
@@ -466,13 +471,6 @@ class ProxyQueryMiddleware(object):
         self.zerovm_sysimage_devices = dict(devs)
         # GET support: container for content-type association storage
         self.zerovm_registry_path = '.zvm'
-        # GET support: API version for "open" command
-        self.zerovm_open_version = 'open'
-        # GET support: API version for "open with" command
-        self.zerovm_openwith_version = 'open-with'
-        # GET support: allowed commands
-        self.zerovm_allowed_commands = [self.zerovm_open_version,
-                                        self.zerovm_openwith_version]
         # GET support: cache config files for this amount of seconds
         self.zerovm_cache_config_timeout = 60
         self.parser_config = {
@@ -523,18 +521,12 @@ class ProxyQueryMiddleware(object):
     def __call__(self, req):
         try:
             version, account, container, obj = split_path(req.path, 1, 4, True)
-            path_parts = dict(version=version,
-                              account_name=account,
-                              container_name=container,
-                              object_name=obj)
         except ValueError:
             return HTTPNotFound(request=req)
-        if account and \
-                (self.zerovm_execute in req.headers
-                 or version in self.zerovm_allowed_commands):
+        if is_zerocloud_request(version, account, req.headers):
             exec_ver = '%s/%s' % (version, self.zerovm_execute_ver)
-            exec_header_ver = req.headers.get(self.zerovm_execute, exec_ver)
-            req.headers[self.zerovm_execute] = exec_header_ver
+            exec_header_ver = req.headers.get(ZEROVM_EXECUTE, exec_ver)
+            req.headers[ZEROVM_EXECUTE] = exec_header_ver
             if req.content_length and req.content_length < 0:
                 return HTTPBadRequest(request=req,
                                       body='Invalid Content-Length')
@@ -552,7 +544,7 @@ class ProxyQueryMiddleware(object):
             req.headers['x-trans-id'] = req.environ['swift.trans_id']
             controller.trans_id = req.environ['swift.trans_id']
             self.logger.client_ip = get_remote_client(req)
-            if path_parts['version']:
+            if version:
                 req.path_info_pop()
             try:
                 handler = getattr(controller, req.method)
