@@ -1035,15 +1035,12 @@ class ObjectQueryMiddleware(object):
                                        chunk_size=self.network_chunk_size)
                 resp_size = 0
                 immediate_responses = []
-                send_config = False
                 for ch in response_channels:
                     headers = HeaderKeyDict()
                     if ch['content_type'].startswith('message/http'):
                         headers = self._read_cgi_response(ch, nph=True)
-                        send_config = True
                     elif ch['content_type'].startswith('message/cgi'):
                         headers = self._read_cgi_response(ch, nph=False)
-                        send_config = True
                     else:
                         ch['size'] = \
                             self.os_interface.path.getsize(ch['lpath'])
@@ -1080,37 +1077,8 @@ class ObjectQueryMiddleware(object):
                         device, policy_idx)
                     if error:
                         return error
-                sysmap_info = ''
-                sysmap_dump = ''
-                if send_config:
-                    sysmap = config.copy()
-                    sysmap['channels'] = []
-                    for ch in config['channels']:
-                        ch = ch.copy()
-                        ch.pop('size', None)
-                        ch.pop('info', None)
-                        ch.pop('lpath', None)
-                        ch.pop('offset', None)
-                        sysmap['channels'].append(ch)
-                    sysmap_dump = json.dumps(sysmap)
-                    sysmap_info = \
-                        tar_stream.create_tarinfo(ftype=REGTYPE,
-                                                  name='sysmap',
-                                                  size=len(sysmap_dump))
-                    resp_size += len(sysmap_info) + \
-                        TarStream.get_archive_size(len(sysmap_dump))
 
                 def resp_iter(channels, chunk_size):
-                    if send_config:
-                        for chunk in tar_stream.serve_chunk(sysmap_info):
-                            yield chunk
-                        for chunk in tar_stream.serve_chunk(sysmap_dump):
-                            yield chunk
-                        blocks, remainder = divmod(len(sysmap_dump), BLOCKSIZE)
-                        if remainder > 0:
-                            nulls = NUL * (BLOCKSIZE - remainder)
-                            for chunk in tar_stream.serve_chunk(nulls):
-                                yield chunk
                     for ch in channels:
                         fp = open(ch['lpath'], 'rb')
                         if ch.get('offset', None):

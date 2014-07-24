@@ -393,6 +393,16 @@ class TarInfo(object):
 
         return buf + self._create_header(info, USTAR_FORMAT)
 
+    def get_headers(self):
+        headers = {}
+        for key, value in self.pax_headers.items():
+            if isinstance(key, unicode):
+                key = key.encode('utf-8')
+            if isinstance(value, unicode):
+                value = value.encode('utf-8')
+            headers[key.title()] = value
+        return headers
+
     @classmethod
     def create_pax_global_header(cls, pax_headers):
         """Return the object as a pax global header block sequence.

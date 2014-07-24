@@ -1,10 +1,10 @@
 from copy import deepcopy
 import re
 from hashlib import md5
-from swift.common.constraints import MAX_META_NAME_LENGTH, \
-    MAX_META_VALUE_LENGTH, MAX_META_COUNT, MAX_META_OVERALL_SIZE
+
 from swift.common.swob import Response
 from swift.common.utils import split_path, readconf
+
 
 try:
     import simplejson as json
@@ -130,26 +130,6 @@ def has_control_chars(line):
         if re.search(r"[\x01-\x1F\x7F]", line):
             return True
     return False
-
-
-def update_metadata(request, meta_data, prefix='x-object-meta-%s'):
-    if not meta_data:
-        return None
-    meta_count = 0
-    meta_size = 0
-    for key, value in meta_data.iteritems():
-        key = prefix % key
-        meta_count += 1
-        meta_size += len(key) + len(value)
-        if len(key) > MAX_META_NAME_LENGTH:
-            return 'Metadata name too long; max %d' % MAX_META_NAME_LENGTH
-        elif len(value) > MAX_META_VALUE_LENGTH:
-            return 'Metadata value too long; max %d' % MAX_META_VALUE_LENGTH
-        elif meta_count > MAX_META_COUNT:
-            return 'Too many metadata items; max %d' % MAX_META_COUNT
-        elif meta_size > MAX_META_OVERALL_SIZE:
-            return 'Total metadata too large; max %d' % MAX_META_OVERALL_SIZE
-        request.headers[key] = value
 
 
 def can_run_as_daemon(node_conf, daemon_conf):

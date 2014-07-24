@@ -30,7 +30,9 @@ from swift.proxy.server import ObjectController, ContainerController, \
     AccountController
 from swift.common.bufferedhttp import http_connect
 from swift.common.exceptions import ConnectionTimeout, ChunkReadTimeout
-from swift.common.constraints import check_utf8, MAX_FILE_SIZE
+from swift.common.constraints import check_utf8, MAX_FILE_SIZE, MAX_HEADER_SIZE, \
+    MAX_META_NAME_LENGTH, MAX_META_VALUE_LENGTH, MAX_META_COUNT, \
+    MAX_META_OVERALL_SIZE
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
@@ -38,7 +40,7 @@ from swift.common.swob import Request, Response, HTTPNotFound, \
 from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, \
     CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
-    merge_headers, update_metadata, DEFAULT_EXE_SYSTEM_MAP, \
+    merge_headers, DEFAULT_EXE_SYSTEM_MAP, \
     STREAM_CACHE_SIZE, parse_location, is_swift_path, \
     is_image_path, can_run_as_daemon, SwiftPath, load_server_conf, \
     expand_account_path, TIMEOUT_GRACE
@@ -72,6 +74,44 @@ def _req_content_type_property():
                     doc="Retrieve and set the request Content-Type header")
 
 Request.content_type = _req_content_type_property()
+
+
+def check_headers_metadata(new_req, headers, target_type, req):
+    prefix = 'x-%s-meta-' % target_type.lower()
+    meta_count = 0
+    meta_size = 0
+    for key, value in headers.iteritems():
+        if isinstance(value, basestring) and len(value) > MAX_HEADER_SIZE:
+            raise HTTPBadRequest(body='Header value too long: %s' %
+                                      key[:MAX_META_NAME_LENGTH],
+                                 request=req, content_type='text/plain')
+        if not key.lower().startswith(prefix):
+            continue
+        new_req.headers[key] = value
+        key = key[len(prefix):]
+        if not key:
+            raise HTTPBadRequest(body='Metadata name cannot be empty',
+                                 request=req, content_type='text/plain')
+        meta_count += 1
+        meta_size += len(key) + len(value)
+        if len(key) > MAX_META_NAME_LENGTH:
+            raise HTTPBadRequest(
+                body='Metadata name too long: %s%s' % (prefix, key),
+                request=req, content_type='text/plain')
+        elif len(value) > MAX_META_VALUE_LENGTH:
+            raise HTTPBadRequest(
+                body='Metadata value longer than %d: %s%s' % (
+                    MAX_META_VALUE_LENGTH, prefix, key),
+                request=req, content_type='text/plain')
+        elif meta_count > MAX_META_COUNT:
+            raise HTTPBadRequest(
+                body='Too many metadata items; max %d' % MAX_META_COUNT,
+                request=req, content_type='text/plain')
+        elif meta_size > MAX_META_OVERALL_SIZE:
+            raise HTTPBadRequest(
+                body='Total metadata too large; max %d'
+                     % MAX_META_OVERALL_SIZE,
+                request=req, content_type='text/plain')
 
 
 class GreenPileEx(GreenPile):
@@ -1321,12 +1361,7 @@ class ClusterController(ObjectController):
             untar_stream.update_buffer(data)
             info = untar_stream.get_next_tarinfo()
             while info:
-                if 'sysmap' == info.name:
-                    untar_stream.to_write = info.size
-                    untar_stream.offset_data = info.offset_data
-                    _load_channel_data(node, ExtractedFile(untar_stream))
-                    info = untar_stream.get_next_tarinfo()
-                    continue
+                headers = info.get_headers()
                 chan = node.get_channel(device=info.name)
                 if not chan:
                     conn.error = 'Channel name %s not found' % info.name
@@ -1337,23 +1372,23 @@ class ClusterController(ObjectController):
                         cache=[untar_stream.block[info.offset_data:]],
                         total_size=info.size))
                     resp.app_iter = app_iter
-                    resp.content_length = info.size
-                    resp.content_type = chan.content_type
+                    resp.content_length = headers['Content-Length']
+                    resp.content_type = headers['Content-Type']
+                    check_headers_metadata(resp, headers, 'object', request)
+                    if headers.get('Status'):
+                        resp.headers['status'] = headers['Status']
                     return conn
                 dest_req = Request.blank(chan.path.path,
                                          environ=request.environ,
                                          headers=request.headers)
                 dest_req.path_info = chan.path.path
                 dest_req.method = 'PUT'
-                dest_req.headers['content-length'] = info.size
+                dest_req.headers['content-length'] = headers['Content-Length']
                 untar_stream.to_write = info.size
                 untar_stream.offset_data = info.offset_data
                 dest_req.environ['wsgi.input'] = ExtractedFile(untar_stream)
-                dest_req.content_type = chan.content_type
-                error = update_metadata(dest_req, chan.meta)
-                if error:
-                    conn.error = error
-                    return conn
+                dest_req.content_type = headers['Content-Type']
+                check_headers_metadata(dest_req, headers, 'object', request)
                 dest_resp = \
                     ObjectController(self.app,
                                      chan.path.account,
