@@ -108,19 +108,17 @@ RE_ILLEGAL = u'([\u0000-\u0008\u000b-\u000c\u000e-\u001f\ufffe-\uffff])' + \
 TIMEOUT_GRACE = 0.5
 
 
-def merge_headers(current, new):
-    if hasattr(new, 'keys'):
-        for key in new.keys():
-            if not current[key.lower()]:
-                current[key.lower()] = str(new[key])
-            else:
-                current[key.lower()] += ',' + str(new[key])
-    else:
-        for key, value in new:
-            if not current[key.lower()]:
-                current[key.lower()] = str(value)
-            else:
-                current[key.lower()] += ',' + str(value)
+def merge_headers(final, mergeable, new):
+    key_list = mergeable.keys()
+    for key in key_list:
+        mergeable[key] = new.get(key, mergeable[key])
+        if not final.get(key):
+            final[key] = str(mergeable[key])
+        else:
+            final[key] += ',' + str(mergeable[key])
+    for key in new.keys():
+        if key not in key_list:
+            final[key] = new[key]
 
 
 def has_control_chars(line):

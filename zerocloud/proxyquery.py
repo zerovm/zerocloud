@@ -36,7 +36,7 @@ from swift.common.constraints import check_utf8, MAX_FILE_SIZE, MAX_HEADER_SIZE,
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
-    HTTPClientDisconnect, wsgify, HTTPNotImplemented
+    HTTPClientDisconnect, wsgify, HTTPNotImplemented, HeaderKeyDict
 from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, \
     CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
@@ -55,6 +55,8 @@ try:
     import simplejson as json
 except ImportError:
     import json
+
+STRIP_PAX_HEADERS = ['mtime']
 
 
 # Monkey patching Request to support content_type property properly
@@ -76,7 +78,7 @@ def _req_content_type_property():
 Request.content_type = _req_content_type_property()
 
 
-def check_headers_metadata(new_req, headers, target_type, req):
+def check_headers_metadata(new_req, headers, target_type, req, add_all=False):
     prefix = 'x-%s-meta-' % target_type.lower()
     meta_count = 0
     meta_size = 0
@@ -86,6 +88,8 @@ def check_headers_metadata(new_req, headers, target_type, req):
                                       key[:MAX_META_NAME_LENGTH],
                                  request=req, content_type='text/plain')
         if not key.lower().startswith(prefix):
+            if add_all and key.lower() not in STRIP_PAX_HEADERS:
+                new_req.headers[key] = value
             continue
         new_req.headers[key] = value
         key = key[len(prefix):]
@@ -789,28 +793,23 @@ class ClusterController(ObjectController):
         req.cdr_log = []
         for conn in conns:
             resp = conn.resp
-            got_nexe_header = False
-            if resp:
-                for key in conn.nexe_headers.keys():
-                    if resp.headers.get(key):
-                        got_nexe_header = True
-                        conn.nexe_headers[key] = resp.headers.get(key)
             if conn.error:
                 conn.nexe_headers['x-nexe-error'] = \
                     conn.error.replace('\n', '')
                 if conn.resp.status_int > final_response.status_int:
                     final_response.status = conn.resp.status
-            else:
-                if is_success(resp.status_int) and not got_nexe_header:
-                    # looks like the middleware is not installed
-                    # or not functioning otherwise we should get something
-                    return HTTPServiceUnavailable(
-                        request=req,
-                        headers=resp.headers,
-                        body='objectquery middleware is not installed '
-                             'or not functioning')
+            merge_headers(final_response.headers, conn.nexe_headers,
+                          resp.headers)
             self._store_accounting_data(req, conn)
-            merge_headers(final_response.headers, conn.nexe_headers)
+            if is_success(resp.status_int) and 'x-nexe-status' not in \
+                    resp.headers:
+                # looks like the middleware is not installed
+                # or not functioning otherwise we should get something
+                return HTTPServiceUnavailable(
+                    request=req,
+                    headers=resp.headers,
+                    body='objectquery middleware is not installed '
+                         'or not functioning')
             if resp and resp.headers.get('x-zerovm-daemon', None):
                 final_response.headers['x-nexe-cached'] = 'true'
             if resp and resp.content_length > 0:
@@ -1081,7 +1080,7 @@ class ClusterController(ObjectController):
                 return HTTPServiceUnavailable(body='Cannot bind name service')
         exec_requests = []
         for node in self.parser.node_list:
-            nexe_headers = {
+            nexe_headers = HeaderKeyDict({
                 'x-nexe-system': node.name,
                 'x-nexe-status': 'ZeroVM did not run',
                 'x-nexe-retcode': 0,
@@ -1089,7 +1088,7 @@ class ClusterController(ObjectController):
                 'x-nexe-validation': 0,
                 'x-nexe-cdr-line': '0.0 0.0 0 0 0 0 0 0 0 0',
                 'x-nexe-policy': ''
-            }
+            })
             path_info = req.path_info
             exec_request = Request.blank(path_info,
                                          environ=req.environ,
@@ -1345,7 +1344,7 @@ class ClusterController(ObjectController):
 
     def process_server_response(self, conn, request, resp):
         conn.resp = resp
-        if resp.status_int >= 300:
+        if not is_success(resp.status_int):
             conn.error = resp.body
             return conn
         if resp.content_length == 0:
@@ -1374,9 +1373,8 @@ class ClusterController(ObjectController):
                     resp.app_iter = app_iter
                     resp.content_length = headers['Content-Length']
                     resp.content_type = headers['Content-Type']
-                    check_headers_metadata(resp, headers, 'object', request)
-                    if headers.get('Status'):
-                        resp.headers['status'] = headers['Status']
+                    check_headers_metadata(resp, headers, 'object', request,
+                                           add_all=True)
                     return conn
                 dest_req = Request.blank(chan.path.path,
                                          environ=request.environ,

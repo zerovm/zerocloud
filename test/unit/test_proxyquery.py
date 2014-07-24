@@ -997,8 +997,8 @@ class TestProxyQuery(unittest.TestCase):
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.headers['content-type'], 'text/html')
-        self.assertNotIn('x-object-meta-key1', res.headers)
-        self.assertNotIn('x-object-meta-key2', res.headers)
+        self.assertEqual(res.headers['x-object-meta-key1'], 'value1')
+        self.assertEqual(res.headers['x-object-meta-key2'], 'value2')
         self.assertEqual(res.body, '<html><body>Test this</body></html>')
         self.check_container_integrity(prosrv, '/v1/a/c', {})
 
