@@ -575,6 +575,7 @@ class ProxyQueryMiddleware(object):
             # each request is assigned a unique k-sorted id
             # it will be used by QoS code to assign slots/priority
             req.headers['x-zerocloud-id'] = self.uid_generator.get()
+            req.headers['x-zerovm-timeout'] = self.zerovm_timeout
             res = handler(req)
             perf = time.time() - start_time
             if 'x-nexe-cdr-line' in res.headers:
@@ -675,8 +676,6 @@ class ClusterController(ObjectController):
                     str(policy_index)
             exec_request.path_info = node.path_info
             exec_request.headers['x-zerovm-access'] = node.access
-            exec_request.headers['x-zerovm-timeout'] = \
-                self.middleware.zerovm_timeout
             if node.replicate > 1:
                 container_info = self.container_info(account, container)
                 container_partition = container_info['partition']
