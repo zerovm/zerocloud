@@ -42,7 +42,7 @@ from zerocloud.configparser import ClusterConfigParser
 from zerocloud.proxyquery import gunzip_iter
 
 from zerocloud.tarstream import UntarStream, TarStream, \
-    REGTYPE, BLOCKSIZE, NUL
+    REGTYPE, BLOCKSIZE, NUL, PAX_FORMAT
 import zerocloud.thread_pool as zpool
 
 try:
@@ -1031,25 +1031,26 @@ class ObjectQueryMiddleware(object):
                 if daemon_status == 1:
                     response.headers['x-zerovm-daemon'] = \
                         req.headers.get('x-zerovm-daemon', None)
-                tar_stream = TarStream()
+                tar_stream = TarStream(format=PAX_FORMAT, encoding='utf-8',
+                                       chunk_size=self.network_chunk_size)
                 resp_size = 0
                 immediate_responses = []
-                send_config = False
                 for ch in response_channels:
+                    headers = HeaderKeyDict()
                     if ch['content_type'].startswith('message/http'):
-                        self._read_cgi_response(ch, nph=True)
-                        send_config = True
+                        headers = self._read_cgi_response(ch, nph=True)
                     elif ch['content_type'].startswith('message/cgi'):
-                        self._read_cgi_response(ch, nph=False)
-                        send_config = True
+                        headers = self._read_cgi_response(ch, nph=False)
                     else:
                         ch['size'] = \
                             self.os_interface.path.getsize(ch['lpath'])
                     if ch['size'] < ch['min_size']:
                         continue
+                    headers = _set_pax_headers(headers, ch)
                     info = tar_stream.create_tarinfo(ftype=REGTYPE,
                                                      name=ch['device'],
-                                                     size=ch['size'])
+                                                     size=ch['size'],
+                                                     headers=headers)
                     tar_size = TarStream.get_archive_size(ch['size'])
                     resp_size += len(info) + tar_size
                     ch['info'] = info
@@ -1076,57 +1077,27 @@ class ObjectQueryMiddleware(object):
                         device, policy_idx)
                     if error:
                         return error
-                sysmap_info = ''
-                sysmap_dump = ''
-                if send_config:
-                    sysmap = config.copy()
-                    sysmap['channels'] = []
-                    for ch in config['channels']:
-                        ch = ch.copy()
-                        ch.pop('size', None)
-                        ch.pop('info', None)
-                        ch.pop('lpath', None)
-                        ch.pop('offset', None)
-                        sysmap['channels'].append(ch)
-                    sysmap_dump = json.dumps(sysmap)
-                    sysmap_info = \
-                        tar_stream.create_tarinfo(ftype=REGTYPE,
-                                                  name='sysmap',
-                                                  size=len(sysmap_dump))
-                    resp_size += len(sysmap_info) + \
-                        TarStream.get_archive_size(len(sysmap_dump))
 
                 def resp_iter(channels, chunk_size):
-                    tstream = TarStream(chunk_size=chunk_size)
-                    if send_config:
-                        for chunk in tstream.serve_chunk(sysmap_info):
-                            yield chunk
-                        for chunk in tstream.serve_chunk(sysmap_dump):
-                            yield chunk
-                        blocks, remainder = divmod(len(sysmap_dump), BLOCKSIZE)
-                        if remainder > 0:
-                            nulls = NUL * (BLOCKSIZE - remainder)
-                            for chunk in tstream.serve_chunk(nulls):
-                                yield chunk
                     for ch in channels:
                         fp = open(ch['lpath'], 'rb')
                         if ch.get('offset', None):
                             fp.seek(ch['offset'])
                         reader = iter(lambda: fp.read(chunk_size), '')
-                        for chunk in tstream.serve_chunk(ch['info']):
+                        for chunk in tar_stream.serve_chunk(ch['info']):
                             yield chunk
                         for data in reader:
-                            for chunk in tstream.serve_chunk(data):
+                            for chunk in tar_stream.serve_chunk(data):
                                 yield chunk
                         fp.close()
                         os.unlink(ch['lpath'])
                         blocks, remainder = divmod(ch['size'], BLOCKSIZE)
                         if remainder > 0:
                             nulls = NUL * (BLOCKSIZE - remainder)
-                            for chunk in tstream.serve_chunk(nulls):
+                            for chunk in tar_stream.serve_chunk(nulls):
                                 yield chunk
-                    if tstream.data:
-                        yield tstream.data
+                    if tar_stream.data:
+                        yield tar_stream.data
 
                 response.app_iter = resp_iter(immediate_responses,
                                               self.network_chunk_size)
@@ -1134,6 +1105,7 @@ class ObjectQueryMiddleware(object):
                 return response
 
     def _read_cgi_response(self, ch, nph=True):
+        headers = HeaderKeyDict()
         if nph:
             fp = open(ch['lpath'], 'rb')
         else:
@@ -1147,8 +1119,9 @@ class ObjectQueryMiddleware(object):
             ch['size'] = self.os_interface.path.getsize(ch['lpath'])
             fp.close()
             self.logger.warning('Invalid message/http')
-            return
-        headers = dict(resp.getheaders())
+            return headers
+        headers['status'] = '%d %s' % (resp.status, resp.reason)
+        headers.update(resp.getheaders())
         ch['offset'] = fp.tell()
         metadata = {}
         if 'content-type' in headers:
@@ -1161,6 +1134,7 @@ class ObjectQueryMiddleware(object):
         ch['meta'] = metadata
         ch['size'] = self.os_interface.path.getsize(ch['lpath']) - ch['offset']
         fp.close()
+        return headers
 
     def __call__(self, env, start_response):
         """WSGI Application entry point for the Swift Object Server."""
@@ -1469,6 +1443,16 @@ def _channel_cleanup(response_channels):
             os.unlink(ch['lpath'])
         except OSError:
             pass
+
+
+def _set_pax_headers(headers, channel):
+    ch_headers = HeaderKeyDict({
+        'content-length': channel['size'],
+        'content-type': channel['content_type'],
+        'x-zerovm-device': channel['device']
+    })
+    headers.update(ch_headers)
+    return headers
 
 
 def filter_factory(global_conf, **local_conf):

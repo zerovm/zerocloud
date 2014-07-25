@@ -36,6 +36,19 @@ except ImportError:
     import json
 
 
+def get_headers(self):
+    headers = {}
+    for key, value in self.pax_headers.items():
+        if isinstance(key, unicode):
+            key = key.encode('utf-8')
+        if isinstance(value, unicode):
+            value = value.encode('utf-8')
+        headers[key.title()] = value
+    return headers
+
+tarfile.TarInfo.get_headers = get_headers
+
+
 class FakeLoggingHandler(logging.Handler):
 
     def __init__(self, *args, **kwargs):
@@ -356,15 +369,13 @@ class TestObjectQuery(unittest.TestCase):
             self.assertEqual(resp.headers['x-nexe-system'], 'sort')
             self.assertEquals(
                 resp.headers['content-type'], 'application/x-gtar')
-            self.assertEqual(names[0], 'sysmap')
-            file = tar.extractfile(members[0])
-            config = json.load(file)
-            self.assertEqual(
-                config['channels'][1]['content_type'],
-                'application/json')
-            self.assertEqual(
-                config['channels'][1]['meta'],
-                {'key1': 'value1', 'key2': 'value2'})
+            stdout_headers = members[-1].get_headers()
+            self.assertEqual(stdout_headers['Content-Type'],
+                             'application/json')
+            self.assertEqual(stdout_headers['X-Object-Meta-Key1'],
+                             'value1')
+            self.assertEqual(stdout_headers['X-Object-Meta-Key2'],
+                             'value2')
 
     def test_QUERY_cgi_message(self):
         self.setup_zerovm_query()
@@ -412,15 +423,13 @@ class TestObjectQuery(unittest.TestCase):
                              math.floor(float(timestamp)))
             self.assertEquals(
                 resp.headers['content-type'], 'application/x-gtar')
-            self.assertEqual(names[0], 'sysmap')
-            file = tar.extractfile(members[0])
-            config = json.load(file)
-            self.assertEqual(
-                config['channels'][1]['content_type'],
-                'application/json')
-            self.assertEqual(
-                config['channels'][1]['meta'],
-                {'key1': 'value1', 'key2': 'value2'})
+            stdout_headers = members[-1].get_headers()
+            self.assertEqual(stdout_headers['Content-Type'],
+                             'application/json')
+            self.assertEqual(stdout_headers['X-Object-Meta-Key1'],
+                             'value1')
+            self.assertEqual(stdout_headers['X-Object-Meta-Key2'],
+                             'value2')
 
     def test_QUERY_invalid_http_message(self):
         self.setup_zerovm_query()
@@ -467,11 +476,8 @@ class TestObjectQuery(unittest.TestCase):
                              math.floor(float(timestamp)))
             self.assertEqual(
                 resp.headers['content-type'], 'application/x-gtar')
-            self.assertEqual(names[0], 'sysmap')
-            file = tar.extractfile(members[0])
-            config = json.load(file)
-            self.assertEqual(
-                config['channels'][1]['content_type'], 'message/http')
+            stdout_headers = members[-1].get_headers()
+            self.assertEqual(stdout_headers['Content-Type'], 'message/http')
 
     def test_QUERY_invalid_nexe(self):
         self.setup_zerovm_query()

@@ -393,6 +393,16 @@ class TarInfo(object):
 
         return buf + self._create_header(info, USTAR_FORMAT)
 
+    def get_headers(self):
+        headers = {}
+        for key, value in self.pax_headers.items():
+            if isinstance(key, unicode):
+                key = key.encode('utf-8')
+            if isinstance(value, unicode):
+                value = value.encode('utf-8')
+            headers[key.title()] = value
+        return headers
+
     @classmethod
     def create_pax_global_header(cls, pax_headers):
         """Return the object as a pax global header block sequence.
@@ -943,7 +953,7 @@ class StringBuffer:
 
 class TarStream(object):
 
-    errors = None
+    errors = 'strict'
 
     def __init__(self, tar_iter=None, path_list=None, chunk_size=65536,
                  format=DEFAULT_FORMAT, encoding=ENCODING, append=False):
@@ -968,7 +978,8 @@ class TarStream(object):
         else:
             self.data += buf
 
-    def create_tarinfo(self, path=None, ftype=None, name=None, size=None):
+    def create_tarinfo(self, path=None, ftype=None, name=None, size=None,
+                       headers=None):
         tarinfo = TarInfo()
         tarinfo.tarfile = None
         if path:
@@ -980,6 +991,8 @@ class TarStream(object):
             tarinfo.name = name
             tarinfo.size = size
         tarinfo.mtime = time.time()
+        if headers:
+            tarinfo.pax_headers = dict(headers)
         buf = tarinfo.tobuf(self.format, self.encoding, self.errors)
         return buf
 
