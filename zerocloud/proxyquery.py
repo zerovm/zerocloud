@@ -88,7 +88,8 @@ def check_headers_metadata(new_req, headers, target_type, req, add_all=False):
                                       key[:MAX_META_NAME_LENGTH],
                                  request=req, content_type='text/plain')
         if not key.lower().startswith(prefix):
-            if add_all and key.lower() not in STRIP_PAX_HEADERS:
+            if add_all and key.lower() not in STRIP_PAX_HEADERS and not \
+                    key.lower().startswith('x-nexe-'):
                 new_req.headers[key] = value
             continue
         new_req.headers[key] = value
