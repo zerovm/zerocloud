@@ -23,6 +23,7 @@ setup(
             'proxy_query=zerocloud.proxyquery:filter_factory',
             'object_query=zerocloud.objectquery:filter_factory',
             'zero_queue=zerocloud.queue:filter_factory',
+            'job_chain=zerocloud.chain:filter_factory'
         ],
     },
 )
