@@ -3454,3 +3454,44 @@ class TestProxyQuery(unittest.TestCase):
             req.headers['x-zerovm-execute'] = 'open/1.0'
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 501)
+
+    def test_setting_nexe_headers(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe = trim(r'''
+            resp = '\n'.join([
+                'HTTP/1.1 200 OK',
+                'Content-Type: text/html',
+                'X-Nexe-Status: stat',
+                'X-Nexe-Retcode: 42',
+                '', ''
+                ])
+            out = '<html><body>Test this</body></html>'
+            return resp + out
+            ''')
+        self.create_object(prolis, '/v1/a/c/exe2', nexe)
+        conf = [
+            {
+                'name': 'http',
+                'exec': {'path': 'swift://a/c/exe2'},
+                'file_list': [
+                    {
+                        'device': 'stdout',
+                        'content_type': 'message/http'
+                    }
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.headers['content-type'], 'text/html')
+        self.assertEqual(res.body, '<html><body>Test this</body></html>')
+        # we should get actual x-nexe- headers
+        # and not the ones user application sets in its output
+        self.assertEqual(res.headers['x-nexe-status'], 'ok.')
+        self.assertEqual(res.headers['x-nexe-retcode'], '0')
+        self.check_container_integrity(prosrv, '/v1/a/c', {})
