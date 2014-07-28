@@ -15,6 +15,7 @@ from eventlet.green import socket
 from eventlet.timeout import Timeout
 import zlib
 from swift.common.storage_policy import POLICIES
+from swift.common.request_helpers import get_sys_meta_prefix
 from swift.common.wsgi import make_subrequest
 
 from swiftclient.client import quote
@@ -594,6 +595,12 @@ def select_random_partition(ring):
 
 class ClusterController(ObjectController):
 
+    header_exclusions = [get_sys_meta_prefix('account'),
+                         get_sys_meta_prefix('container'),
+                         get_sys_meta_prefix('object'),
+                         'x-backend', 'x-auth', 'content-type',
+                         'content-length']
+
     def __init__(self, app, account_name, container_name, obj_name, middleware,
                  command, **kwargs):
         ObjectController.__init__(self, app,
@@ -609,6 +616,27 @@ class ClusterController(ObjectController):
             self.middleware.list_account,
             self.middleware.list_container,
             network_type=self.middleware.network_type)
+        self.exclusion_test = self.make_exclusion_test()
+
+    def create_cgi_env(self, req):
+        headers = dict(req.headers)
+        keys = filter(self.exclusion_test, headers)
+        for key in keys:
+            headers.pop(key)
+        env = {}
+        env.update(('HTTP_' + k.upper().replace('-', '_'), v)
+                   for k, v in headers.items())
+        env['REQUEST_METHOD'] = req.method
+        env['REMOTE_USER'] = req.remote_user
+        env['QUERY_STRING'] = req.query_string
+        env['PATH_INFO'] = req.path_info
+        env['REQUEST_URI'] = req.path_qs
+        return env
+
+    def make_exclusion_test(self):
+        expr = '|'.join(self.header_exclusions)
+        test = re.compile(expr, re.IGNORECASE)
+        return test.match
 
     def get_daemon_socket(self, config):
         for daemon_sock, daemon_conf in self.middleware.zerovm_daemons:
@@ -836,7 +864,7 @@ class ClusterController(ObjectController):
         final_response.headers['Etag'] = etag.hexdigest()
         return final_response
 
-    def post_job(self, req, exe_resp=None, cluster_config=''):
+    def post_job(self, req, exe_resp=None, cluster_config='', cgi_env=None):
         image_resp = None
         user_image = False
         chunk_size = self.middleware.network_chunk_size
@@ -1054,6 +1082,8 @@ class ClusterController(ObjectController):
         # for n in self.parser.node_list:
         #     print n.dumps(indent=2)
 
+        if not cgi_env:
+            cgi_env = self.create_cgi_env(req)
         data_sources = []
         if exe_resp:
             exe_resp.nodes = []
@@ -1117,11 +1147,11 @@ class ClusterController(ObjectController):
                         node.replicas.append(deepcopy(node))
                         node.replicas[i].id = \
                             node.id + (i + 1) * len(self.parser.node_list)
-            node.copy_cgi_env(exec_request)
+            node.copy_cgi_env(request=exec_request, cgi_env=cgi_env)
             resp = node.create_sysmap_resp()
             node.add_data_source(data_sources, resp, 'sysmap')
             for repl_node in node.replicas:
-                repl_node.copy_cgi_env(exec_request)
+                repl_node.copy_cgi_env(request=exec_request, cgi_env=cgi_env)
                 resp = repl_node.create_sysmap_resp()
                 repl_node.add_data_source(data_sources, resp, 'sysmap')
             channels = self.parser.get_list_of_remote_objects(node)
@@ -1639,6 +1669,7 @@ class RestController(ClusterController):
                                   self.container_name,
                                   self.object_name)
         config = _config_from_template(req.params, template, location.url)
+        cgi_env = self.create_cgi_env(req)
         post_req = Request.blank('/%s' % self.account_name,
                                  environ=req.environ,
                                  headers=req.headers)
@@ -1649,7 +1680,7 @@ class RestController(ClusterController):
         if obj_req.method in 'GET':
             exe_resp = obj_resp
         return self.post_job(post_req, exe_resp=exe_resp,
-                             cluster_config=config)
+                             cluster_config=config, cgi_env=cgi_env)
 
     @delay_denial
     @cors_validation
