@@ -578,8 +578,10 @@ class ProxyQueryMiddleware(object):
 
     def get_controller(self, version, account, container, obj):
         if version == 'open/1.0':
-            return RestController(self.app, account, container, obj, self,
-                                  version)
+            if container and obj:
+                return RestController(self.app, account, container, obj, self,
+                                      version)
+            return None
         return ClusterController(self.app, account, container, obj, self,
                                  version)
 
@@ -744,6 +746,7 @@ class ClusterController(ObjectController):
         if not source_resp:
             source_req = req.copy_get()
             source_req.path_info = load_from
+            source_req.query_string = None
             if self.middleware.zerovm_uses_newest:
                 source_req.headers['X-Newest'] = 'true'
             if self.middleware.zerovm_prevalidate \
@@ -1594,8 +1597,6 @@ class RestController(ClusterController):
     @delay_denial
     @cors_validation
     def GET(self, req):
-        if not self.container_name or not self.object_name:
-            return HTTPNotFound(request=req, headers=req.headers)
         obj_req = req.copy_get()
         obj_req.method = 'HEAD'
         if obj_req.environ.get('QUERY_STRING'):
@@ -1643,6 +1644,7 @@ class RestController(ClusterController):
                                  headers=req.headers)
         post_req.method = 'POST'
         post_req.content_type = 'application/json'
+        post_req.query_string = req.query_string
         exe_resp = None
         if obj_req.method in 'GET':
             exe_resp = obj_resp

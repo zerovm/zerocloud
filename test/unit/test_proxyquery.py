@@ -3464,6 +3464,14 @@ class TestProxyQuery(unittest.TestCase):
             req.method = method
             req.headers['x-zerovm-execute'] = 'open/1.0'
             res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 412)
+        for method in ['POST', 'HEAD', 'DELETE', 'PUT']:
+            req = self.zerovm_request()
+            req.body = ''
+            req.method = method
+            req.headers['x-zerovm-execute'] = 'open/1.0'
+            req.path_info = '/v1/a/c/o'
+            res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 501)
 
     def test_job_chain(self):
