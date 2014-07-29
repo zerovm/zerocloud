@@ -21,7 +21,8 @@ from swift.common.wsgi import make_subrequest
 from swiftclient.client import quote
 
 from swift.common.http import HTTP_CONTINUE, is_success, \
-    HTTP_INSUFFICIENT_STORAGE, is_client_error, HTTP_NOT_FOUND
+    HTTP_INSUFFICIENT_STORAGE, is_client_error, HTTP_NOT_FOUND, \
+    HTTP_REQUESTED_RANGE_NOT_SATISFIABLE
 from swift.proxy.controllers.base import update_headers, delay_denial, \
     cors_validation, get_info, close_swift_conn
 from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
@@ -37,7 +38,8 @@ from swift.common.constraints import check_utf8, MAX_FILE_SIZE, MAX_HEADER_SIZE,
 from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
-    HTTPClientDisconnect, wsgify, HTTPNotImplemented, HeaderKeyDict
+    HTTPClientDisconnect, wsgify, HTTPNotImplemented, HeaderKeyDict, \
+    HTTPException
 from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, \
     CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
@@ -569,7 +571,10 @@ class ProxyQueryMiddleware(object):
             # it will be used by QoS code to assign slots/priority
             req.headers['x-zerocloud-id'] = self.uid_generator.get()
             req.headers['x-zerovm-timeout'] = self.zerovm_timeout
-            res = handler(req)
+            try:
+                res = handler(req)
+            except HTTPException as error_response:
+                return error_response
             perf = time.time() - start_time
             if 'x-nexe-cdr-line' in res.headers:
                 res.headers['x-nexe-cdr-line'] = \
@@ -868,6 +873,25 @@ class ClusterController(ObjectController):
         final_response.headers['Etag'] = etag.hexdigest()
         return final_response
 
+    def read_system_map(self, read_iter, chunk_size, content_type, req):
+        try:
+            if content_type in ['application/x-gzip']:
+                read_iter = gunzip_iter(read_iter, chunk_size)
+            path_list = [StringBuffer(CLUSTER_CONFIG_FILENAME),
+                         StringBuffer(NODE_CONFIG_FILENAME)]
+            untar_stream = UntarStream(read_iter, path_list)
+            for chunk in untar_stream:
+                req.bytes_transferred += len(chunk)
+        except (ReadError, zlib.error):
+            raise HTTPUnprocessableEntity(
+                request=req,
+                body='Error reading %s stream'
+                     % content_type)
+        for buf in path_list:
+            if buf.is_closed:
+                self.cluster_config = buf.body
+                break
+
     def post_job(self, req):
         chunk_size = self.middleware.network_chunk_size
         if 'content-type' not in req.headers:
@@ -886,12 +910,13 @@ class ClusterController(ObjectController):
                     request=req,
                     body='X-Zerovm-Source format is '
                          'swift://account/container/object')
-            data_resp = Response(
-                app_iter=iter(lambda: rdata.read(chunk_size), ''),
-                headers={
-                    'Content-Length': req.headers['content-length'],
-                    'Content-Type': req.headers['content-type']})
-            data_resp.nodes = []
+            if req.content_length:
+                data_resp = Response(
+                    app_iter=iter(lambda: rdata.read(chunk_size), ''),
+                    headers={
+                        'Content-Length': req.content_length,
+                        'Content-Type': req.content_type})
+                data_resp.nodes = []
             source_loc = expand_account_path(self.account_name, source_loc)
             source_req = make_subrequest(req.environ, method='GET',
                                          swift_source='zerocloud')
@@ -923,32 +948,13 @@ class ClusterController(ObjectController):
                 # buffer first blocks of tar file
                 # and search for the system map
                 cached_body = CachedBody(req_iter)
-                cache = cached_body.cache
-                if req.content_type in ['application/x-gzip']:
-                    cache = gunzip_iter(cache, chunk_size)
-                path_list = [StringBuffer(CLUSTER_CONFIG_FILENAME),
-                             StringBuffer(NODE_CONFIG_FILENAME)]
-                untar_stream = UntarStream(cache, path_list)
-                try:
-                    for chunk in untar_stream:
-                        req.bytes_transferred += len(chunk)
-                        etag.update(chunk)
-                except (ReadError, zlib.error):
-                    return HTTPUnprocessableEntity(
-                        request=req,
-                        body='Error reading %s stream'
-                             % req.content_type)
-                for buf in path_list:
-                    if buf.is_closed:
-                        self.cluster_config = buf.body
-                        break
+                self.read_system_map(cached_body.cache, chunk_size,
+                                     req.content_type, req)
                 if not self.cluster_config:
                     return HTTPBadRequest(request=req,
                                           body='System boot map was not '
                                                'found in request')
-                if not self.image_resp:
-                    self.image_resp = Response(app_iter=iter(cached_body),
-                                               headers=headers)
+                req_iter = iter(cached_body)
             if not self.image_resp:
                 self.image_resp = Response(app_iter=req_iter,
                                            headers=headers)
@@ -1684,6 +1690,16 @@ class RestController(ClusterController):
     @delay_denial
     @cors_validation
     def POST(self, req):
+        swift_path = SwiftPath.init(self.account_name, self.container_name,
+                                    self.object_name)
+        error = self.load_config(req, swift_path.path)
+        if error:
+            return error
+        # if we successfully got config, we know that we have a zapp in hand
+        if self.cluster_config:
+            req.headers['x-zerovm-source'] = swift_path.url
+            self.cgi_env = self.create_cgi_env(req)
+            return self.post_job(req)
         return HTTPNotImplemented(request=req)
 
     @delay_denial
@@ -1700,6 +1716,40 @@ class RestController(ClusterController):
     @cors_validation
     def HEAD(self, req):
         return HTTPNotImplemented(request=req)
+
+    def load_config(self, req, config_path):
+        memcache_client = cache_from_env(req.environ)
+        memcache_key = 'zvmapp' + config_path
+        if memcache_client:
+            config = memcache_client.get(memcache_key)
+            if config:
+                self.cluster_config = config
+                return None
+        config_req = req.copy_get()
+        buffer_length = self.middleware.zerovm_maxconfig * 2
+        config_req.range = 'bytes=0-%d' % (buffer_length - 1)
+        config_resp = ObjectController(
+            self.app,
+            self.account_name,
+            self.container_name,
+            self.object_name).GET(config_req)
+        if config_resp.status_int == HTTP_REQUESTED_RANGE_NOT_SATISFIABLE:
+            raise HTTPBadRequest(request=req,
+                                 body='Cannot execute empty object')
+        if not is_success(config_resp.status_int) or \
+                config_resp.content_length > buffer_length:
+            return config_resp
+        if config_resp.content_type in TAR_MIMES + ['application/x-gzip']:
+            chunk_size = self.middleware.network_chunk_size
+            config_req.bytes_transferred = 0
+            self.read_system_map(config_resp.app_iter, chunk_size,
+                                 config_resp.content_type, config_req)
+            if memcache_client and self.cluster_config:
+                memcache_client.set(
+                    memcache_key,
+                    self.cluster_config,
+                    time=float(self.middleware.zerovm_cache_config_timeout))
+        return None
 
 
 def _load_channel_data(node, extracted_file):
