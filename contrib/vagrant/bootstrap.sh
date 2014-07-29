@@ -33,7 +33,7 @@ sudo python setup.py install
 # Python system image for ZeroCloud/ZeroVM
 sudo mkdir /usr/share/zerovm
 cd /usr/share/zerovm
-sudo wget http://packages.zerovm.org/zerovm-samples/python.tar
+sudo wget -q http://packages.zerovm.org/zerovm-samples/python.tar
 
 ###
 # Add ZeroCloud middleware to swift config
