@@ -721,7 +721,7 @@ class TestProxyQuery(unittest.TestCase):
         with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
             with self.create_gzip(tar) as gzname:
                 req.body_file = open(gzname, 'rb')
-                req.content_length = os.path.getsize(tar)
+                req.content_length = os.path.getsize(gzname)
                 res = req.get_response(prosrv)
                 self.executed_successfully(res)
                 self.check_container_integrity(
