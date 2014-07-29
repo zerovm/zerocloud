@@ -348,7 +348,7 @@ class ZvmNode(object):
         self.env['SERVER_SOFTWARE'] = 'zerocloud'
         self.env['GATEWAY_INTERFACE'] = 'CGI/1.1'
         self.env['SCRIPT_NAME'] = self.exe_name or self.name
-        self.env['SCRIPT_FILENAME'] = self.exe.path
+        self.env['SCRIPT_FILENAME'] = self.exe
         if cgi_env:
             self.env.update(cgi_env)
         # we need to show the real host name, if possible

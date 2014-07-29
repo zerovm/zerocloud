@@ -1046,11 +1046,12 @@ class TestProxyQuery(unittest.TestCase):
         self.assertEqual(res.headers['x-object-meta-key2'], 'val2')
         self.assertEqual(res.headers['content-type'], 'application/x-pickle')
         out = pickle.loads(res.body)
-        self.assertIn('name=CONTENT_TYPE, value=application/x-pickle', out)
-        self.assertIn('name=HTTP_X_OBJECT_META_KEY1, value=val1', out)
-        self.assertIn('name=HTTP_X_OBJECT_META_KEY2, value=val2', out)
-        self.assertIn('name=DOCUMENT_ROOT, value=/dev/stdout', out)
-        self.assertIn('name=PATH_INFO, value=/a/c/o3', out)
+        self.assertIn('name=LOCAL_CONTENT_TYPE, value=application/x-pickle',
+                      out)
+        self.assertIn('name=LOCAL_HTTP_X_OBJECT_META_KEY1, value=val1', out)
+        self.assertIn('name=LOCAL_HTTP_X_OBJECT_META_KEY2, value=val2', out)
+        self.assertIn('name=LOCAL_DOCUMENT_ROOT, value=/dev/stdout', out)
+        self.assertIn('name=LOCAL_PATH_INFO, value=/a/c/o3', out)
         content_length = res.content_length
         conf = [
             {
@@ -1075,14 +1076,16 @@ class TestProxyQuery(unittest.TestCase):
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         out = pickle.loads(res.body)
-        self.assertIn('name=CONTENT_TYPE, value=application/x-pickle', out)
-        self.assertIn('name=HTTP_X_OBJECT_META_KEY1, value=val1', out)
-        self.assertIn('name=HTTP_X_OBJECT_META_KEY2, value=val2', out)
-        self.assertIn('name=DOCUMENT_ROOT, value=/dev/stdin', out)
-        self.assertIn('name=PATH_INFO, value=/a/c/o3', out)
-        self.assertIn('name=CONTENT_LENGTH, value=%d' % content_length, out)
+        self.assertIn('name=LOCAL_CONTENT_TYPE, value=application/x-pickle',
+                      out)
+        self.assertIn('name=LOCAL_HTTP_X_OBJECT_META_KEY1, value=val1', out)
+        self.assertIn('name=LOCAL_HTTP_X_OBJECT_META_KEY2, value=val2', out)
+        self.assertIn('name=LOCAL_DOCUMENT_ROOT, value=/dev/stdin', out)
+        self.assertIn('name=LOCAL_PATH_INFO, value=/a/c/o3', out)
+        self.assertIn('name=LOCAL_CONTENT_LENGTH, value=%d' % content_length,
+                      out)
         self.assertIn('name=SCRIPT_NAME, value=http', out)
-        self.assertIn('name=SCRIPT_FILENAME, value=/a/c/exe2', out)
+        self.assertIn('name=SCRIPT_FILENAME, value=swift://a/c/exe2', out)
         self.assertIn('name=QUERY_STRING, value=%s' % req.query_string, out)
         self.check_container_integrity(prosrv, '/v1/a/c', {})
         conf = [
@@ -1110,14 +1113,16 @@ class TestProxyQuery(unittest.TestCase):
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
         out = pickle.loads(res.body)
-        self.assertIn('name=CONTENT_TYPE, value=application/x-pickle', out)
-        self.assertIn('name=HTTP_X_OBJECT_META_KEY1, value=val1', out)
-        self.assertIn('name=HTTP_X_OBJECT_META_KEY2, value=val2', out)
-        self.assertIn('name=DOCUMENT_ROOT, value=/dev/stdin', out)
-        self.assertIn('name=PATH_INFO, value=/a/c/o3', out)
-        self.assertIn('name=CONTENT_LENGTH, value=%d' % content_length, out)
+        self.assertIn('name=LOCAL_CONTENT_TYPE, value=application/x-pickle',
+                      out)
+        self.assertIn('name=LOCAL_HTTP_X_OBJECT_META_KEY1, value=val1', out)
+        self.assertIn('name=LOCAL_HTTP_X_OBJECT_META_KEY2, value=val2', out)
+        self.assertIn('name=LOCAL_DOCUMENT_ROOT, value=/dev/stdin', out)
+        self.assertIn('name=LOCAL_PATH_INFO, value=/a/c/o3', out)
+        self.assertIn('name=LOCAL_CONTENT_LENGTH, value=%d' % content_length,
+                      out)
         self.assertIn('name=SCRIPT_NAME, value=http_script', out)
-        self.assertIn('name=SCRIPT_FILENAME, value=/a/c/exe2', out)
+        self.assertIn('name=SCRIPT_FILENAME, value=swift://a/c/exe2', out)
         self.check_container_integrity(prosrv, '/v1/a/c', {})
 
     def test_QUERY_GET_response(self):
