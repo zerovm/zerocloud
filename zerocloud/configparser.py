@@ -675,39 +675,41 @@ class ClusterConfigParser(object):
                     metadata = local_object['meta']
                     content_type = metadata.get('Content-Type',
                                                 'application/octet-stream')
-                    env += ENV_ITEM % ('CONTENT_LENGTH', local_object['size'])
-                    env += ENV_ITEM % ('CONTENT_TYPE',
+                    env += ENV_ITEM % ('LOCAL_CONTENT_LENGTH', local_object[
+                        'size'])
+                    env += ENV_ITEM % ('LOCAL_CONTENT_TYPE',
                                        quote_for_env(content_type))
                     for k, v in metadata.iteritems():
                         meta = k.upper()
                         if meta.startswith('X-OBJECT-META-'):
                             env += ENV_ITEM \
-                                % ('HTTP_%s' % meta.replace('-', '_'),
+                                % ('LOCAL_HTTP_%s' % meta.replace('-', '_'),
                                    quote_for_env(v))
                             continue
                         for hdr in ['X-TIMESTAMP', 'ETAG', 'CONTENT-ENCODING']:
                             if hdr in meta:
                                 env += ENV_ITEM \
-                                    % ('HTTP_%s' % meta.replace('-', '_'),
+                                    % ('LOCAL_HTTP_%s' % meta.replace('-',
+                                                                      '_'),
                                         quote_for_env(v))
                                 break
                 elif local_object['access'] & ACCESS_WRITABLE:
                     content_type = local_object.get('content_type',
                                                     'application/octet-stream')
-                    env += ENV_ITEM % ('CONTENT_TYPE',
+                    env += ENV_ITEM % ('LOCAL_CONTENT_TYPE',
                                        quote_for_env(content_type))
                     meta = local_object.get('meta', None)
                     if meta:
                         for k, v in meta.iteritems():
                             env += ENV_ITEM \
-                                % ('HTTP_X_OBJECT_META_%s'
+                                % ('LOCAL_HTTP_X_OBJECT_META_%s'
                                    % k.upper().replace('-', '_'),
                                     quote_for_env(v))
-                env += ENV_ITEM % ('DOCUMENT_ROOT',
+                env += ENV_ITEM % ('LOCAL_DOCUMENT_ROOT',
                                    '/dev/%s'
                                    % local_object['device'])
-                config['env']['REQUEST_METHOD'] = 'POST'
-                config['env']['PATH_INFO'] = local_object['path_info']
+                config['env']['LOCAL_OBJECT'] = 'on'
+                config['env']['LOCAL_PATH_INFO'] = local_object['path_info']
             for k, v in config['env'].iteritems():
                 if v:
                     env += ENV_ITEM % (k, quote_for_env(v))
