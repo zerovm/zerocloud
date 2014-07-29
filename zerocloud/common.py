@@ -336,31 +336,30 @@ class ZvmNode(object):
                     return chan
         return None
 
-    def copy_cgi_env(self, request):
+    def copy_cgi_env(self, request=None, cgi_env=None):
         if not self.env:
             self.env = {}
-        self.env['HTTP_HOST'] = request.host
-        self.env['REMOTE_ADDR'] = request.remote_addr
         self.env['REMOTE_USER'] = request.remote_user
-        self.env['HTTP_USER_AGENT'] = request.user_agent
         self.env['QUERY_STRING'] = request.query_string
-        self.env['SERVER_NAME'] = \
-            request.environ.get('SERVER_NAME', 'localhost')
-        self.env['SERVER_PORT'] = request.environ.get('SERVER_PORT', '80')
         self.env['SERVER_PROTOCOL'] = \
             request.environ.get('SERVER_PROTOCOL', 'HTTP/1.0')
+        self.env['PATH_INFO'] = request.path_info
+        self.env['REQUEST_METHOD'] = 'GET'
         self.env['SERVER_SOFTWARE'] = 'zerocloud'
         self.env['GATEWAY_INTERFACE'] = 'CGI/1.1'
         self.env['SCRIPT_NAME'] = self.exe_name or self.name
-        self.env['SCRIPT_FILENAME'] = self.exe
-        self.env['PATH_INFO'] = request.path_info
-        self.env['REQUEST_METHOD'] = 'GET'
-        self.env['HTTP_REFERER'] = request.referer
-        self.env['HTTP_ACCEPT'] = request.headers.get('accept')
-        self.env['HTTP_ACCEPT_ENCODING'] = \
-            request.headers.get('accept-encoding')
-        self.env['HTTP_ACCEPT_LANGUAGE'] = \
-            request.headers.get('accept-language')
+        self.env['SCRIPT_FILENAME'] = self.exe.path
+        if cgi_env:
+            self.env.update(cgi_env)
+        # we need to show the real host name, if possible
+        parts = self.env.get('HTTP_HOST',
+                             request.environ.get('SERVER_NAME',
+                                                 'localhost')).split(':', 1)
+        self.env['SERVER_NAME'] = parts[0]
+        if len(parts) > 1:
+            self.env['SERVER_PORT'] = parts[1]
+        else:
+            self.env['SERVER_PORT'] = '80'
 
     def create_sysmap_resp(self):
         sysmap = self.dumps()
