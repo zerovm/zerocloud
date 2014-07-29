@@ -617,6 +617,10 @@ class ClusterController(ObjectController):
             self.middleware.list_container,
             network_type=self.middleware.network_type)
         self.exclusion_test = self.make_exclusion_test()
+        self.image_resp = None
+        self.cgi_env = None
+        self.exe_resp = None
+        self.cluster_config = ''
 
     def create_cgi_env(self, req):
         headers = dict(req.headers)
@@ -864,17 +868,13 @@ class ClusterController(ObjectController):
         final_response.headers['Etag'] = etag.hexdigest()
         return final_response
 
-    def post_job(self, req, exe_resp=None, cluster_config='', cgi_env=None):
-        image_resp = None
-        user_image = False
+    def post_job(self, req):
         chunk_size = self.middleware.network_chunk_size
         if 'content-type' not in req.headers:
             return HTTPBadRequest(request=req,
                                   body='Must specify Content-Type')
         upload_expiration = time.time() + self.middleware.max_upload_time
         etag = md5()
-        path_list = [StringBuffer(CLUSTER_CONFIG_FILENAME),
-                     StringBuffer(NODE_CONFIG_FILENAME)]
         rdata = req.environ['wsgi.input']
         req_iter = iter(lambda: rdata.read(chunk_size), '')
         data_resp = None
@@ -908,60 +908,60 @@ class ClusterController(ObjectController):
             req_iter = iter(source_resp.app_iter)
             req = sink_req
         req.bytes_transferred = 0
-        orig_content_type = req.content_type
-        if req.content_type in ['application/x-gzip']:
-            read_iter = gunzip_iter(req_iter,
-                                    chunk_size)
-            req.content_type = TAR_MIMES[0]
-        else:
-            read_iter = req_iter
-        if req.content_type in TAR_MIMES:
+        req_content_type = req.content_type
+        if req_content_type in ['application/x-gzip']:
+            req_content_type = TAR_MIMES[0]
+        if req_content_type in TAR_MIMES:
             # we must have Content-Length set for tar-based requests
             # as it will be impossible to stream them otherwise
             if 'content-length' not in req.headers:
                 return HTTPBadRequest(request=req,
                                       body='Must specify Content-Length')
-            # buffer first blocks of tar file and search for the system map
+            headers = {'Content-Type': req.content_type,
+                       'Content-Length': req.content_length}
+            if not self.cluster_config:
+                # buffer first blocks of tar file
+                # and search for the system map
+                cached_body = CachedBody(req_iter)
+                cache = cached_body.cache
+                if req.content_type in ['application/x-gzip']:
+                    cache = gunzip_iter(cache, chunk_size)
+                path_list = [StringBuffer(CLUSTER_CONFIG_FILENAME),
+                             StringBuffer(NODE_CONFIG_FILENAME)]
+                untar_stream = UntarStream(cache, path_list)
+                try:
+                    for chunk in untar_stream:
+                        req.bytes_transferred += len(chunk)
+                        etag.update(chunk)
+                except (ReadError, zlib.error):
+                    return HTTPUnprocessableEntity(
+                        request=req,
+                        body='Error reading %s stream'
+                             % req.content_type)
+                for buf in path_list:
+                    if buf.is_closed:
+                        self.cluster_config = buf.body
+                        break
+                if not self.cluster_config:
+                    return HTTPBadRequest(request=req,
+                                          body='System boot map was not '
+                                               'found in request')
+                if not self.image_resp:
+                    self.image_resp = Response(app_iter=iter(cached_body),
+                                               headers=headers)
+            if not self.image_resp:
+                self.image_resp = Response(app_iter=req_iter,
+                                           headers=headers)
+            self.image_resp.nodes = []
             try:
-                cached_body = CachedBody(read_iter)
-            except zlib.error:
-                return HTTPUnprocessableEntity(request=req,
-                                               body='Error reading %s stream'
-                                                    % orig_content_type)
-            user_image = True
-            image_resp = Response(
-                app_iter=iter(cached_body),
-                headers={
-                    'Content-Length': req.headers['content-length'],
-                    'Content-Type': req.headers['content-type']})
-            image_resp.nodes = []
-            untar_stream = UntarStream(cached_body.cache, path_list)
-            try:
-                for chunk in untar_stream:
-                    req.bytes_transferred += len(chunk)
-                    etag.update(chunk)
-            except ReadError:
-                return HTTPUnprocessableEntity(
-                    request=req,
-                    body='Error reading %s stream'
-                         % req.headers['content-type'])
-            for buf in path_list:
-                if buf.is_closed:
-                    cluster_config = buf.body
-                    break
-            if not cluster_config:
-                return HTTPBadRequest(request=req,
-                                      body='System boot map was not '
-                                           'found in request')
-            try:
-                cluster_config = json.loads(cluster_config)
+                cluster_config = json.loads(self.cluster_config)
             except Exception:
                 return HTTPUnprocessableEntity(body='Could not parse '
                                                     'system map')
-        elif req.content_type in 'application/json':
+        elif req_content_type in 'application/json':
             # System map was sent as a POST body
-            if not cluster_config:
-                for chunk in read_iter:
+            if not self.cluster_config:
+                for chunk in req_iter:
                     req.bytes_transferred += len(chunk)
                     if time.time() > upload_expiration:
                         return HTTPRequestTimeout(request=req)
@@ -969,7 +969,7 @@ class ClusterController(ObjectController):
                             self.middleware.zerovm_maxconfig:
                         return HTTPRequestEntityTooLarge(request=req)
                     etag.update(chunk)
-                    cluster_config += chunk
+                    self.cluster_config += chunk
                 if 'content-length' in req.headers and \
                    int(req.headers['content-length']) != req.bytes_transferred:
                     return HTTPClientDisconnect(request=req,
@@ -980,7 +980,7 @@ class ClusterController(ObjectController):
                    req.headers['etag'].lower() != etag:
                     return HTTPUnprocessableEntity(request=req)
             try:
-                cluster_config = json.loads(cluster_config)
+                cluster_config = json.loads(self.cluster_config)
             except Exception:
                 return HTTPUnprocessableEntity(
                     body='Could not parse system map')
@@ -989,7 +989,7 @@ class ClusterController(ObjectController):
             if 'content-length' not in req.headers:
                 return HTTPBadRequest(request=req,
                                       body='Must specify Content-Length')
-            cached_body = CachedBody(read_iter)
+            cached_body = CachedBody(req_iter)
             # all scripts must start with shebang
             if not cached_body.cache[0].startswith('#!'):
                 return HTTPBadRequest(request=req,
@@ -1050,11 +1050,10 @@ class ClusterController(ObjectController):
                                cached_body)
             stream = TarStream(path_list=[string_path])
             stream_length = stream.get_total_stream_length()
-            user_image = True
-            image_resp = Response(app_iter=iter(stream),
-                                  headers={
-                                      'Content-Length': stream_length})
-            image_resp.nodes = []
+            self.image_resp = Response(app_iter=iter(stream),
+                                       headers={
+                                           'Content-Length': stream_length})
+            self.image_resp.nodes = []
 
         req.path_info = '/' + self.account_name
         try:
@@ -1069,7 +1068,7 @@ class ClusterController(ObjectController):
                 return ring.replica_count
 
             self.parser.parse(cluster_config,
-                              user_image,
+                              self.image_resp is not None,
                               self.account_name,
                               replica_count,
                               replica_resolver=replica_resolver,
@@ -1082,12 +1081,12 @@ class ClusterController(ObjectController):
         # for n in self.parser.node_list:
         #     print n.dumps(indent=2)
 
-        if not cgi_env:
-            cgi_env = self.create_cgi_env(req)
+        if not self.cgi_env:
+            self.cgi_env = self.create_cgi_env(req)
         data_sources = []
-        if exe_resp:
-            exe_resp.nodes = []
-            data_sources.append(exe_resp)
+        if self.exe_resp:
+            self.exe_resp.nodes = []
+            data_sources.append(self.exe_resp)
         addr = self._get_own_address()
         if not addr:
             return HTTPServiceUnavailable(
@@ -1147,11 +1146,12 @@ class ClusterController(ObjectController):
                         node.replicas.append(deepcopy(node))
                         node.replicas[i].id = \
                             node.id + (i + 1) * len(self.parser.node_list)
-            node.copy_cgi_env(request=exec_request, cgi_env=cgi_env)
+            node.copy_cgi_env(request=exec_request, cgi_env=self.cgi_env)
             resp = node.create_sysmap_resp()
             node.add_data_source(data_sources, resp, 'sysmap')
             for repl_node in node.replicas:
-                repl_node.copy_cgi_env(request=exec_request, cgi_env=cgi_env)
+                repl_node.copy_cgi_env(request=exec_request,
+                                       cgi_env=self.cgi_env)
                 resp = repl_node.create_sysmap_resp()
                 repl_node.add_data_source(data_sources, resp, 'sysmap')
             channels = self.parser.get_list_of_remote_objects(node)
@@ -1163,14 +1163,14 @@ class ClusterController(ObjectController):
                                                                node)
                 if error:
                     return error
-            if user_image:
-                node.last_data = image_resp
-                image_resp.nodes.append({'node': node,
-                                         'dev': 'image'})
+            if self.image_resp:
+                node.last_data = self.image_resp
+                self.image_resp.nodes.append({'node': node,
+                                              'dev': 'image'})
                 for repl_node in node.replicas:
-                    repl_node.last_data = image_resp
-                    image_resp.nodes.append({'node': repl_node,
-                                             'dev': 'image'})
+                    repl_node.last_data = self.image_resp
+                    self.image_resp.nodes.append({'node': repl_node,
+                                                  'dev': 'image'})
             if data_resp:
                 dev = self._needs_request_data(node, req)
                 if dev:
@@ -1190,8 +1190,8 @@ class ClusterController(ObjectController):
                 exec_request.headers['x-zerovm-daemon'] = str(sock)
             exec_requests.append(exec_request)
 
-        if image_resp and image_resp.nodes:
-            data_sources.append(image_resp)
+        if self.image_resp and self.image_resp.nodes:
+            data_sources.append(self.image_resp)
         if data_resp and data_resp.nodes:
             data_sources.append(data_resp)
         tstream = TarStream()
@@ -1668,19 +1668,18 @@ class RestController(ClusterController):
         location = SwiftPath.init(self.account_name,
                                   self.container_name,
                                   self.object_name)
-        config = _config_from_template(req.params, template, location.url)
-        cgi_env = self.create_cgi_env(req)
+        self.cluster_config = _config_from_template(req.params, template,
+                                                    location.url)
+        self.cgi_env = self.create_cgi_env(req)
         post_req = Request.blank('/%s' % self.account_name,
                                  environ=req.environ,
                                  headers=req.headers)
         post_req.method = 'POST'
         post_req.content_type = 'application/json'
         post_req.query_string = req.query_string
-        exe_resp = None
         if obj_req.method in 'GET':
-            exe_resp = obj_resp
-        return self.post_job(post_req, exe_resp=exe_resp,
-                             cluster_config=config, cgi_env=cgi_env)
+            self.exe_resp = obj_resp
+        return self.post_job(post_req)
 
     @delay_denial
     @cors_validation
