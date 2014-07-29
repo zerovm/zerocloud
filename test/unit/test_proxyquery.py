@@ -3639,3 +3639,81 @@ class TestProxyQuery(unittest.TestCase):
         self.assertEqual(res.headers['x-nexe-status'], 'ok.')
         self.assertEqual(res.headers['x-nexe-retcode'], '0')
         self.check_container_integrity(prosrv, '/v1/a/c', {})
+
+    def test_zapp_post(self):
+        self.setup_QUERY()
+        conf = [
+            {
+                'name': 'zapp-post',
+                'exec': {'path': 'swift://a/c/exe'},
+                'devices': [
+                    {'name': 'stdin'},
+                    {'name': 'stdout'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        prolis = _test_sockets[0]
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            self.create_object(prolis, '/v1/a/c/myapp',
+                               open(tar, 'rb').read(),
+                               content_type='application/x-tar')
+            req = Request.blank('/open/a/c/myapp',
+                                environ={'REQUEST_METHOD': 'POST'},
+                                headers={
+                                    'Content-Type': 'application/x-pickle'})
+            random_data = self.get_random_numbers()
+            data = StringIO(random_data)
+            req.body_file = data
+            req.content_length = len(random_data)
+            res = req.get_response(prosrv)
+            self.executed_successfully(res)
+            self.assertEqual(res.body, self.get_sorted_numbers())
+            self.check_container_integrity(prosrv, '/v1/a/c', {})
+
+    def test_zapp_post_error(self):
+
+        def post_request():
+            return Request.blank('/open/a/c/myapp1',
+                                 environ={'REQUEST_METHOD': 'POST'},
+                                 headers={
+                                     'Content-Type': 'application/x-pickle'})
+
+        self.setup_QUERY()
+        prosrv = _test_servers[0]
+        prolis = _test_sockets[0]
+        req = post_request()
+        random_data = self.get_random_numbers()
+        data = StringIO(random_data)
+        req.body_file = data
+        req.content_length = len(random_data)
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 404)
+        self.create_object(prolis, '/v1/a/c/myapp1', '')
+        req = post_request()
+        req.body_file = data
+        req.content_length = len(random_data)
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 400)
+        self.create_object(prolis, '/v1/a/c/myapp1', 'a')
+        req = post_request()
+        req.body_file = data
+        req.content_length = len(random_data)
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 501)
+        self.create_object(prolis, '/v1/a/c/myapp1', 'a',
+                           content_type='application/x-tar')
+        req = post_request()
+        req.body_file = data
+        req.content_length = len(random_data)
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 501)
+        self.create_object(prolis, '/v1/a/c/myapp1', 'bad gzip',
+                           content_type='application/x-gzip')
+        req = post_request()
+        req.body_file = data
+        req.content_length = len(random_data)
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 422)
