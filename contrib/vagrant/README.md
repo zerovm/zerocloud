@@ -37,3 +37,10 @@ For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagr
 3. Run Vagrant:
 
     `vagrant up`
+
+## Client configuration
+
+You can use `python-swiftclient` and `zvm/zpm` with this vagrant box. To set
+the needed environment variables, just do:
+
+    `source zerocloudrc`
