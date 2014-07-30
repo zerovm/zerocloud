@@ -9,14 +9,14 @@
 
 2. Install the latest version of Vagrant:
 
-```bash
-# 64-bit
-wget https://dl.bintray.com/mitchellh/vagrant/vagrant_1.6.3_x86_64.deb
-sudo dpkg -i vagrant_1.6.3_x86_64.deb
-# 32-bit
-wget https://dl.bintray.com/mitchellh/vagrant/vagrant_1.6.3_i686.deb
-sudo dpkg -i vagrant_1.6.3_i686.deb
-```
+    ```bash
+    # 64-bit
+    wget https://dl.bintray.com/mitchellh/vagrant/vagrant_1.6.3_x86_64.deb
+    sudo dpkg -i vagrant_1.6.3_x86_64.deb
+    # 32-bit
+    wget https://dl.bintray.com/mitchellh/vagrant/vagrant_1.6.3_i686.deb
+    sudo dpkg -i vagrant_1.6.3_i686.deb
+    ```
 
 For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagrant/.
 
