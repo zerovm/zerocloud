@@ -27,8 +27,8 @@ For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagr
         vagrant up
 
 5. Once everything is set up, you'll need to restart Devstack in order for the
-   ZeroCloud configurations to take effect. See `Restarting DevStack and
-   ZeroCloud` below.
+   ZeroCloud configurations to take effect. See [Restarting DevStack and
+   ZeroCloud][restart] below.
 
 
 ### OSX
@@ -43,8 +43,8 @@ For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagr
         vagrant up
 
 4. Once everything is set up, you'll need to restart DevStack in order for the
-   ZeroCloud configurations to take effect. See `Restarting DevStack and
-   ZeroCloud` below.
+   ZeroCloud configurations to take effect. See [Restarting DevStack and
+   ZeroCloud][restart] below.
 
 
 ## Client configuration
@@ -75,3 +75,5 @@ To start DevStack again, type `./rejoin-stack.sh`. If you want to detach
 from this screen session (and return to the vagrant box shell), press
 'a d'. You can log out ('ctrl+d') of the box now if you want and
 everything will still be running.
+
+[restart]: #restarting-devstack-and-zerocloud
