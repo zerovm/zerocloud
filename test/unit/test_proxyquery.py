@@ -3599,6 +3599,73 @@ class TestProxyQuery(unittest.TestCase):
         finally:
             prosrv.app.chain_timeout = _orig_chain_timeout
 
+    def test_job_chain_with_payload(self):
+        self.setup_QUERY()
+        data = pickle.dumps('Quick brown fox', protocol=0)
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe = trim(r'''
+            import json
+            import urlparse
+            qs = zvm_environ['QUERY_STRING']
+            params = dict(urlparse.parse_qsl(qs, True))
+            conf = [
+                {
+                    'name': 'store',
+                    'exec': {'path': 'swift://a/c/store'},
+                    'file_list': [
+                        {
+                            'device': 'stdout',
+                            'path': 'swift:/%s' % params['path'],
+                            'content_type': params['content_type']
+                        },
+                        {
+                            'device': 'stdin'
+                        }
+                    ]
+                }
+            ]
+            out = json.dumps(conf, indent=2)
+            resp = '\n'.join([
+                'HTTP/1.1 200 OK',
+                'Content-Type: application/json',
+                'X-Zerovm-Execute: 1.0',
+                '', ''
+                ])
+            return resp + out
+            ''')
+        self.create_object(prolis, '/v1/a/c/receive', nexe)
+        nexe = trim(r'''
+            return id
+            ''')
+        self.create_object(prolis, '/v1/a/c/store', nexe)
+        conf = [
+            {
+                'name': 'http',
+                'exec': {'path': 'swift://a/c/receive'},
+                'file_list': [
+                    {
+                        'device': 'stdout',
+                        'content_type': 'message/http'
+                    }
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        self.create_object(prolis, '/v1/a/c/receiver.json', conf,
+                           content_type='application/json')
+        req = self.zerovm_request()
+        req.query_string = 'path=/a/c/my_object&content_type=text/plain'
+        req.body = data
+        req.headers['x-zerovm-source'] = 'swift://a/c/receiver.json'
+        res = req.get_response(prosrv)
+        self.executed_successfully(res)
+        req = self.object_request('/v1/a/c/my_object')
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, 'Quick brown fox')
+        self.assertEqual(res.content_type, 'text/plain')
+
     def test_setting_nexe_headers(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]

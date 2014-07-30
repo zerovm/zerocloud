@@ -8,6 +8,7 @@ import cPickle as pickle
 from time import sleep
 from argparse import ArgumentParser
 from eventlet import GreenPool, listen
+from nvram_parser import read_env
 
 try:
     import simplejson as json
@@ -296,6 +297,7 @@ except EOFError:
 except Exception:
     errdump(1, valid, 0, mnfst.Etag, accounting, 'Std files I/O error')
 
+zvm_environ = read_env(mnfst.nvram['path'])
 od = ''
 try:
     od = str(eval_as_function(exe))

@@ -14,12 +14,12 @@ from eventlet import GreenPile, GreenPool, Queue, spawn_n
 from eventlet.green import socket
 from eventlet.timeout import Timeout
 import zlib
+
 from swift.common.storage_policy import POLICIES
+
 from swift.common.request_helpers import get_sys_meta_prefix
 from swift.common.wsgi import make_subrequest
-
 from swiftclient.client import quote
-
 from swift.common.http import HTTP_CONTINUE, is_success, \
     HTTP_INSUFFICIENT_STORAGE, is_client_error, HTTP_NOT_FOUND, \
     HTTP_REQUESTED_RANGE_NOT_SATISFIABLE
@@ -40,8 +40,7 @@ from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
     HTTPClientDisconnect, wsgify, HTTPNotImplemented, HeaderKeyDict, \
     HTTPException
-from zerocloud.common import ACCESS_READABLE, ACCESS_CDR, \
-    CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
+from zerocloud.common import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
     POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
     merge_headers, DEFAULT_EXE_SYSTEM_MAP, \
     STREAM_CACHE_SIZE, parse_location, is_swift_path, \
@@ -52,6 +51,7 @@ from zerocloud.configparser import ClusterConfigParser, \
 from zerocloud.tarstream import StringBuffer, UntarStream, \
     TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile, Path, ReadError
 from zerocloud.thread_pool import Zuid
+
 
 ZEROVM_COMMANDS = ['open']
 ZEROVM_EXECUTE = 'x-zerovm-execute'
@@ -754,20 +754,6 @@ class ClusterController(ObjectController):
             conn.tar_stream = TarStream()
             pool.spawn(self._send_file, conn, req.path)
 
-    def _needs_request_data(self, node, req):
-        dev = None
-        for ch in node.channels:
-            if not ch.path and ch.device != 'image' \
-                    and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
-                    and not self.parser.is_sysimage_device(ch.device):
-                if dev:
-                    raise HTTPPreconditionFailed(
-                        request=req,
-                        body='Multiple readable devices without path: %s, '
-                             '%s' % (dev, ch.device))
-                dev = ch.device
-        return dev
-
     def _create_request_for_remote_object(self, data_sources, channel,
                                           req, nexe_headers, node):
         source_resp = None
@@ -892,6 +878,22 @@ class ClusterController(ObjectController):
                 self.cluster_config = buf.body
                 break
 
+    def _load_input_from_chain(self, req, chunk_size):
+        data_resp = None
+        if 'chain.input' in req.environ:
+            chain_input = req.environ['chain.input']
+            bytes_left = int(req.environ['chain.input_size']) - \
+                chain_input.bytes_received
+            if bytes_left > 0:
+                data_resp = Response(
+                    app_iter=iter(lambda: chain_input.read(
+                        chunk_size), ''),
+                    headers={
+                        'Content-Length': bytes_left,
+                        'Content-Type': req.environ['chain.input_type']})
+                data_resp.nodes = []
+        return data_resp
+
     def post_job(self, req):
         chunk_size = self.middleware.network_chunk_size
         if 'content-type' not in req.headers:
@@ -921,6 +923,7 @@ class ClusterController(ObjectController):
             source_req = make_subrequest(req.environ, method='GET',
                                          swift_source='zerocloud')
             source_req.path_info = source_loc.path
+            source_req.query_string = None
             sink_req = Request.blank(req.path_info,
                                      environ=req.environ, headers=req.headers)
             source_resp = source_req.get_response(self.app)
@@ -1109,6 +1112,7 @@ class ClusterController(ObjectController):
             if not ns_server.port:
                 return HTTPServiceUnavailable(body='Cannot bind name service')
         exec_requests = []
+        load_data_resp = True
         for node in self.parser.node_list:
             nexe_headers = HeaderKeyDict({
                 'x-nexe-system': node.name,
@@ -1177,16 +1181,18 @@ class ClusterController(ObjectController):
                     repl_node.last_data = self.image_resp
                     self.image_resp.nodes.append({'node': repl_node,
                                                   'dev': 'image'})
-            if data_resp:
-                dev = self._needs_request_data(node, req)
-                if dev:
+            if node.data_in:
+                if not data_resp and load_data_resp:
+                    data_resp = self._load_input_from_chain(req, chunk_size)
+                    load_data_resp = False
+                if data_resp:
                     node.last_data = data_resp
                     data_resp.nodes.append({'node': node,
-                                            'dev': dev})
+                                            'dev': 'stdin'})
                     for repl_node in node.replicas:
                         repl_node.last_data = data_resp
                         data_resp.nodes.append({'node': repl_node,
-                                                'dev': dev})
+                                                'dev': 'stdin'})
             if not getattr(node, 'path_info', None):
                 node.path_info = path_info
             exec_request.node = node
@@ -1411,6 +1417,7 @@ class ClusterController(ObjectController):
                                          environ=request.environ,
                                          headers=request.headers)
                 dest_req.path_info = chan.path.path
+                dest_req.query_string = None
                 dest_req.method = 'PUT'
                 dest_req.headers['content-length'] = headers['Content-Length']
                 untar_stream.to_write = info.size
@@ -1610,6 +1617,7 @@ class RestController(ClusterController):
                 return
         config_req = req.copy_get()
         config_req.path_info = config_path
+        config_req.query_string = None
         config_resp = ObjectController(
             self.app,
             self.account_name,
@@ -1635,8 +1643,7 @@ class RestController(ClusterController):
     def GET(self, req):
         obj_req = req.copy_get()
         obj_req.method = 'HEAD'
-        if obj_req.environ.get('QUERY_STRING'):
-            obj_req.environ['QUERY_STRING'] = ''
+        obj_req.query_string = None
         run = False
         if self.object_name[-len('.nexe'):] == '.nexe':
             # let's get a small speedup as it's quite possibly an executable
@@ -1726,6 +1733,7 @@ class RestController(ClusterController):
                 self.cluster_config = config
                 return None
         config_req = req.copy_get()
+        config_req.query_string = None
         buffer_length = self.middleware.zerovm_maxconfig * 2
         config_req.range = 'bytes=0-%d' % (buffer_length - 1)
         config_resp = ObjectController(

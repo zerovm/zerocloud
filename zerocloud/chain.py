@@ -14,6 +14,9 @@ class ChainContext(WSGIContext):
 
     def handle_chain(self, env, start_response):
         total_time = 0
+        env['chain.input'] = env.get('wsgi.input')
+        env['chain.input_size'] = env.get('CONTENT_LENGTH', 0)
+        env['chain.input_type'] = env.get('CONTENT_TYPE')
         while True:
             start = time()
             resp = self._app_call(env)
@@ -39,6 +42,9 @@ class ChainContext(WSGIContext):
                        'Content-Type': 'application/json'}
             new_req = make_subrequest(env, method='POST', path=path, body=data,
                                       headers=headers, swift_source='chain')
+            new_req.environ['chain.input'] = env['chain.input']
+            new_req.environ['chain.input_size'] = env['chain.input_size']
+            new_req.environ['chain.input_type'] = env['chain.input_type']
             env = new_req.environ
 
     def do_chain_response(self, total_time):
