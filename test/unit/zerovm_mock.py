@@ -235,9 +235,9 @@ for fname, device, type, tag, rd, rd_byte, wr, wr_byte \
     if net_device:
         mnfst.channels[device]['path'] = '/dev/null'
     stddev.pop(device, 0)
-    if device == '/dev/stdin' or device == '/dev/input':
+    if device == '/dev/stdin':
         mnfst.input = mnfst.channels[device]
-    elif device == '/dev/stdout' or device == '/dev/output':
+    elif device == '/dev/stdout':
         mnfst.output = mnfst.channels[device]
     elif device == '/dev/stderr':
         mnfst.err = mnfst.channels[device]

@@ -1451,8 +1451,8 @@ def _set_pax_headers(headers, channel):
         'content-type': channel['content_type'],
         'x-zerovm-device': channel['device']
     })
-    headers.update(ch_headers)
-    return headers
+    ch_headers.update(headers)
+    return ch_headers
 
 
 def filter_factory(global_conf, **local_conf):
