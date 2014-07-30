@@ -298,6 +298,7 @@ class ZvmNode(object):
         self.attach = attach
         self.access = ''
         self.exe_name = exe_name
+        self.data_in = False
 
     def copy(self, id, name=None):
         newnode = deepcopy(self)

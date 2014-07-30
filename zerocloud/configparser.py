@@ -293,6 +293,8 @@ class ClusterConfigParser(object):
 
                     read_group = False
                     for chan in read_list:
+                        needs_data_in = (not chan.path
+                                         and chan.device == 'stdin')
                         if is_swift_path(chan.path) \
                                 and '*' in chan.path.path:
                             read_group = True
@@ -316,9 +318,13 @@ class ClusterConfigParser(object):
                                     new_node = self._get_or_create_node(
                                         zvm_node, index=i)
                                     new_node.add_channel(channel=chan)
+                                    if needs_data_in:
+                                        new_node.data_in = True
                             else:
                                 new_node = self._get_or_create_node(zvm_node)
                                 new_node.add_channel(channel=chan)
+                                if needs_data_in:
+                                        new_node.data_in = True
                     for chan in write_list:
                         if chan.path and is_swift_path(chan.path):
                             if '*' in chan.path.url:
