@@ -73,5 +73,5 @@ press 'ctrl+a backslash', then 'y' to confirm.
 
 To start DevStack again, type `./rejoin-stack.sh`. If you want to detach
 from this screen session (and return to the vagrant box shell), press
-+a d'. You can log out ('ctrl+d') of the box now if you want and
+'a d'. You can log out ('ctrl+d') of the box now if you want and
 everything will still be running.
