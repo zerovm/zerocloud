@@ -26,6 +26,10 @@ For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagr
 
     `vagrant up`
 
+5. Once everything is set up, you'll need to restart Devstack in order for the
+   ZeroCloud configurations to take effect. See `Restarting DevStack and
+   ZeroCloud` below.
+
 
 ### OSX
 
@@ -38,9 +42,36 @@ For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagr
 
     `vagrant up`
 
+4. Once everything is set up, you'll need to restart DevStack in order for the
+   ZeroCloud configurations to take effect. See `Restarting DevStack and
+   ZeroCloud` below.
+
+
 ## Client configuration
 
 You can use `python-swiftclient` and `zvm/zpm` with this vagrant box. To set
 the needed environment variables, just do:
 
     `source zerocloudrc`
+
+
+## Restarting DevStack and ZeroCloud
+
+First, log in to the vagrant box:
+
+`vagrant ssh`
+
+Next, we need to terminate DevStack:
+
+```bash
+cd $HOME/devstack
+./rejoin_stack.sh
+```
+
+This will put you into a screen session. To terminate DevStack,
+press 'ctrl+a backslash', then 'y' to confirm.
+
+To start DevStack again, type `./rejoin-stack.sh`. If you want to detach
+from this screen session (and return to the vagrant box shell), press
++a d'. You can log out ('ctrl+d') of the box now if you want and
+everything will still be running.
