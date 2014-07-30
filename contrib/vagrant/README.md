@@ -4,19 +4,19 @@
 
 1. Install VirtualBox:
 
-    `sudo apt-get install virtualbox`
+        sudo apt-get install virtualbox
 
 
 2. Install the latest version of Vagrant:
 
-```bash
-# 64-bit
-wget https://dl.bintray.com/mitchellh/vagrant/vagrant_1.6.3_x86_64.deb
-sudo dpkg -i vagrant_1.6.3_x86_64.deb
-# 32-bit
-wget https://dl.bintray.com/mitchellh/vagrant/vagrant_1.6.3_i686.deb
-sudo dpkg -i vagrant_1.6.3_i686.deb
-```
+    ```bash
+    # 64-bit
+    wget https://dl.bintray.com/mitchellh/vagrant/vagrant_1.6.3_x86_64.deb
+    sudo dpkg -i vagrant_1.6.3_x86_64.deb
+    # 32-bit
+    wget https://dl.bintray.com/mitchellh/vagrant/vagrant_1.6.3_i686.deb
+    sudo dpkg -i vagrant_1.6.3_i686.deb
+    ```
 
 For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagrant/.
 
@@ -24,11 +24,11 @@ For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagr
 
 4. Run Vagrant:
 
-    `vagrant up`
+        vagrant up
 
 5. Once everything is set up, you'll need to restart Devstack in order for the
-   ZeroCloud configurations to take effect. See `Restarting DevStack and
-   ZeroCloud` below.
+   ZeroCloud configurations to take effect. See [Restarting DevStack and
+   ZeroCloud][restart] below.
 
 
 ### OSX
@@ -40,11 +40,11 @@ For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagr
 
 3. Run Vagrant:
 
-    `vagrant up`
+        vagrant up
 
 4. Once everything is set up, you'll need to restart DevStack in order for the
-   ZeroCloud configurations to take effect. See `Restarting DevStack and
-   ZeroCloud` below.
+   ZeroCloud configurations to take effect. See [Restarting DevStack and
+   ZeroCloud][restart] below.
 
 
 ## Client configuration
@@ -52,7 +52,7 @@ For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagr
 You can use `python-swiftclient` and `zvm/zpm` with this vagrant box. To set
 the needed environment variables, just do:
 
-    `source zerocloudrc`
+    source zerocloudrc
 
 
 ## Restarting DevStack and ZeroCloud
@@ -73,5 +73,7 @@ press 'ctrl+a backslash', then 'y' to confirm.
 
 To start DevStack again, type `./rejoin-stack.sh`. If you want to detach
 from this screen session (and return to the vagrant box shell), press
-+a d'. You can log out ('ctrl+d') of the box now if you want and
+'a d'. You can log out ('ctrl+d') of the box now if you want and
 everything will still be running.
+
+[restart]: #restarting-devstack-and-zerocloud
