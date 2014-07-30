@@ -814,8 +814,8 @@ class ClusterController(ObjectController):
             if conn.error:
                 conn.nexe_headers['x-nexe-error'] = \
                     conn.error.replace('\n', '')
-                if conn.resp.status_int > final_response.status_int:
-                    final_response.status = conn.resp.status
+            if conn.resp.status_int > final_response.status_int:
+                final_response.status = conn.resp.status
             merge_headers(final_response.headers, conn.nexe_headers,
                           resp.headers)
             self._store_accounting_data(req, conn)
@@ -1412,6 +1412,9 @@ class ClusterController(ObjectController):
                     resp.content_type = headers['Content-Type']
                     check_headers_metadata(resp, headers, 'object', request,
                                            add_all=True)
+                    if resp.headers.get('status'):
+                        resp.status = resp.headers['status']
+                        del resp.headers['status']
                     return conn
                 dest_req = Request.blank(chan.path.path,
                                          environ=request.environ,
@@ -1641,6 +1644,9 @@ class RestController(ClusterController):
     @delay_denial
     @cors_validation
     def GET(self, req):
+        resp = self.handle_request(req)
+        if resp:
+            return resp
         obj_req = req.copy_get()
         obj_req.method = 'HEAD'
         obj_req.query_string = None
@@ -1697,31 +1703,33 @@ class RestController(ClusterController):
     @delay_denial
     @cors_validation
     def POST(self, req):
-        swift_path = SwiftPath.init(self.account_name, self.container_name,
-                                    self.object_name)
-        error = self.load_config(req, swift_path.path)
-        if error:
-            return error
-        # if we successfully got config, we know that we have a zapp in hand
-        if self.cluster_config:
-            req.headers['x-zerovm-source'] = swift_path.url
-            self.cgi_env = self.create_cgi_env(req)
-            return self.post_job(req)
+        resp = self.handle_request(req)
+        if resp:
+            return resp
         return HTTPNotImplemented(request=req)
 
     @delay_denial
     @cors_validation
     def PUT(self, req):
+        resp = self.handle_request(req)
+        if resp:
+            return resp
         return HTTPNotImplemented(request=req)
 
     @delay_denial
     @cors_validation
     def DELETE(self, req):
+        resp = self.handle_request(req)
+        if resp:
+            return resp
         return HTTPNotImplemented(request=req)
 
     @delay_denial
     @cors_validation
     def HEAD(self, req):
+        resp = self.handle_request(req)
+        if resp:
+            return resp
         return HTTPNotImplemented(request=req)
 
     def load_config(self, req, config_path):
@@ -1742,8 +1750,7 @@ class RestController(ClusterController):
             self.container_name,
             self.object_name).GET(config_req)
         if config_resp.status_int == HTTP_REQUESTED_RANGE_NOT_SATISFIABLE:
-            raise HTTPBadRequest(request=req,
-                                 body='Cannot execute empty object')
+            return None
         if not is_success(config_resp.status_int) or \
                 config_resp.content_length > buffer_length:
             return config_resp
@@ -1757,6 +1764,20 @@ class RestController(ClusterController):
                     memcache_key,
                     self.cluster_config,
                     time=float(self.middleware.zerovm_cache_config_timeout))
+        return None
+
+    def handle_request(self, req):
+        swift_path = SwiftPath.init(self.account_name, self.container_name,
+                                    self.object_name)
+        error = self.load_config(req, swift_path.path)
+        if error:
+            return error
+        # if we successfully got config, we know that we have a zapp in hand
+        if self.cluster_config:
+            self.cgi_env = self.create_cgi_env(req)
+            req.headers['x-zerovm-source'] = swift_path.url
+            req.method = 'POST'
+            return self.post_job(req)
         return None
 
 

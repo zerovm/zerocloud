@@ -3763,7 +3763,7 @@ class TestProxyQuery(unittest.TestCase):
         req.body_file = data
         req.content_length = len(random_data)
         res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 400)
+        self.assertEqual(res.status_int, 501)
         self.create_object(prolis, '/v1/a/c/myapp1', 'a')
         req = post_request()
         req.body_file = data
@@ -3784,3 +3784,191 @@ class TestProxyQuery(unittest.TestCase):
         req.content_length = len(random_data)
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 422)
+
+    def test_zapp_put(self):
+        self.setup_QUERY()
+        prosrv = _test_servers[0]
+        prolis = _test_sockets[0]
+        nexe = trim(r'''
+            import json
+            out = {
+                'data': sorted(id),
+                'env': zvm_environ
+            }
+            out = json.dumps(out)
+            fp = open(mnfst.channels['/dev/output']['path'], 'wb')
+            fp.write(out)
+            fp.close()
+            resp = '\n'.join([
+                'Status: 201 Created',
+                'Content-Type: text/html',
+                '', ''
+                ])
+            return resp
+            ''')
+        self.create_object(prolis, '/v1/a/c/put.zapp', nexe)
+        conf = [
+            {
+                'name': 'zapp-put',
+                'exec': {'path': 'swift://a/c/put.zapp'},
+                'devices': [
+                    {'name': 'stdin'},
+                    {'name': 'stdout',
+                     'content_type': 'message/cgi'},
+                    {'name': 'output',
+                     'content_type': 'application/json',
+                     'path': 'swift://./c/obj.json'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            self.create_object(prolis, '/v1/a/c/myapp',
+                               open(tar, 'rb').read(),
+                               content_type='application/x-tar')
+            req = Request.blank('/open/a/c/myapp',
+                                environ={'REQUEST_METHOD': 'PUT'},
+                                headers={
+                                    'Content-Type': 'application/x-pickle'})
+            random_data = self.get_random_numbers()
+            data = StringIO(random_data)
+            req.body_file = data
+            req.content_length = len(random_data)
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 201)
+            for status in res.headers['x-nexe-status'].split(','):
+                self.assertEqual(status, 'ok.')
+            self.assertNotIn('x-nexe-error', res.headers)
+            req = self.object_request('/v1/a/c/obj.json')
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            body = json.loads(res.body)
+            self.assertEqual(pickle.dumps(body['data']),
+                             self.get_sorted_numbers())
+            self.assertEqual(body['env']['REQUEST_METHOD'], 'PUT')
+            self.assertEqual(body['env']['REQUEST_URI'], '/open/a/c/myapp')
+            self.check_container_integrity(prosrv, '/v1/a/c', {})
+
+    def test_zapp_get(self):
+        self.setup_QUERY()
+        prosrv = _test_servers[0]
+        prolis = _test_sockets[0]
+        nexe = trim(r'''
+            import json
+            import urlparse
+            qs = zvm_environ['QUERY_STRING']
+            params = dict(urlparse.parse_qsl(qs, True))
+            start = int(params['start'])
+            end = int(params['end'])
+            out = {
+                'data': sorted(id)[start:end],
+                'env': zvm_environ
+            }
+            out = json.dumps(out)
+            resp = '\n'.join([
+                'Status: 200 OK',
+                'Content-Type: application/json',
+                '', ''
+                ])
+            return resp + out
+            ''')
+        self.create_object(prolis, '/v1/a/c/get.zapp', nexe)
+        conf = [
+            {
+                'name': 'zapp-get',
+                'exec': {'path': 'swift://a/c/get.zapp'},
+                'devices': [
+                    {'name': 'stdin',
+                     'path': 'swift://./c_in1/input1'},
+                    {'name': 'stdout',
+                     'content_type': 'message/cgi'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            self.create_object(prolis, '/v1/a/c/myapp',
+                               open(tar, 'rb').read(),
+                               content_type='application/x-tar')
+            req = Request.blank('/open/a/c/myapp',
+                                environ={'REQUEST_METHOD': 'GET'},
+                                headers={
+                                    'Content-Type': 'application/x-pickle'})
+            start = 1
+            end = 5
+            req.query_string = 'start=%d&end=%d' % (start, end)
+            res = req.get_response(prosrv)
+            self.executed_successfully(res)
+            body = json.loads(res.body)
+            self.assertEqual(pickle.dumps(body['data']),
+                             self.get_sorted_numbers(start, end))
+            self.assertEqual(body['env']['REQUEST_METHOD'], 'GET')
+            self.assertEqual(body['env']['REQUEST_URI'],
+                             '/open/a/c/myapp?start=%d&end=%d' % (start, end))
+            self.assertEqual(body['env']['SCRIPT_NAME'], 'zapp-get')
+            self.check_container_integrity(prosrv, '/v1/a/c', {})
+
+    def test_zapp_head(self):
+        self.setup_QUERY()
+        prosrv = _test_servers[0]
+        prolis = _test_sockets[0]
+        nexe = trim(r'''
+            import json
+            import urlparse
+            qs = zvm_environ['QUERY_STRING']
+            params = dict(urlparse.parse_qsl(qs, True))
+            start = int(params['start'])
+            end = int(params['end'])
+            out = {
+                'data': sorted(id)[start:end]
+            }
+            out = json.dumps(out)
+            resp = '\n'.join([
+                'Status: 200 OK',
+                'Content-Type: application/json',
+                'Content-Length: %d' % len(out),
+                'X-Seq-Start: %d' % start,
+                'X-Seq-End: %d' % end,
+                '', ''
+                ])
+            return resp
+            ''')
+        self.create_object(prolis, '/v1/a/c/get.zapp', nexe)
+        conf = [
+            {
+                'name': 'zapp-get',
+                'exec': {'path': 'swift://a/c/get.zapp'},
+                'devices': [
+                    {'name': 'stdin',
+                     'path': 'swift://./c_in1/input1'},
+                    {'name': 'stdout',
+                     'content_type': 'message/cgi'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            self.create_object(prolis, '/v1/a/c/myapp',
+                               open(tar, 'rb').read(),
+                               content_type='application/x-tar')
+            req = Request.blank('/open/a/c/myapp',
+                                environ={'REQUEST_METHOD': 'HEAD'},
+                                headers={
+                                    'Content-Type': 'application/x-pickle'})
+            start = 1
+            end = 5
+            req.query_string = 'start=%d&end=%d' % (start, end)
+            res = req.get_response(prosrv)
+            self.executed_successfully(res)
+            data = self.get_random_numbers()
+            out = {
+                'data': sorted(pickle.loads(data))[start:end]
+            }
+            out = json.dumps(out)
+            self.assertEqual(res.content_length, len(out))
+            self.assertEqual(res.headers['x-seq-start'], str(start))
+            self.assertEqual(res.headers['x-seq-end'], str(end))
+            self.check_container_integrity(prosrv, '/v1/a/c', {})
