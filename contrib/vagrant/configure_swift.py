@@ -2,6 +2,8 @@ from ConfigParser import ConfigParser
 
 
 def inject_before(some_list, item, target):
+    # make a copy
+    some_list = list(some_list)
     for i, each in enumerate(some_list):
         if each == target:
             some_list.insert(i, item)
@@ -9,35 +11,46 @@ def inject_before(some_list, item, target):
     else:
         # just append to the list:
         some_list.append(item)
+    return some_list
+
+
+def config_add_filter(file_path, filter_name, func_name, inject_b4,
+                      extras=None):
+    cp = ConfigParser()
+    cp.read(file_path)
+    filt = 'filter:%s' % filter_name
+    cp.add_section(filt)
+    cp.set(filt, 'use', 'egg:zerocloud#%s' % func_name)
+
+    if extras is not None:
+        for k, v in extras.items():
+            cp.set(filt, k, v)
+
+    pipeline = cp.get('pipeline:main', 'pipeline').split()
+    pipeline = inject_before(pipeline, filter_name, inject_b4)
+    cp.set('pipeline:main', 'pipeline', value=' '.join(pipeline))
+
+    with open(file_path, 'w') as fp:
+        cp.write(fp)
 
 
 if __name__ == '__main__':
-    cp = ConfigParser()
-    cp.read('/etc/swift/object-server/1.conf')
-    cp.add_section('filter:object-query')
-    cp.set('filter:object-query', 'use',
-           value='egg:zerocloud#object_query')
-    cp.set('filter:object-query', 'zerovm_sysimage_devices',
-           value='python2.7 /usr/share/zerovm/python.tar')
+    config_add_filter(
+        '/etc/swift/object-server/1.conf',
+        'object-query',
+        'object_query',
+        'object-server',
+        extras={
+            'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar'
+        }
+    )
 
-    pipeline = cp.get('pipeline:main', 'pipeline').split()
-    inject_before(pipeline, 'object-query', 'object-server')
-    cp.set('pipeline:main', 'pipeline', value=' '.join(pipeline))
-
-    with open('/etc/swift/object-server/1.conf', 'w') as fp:
-        cp.write(fp)
-
-    cp = ConfigParser()
-    cp.read('/etc/swift/proxy-server.conf')
-    cp.add_section('filter:proxy-query')
-    cp.set('filter:proxy-query', 'use',
-           value='egg:zerocloud#proxy_query')
-    cp.set('filter:proxy-query', 'zerovm_sysimage_devices',
-           value='python2.7 /usr/share/zerovm/python.tar')
-
-    pipeline = cp.get('pipeline:main', 'pipeline').split()
-    inject_before(pipeline, 'proxy-query', 'proxy-server')
-    cp.set('pipeline:main', 'pipeline', value=' '.join(pipeline))
-
-    with open('/etc/swift/proxy-server.conf', 'w') as fp:
-        cp.write(fp)
+    config_add_filter(
+        '/etc/swift/proxy-server.conf',
+        'proxy-query',
+        'proxy_query',
+        'proxy-server',
+        extras={
+            'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar'
+        }
+    )
