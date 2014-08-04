@@ -56,3 +56,20 @@ if __name__ == '__main__':
             'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar'
         }
     )
+
+    # proxy server job chaining middleware
+    config_add_filter(
+        '/etc/swift/proxy-server.conf',
+        'job-chain',
+        'job_chain',
+        'proxy-query'
+    )
+    config_add_filter(
+        '/etc/swift/container-server/1.conf',
+        'object-query',
+        'object_query',
+        'container-server',
+        extras={
+            'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar'
+        }
+    )
