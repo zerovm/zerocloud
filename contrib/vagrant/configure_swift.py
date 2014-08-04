@@ -35,6 +35,7 @@ def config_add_filter(file_path, filter_name, func_name, inject_b4,
 
 
 if __name__ == '__main__':
+    # basic ZeroVM object server config
     config_add_filter(
         '/etc/swift/object-server/1.conf',
         'object-query',
@@ -45,6 +46,7 @@ if __name__ == '__main__':
         }
     )
 
+    # basic ZeroVM proxy server config
     config_add_filter(
         '/etc/swift/proxy-server.conf',
         'proxy-query',
