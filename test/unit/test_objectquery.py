@@ -6,7 +6,6 @@ import unittest
 import os
 from time import time
 from eventlet import GreenPool
-from unittest.case import SkipTest
 from hashlib import md5
 from tempfile import mkstemp, mkdtemp
 from shutil import rmtree
@@ -14,26 +13,20 @@ from copy import copy
 import math
 import tarfile
 from eventlet.wsgi import Input
+from zerocloud import objectquery
 
 from swift.common import utils
-from swift.common.swob import Request
-from swift.common.utils import mkdirs, normalize_timestamp, get_logger
-from swift.obj.server import ObjectController
 from test.unit import FakeLogger, create_random_numbers, get_sorted_numbers, \
     create_tar
 from test.unit import trim
 
+from swift.common.swob import Request
+from swift.common.utils import mkdirs, normalize_timestamp, get_logger
+from swift.obj.server import ObjectController
 from test_proxyquery import ZEROVM_DEFAULT_MOCK
 from zerocloud.common import ZvmNode, ACCESS_READABLE, ACCESS_WRITABLE, \
-    NodeEncoder, ACCESS_CDR, \
-    parse_location, ACCESS_RANDOM, TAR_MIMES
-from zerocloud import objectquery
+    ACCESS_CDR, parse_location, ACCESS_RANDOM, TAR_MIMES
 from zerocloud.thread_pool import WaitPool, Zuid
-
-try:
-    import simplejson as json
-except ImportError:
-    import json
 
 
 def get_headers(self):
@@ -201,8 +194,7 @@ class TestObjectQuery(unittest.TestCase):
         with objectquery.TmpDir(tmpdir, 'sda1').mkstemp():
             self.assert_(os.path.exists(tmpdir))
 
-    def test_QUERY_realzvm(self):
-        raise SkipTest
+    def __test_QUERY_realzvm(self):
         orig_exe = self.app.zerovm_exename
         orig_sysimages = self.app.zerovm_sysimage_devices
         try:
@@ -219,8 +211,7 @@ class TestObjectQuery(unittest.TestCase):
             conf.add_new_channel(
                 'python-image', ACCESS_READABLE | ACCESS_RANDOM)
             conf.add_new_channel('image', ACCESS_CDR, removable='yes')
-            # print json.dumps(conf, cls=NodeEncoder, indent=2)
-            conf = json.dumps(conf, cls=NodeEncoder)
+            conf = conf.dumps()
             sysmap = StringIO(conf)
             image = open('/home/kit/python-script.tar', 'rb')
             with self.create_tar({'sysmap': sysmap, 'image': image}) as tar:
@@ -254,7 +245,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel(
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -294,7 +285,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel(
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -333,7 +324,7 @@ class TestObjectQuery(unittest.TestCase):
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel(
             'stdout', ACCESS_WRITABLE, content_type='message/http')
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         nexefile = StringIO(trim(r'''
             resp = '\n'.join([
@@ -385,7 +376,7 @@ class TestObjectQuery(unittest.TestCase):
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel(
             'stdout', ACCESS_WRITABLE, content_type='message/cgi')
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         nexefile = StringIO(trim(r'''
             resp = '\n'.join([
@@ -439,7 +430,7 @@ class TestObjectQuery(unittest.TestCase):
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel(
             'stdout', ACCESS_WRITABLE, content_type='message/http')
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         nexefile = StringIO(trim('''
             resp = '\\n'.join(['Status: 200 OK',
@@ -487,7 +478,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel(
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -527,7 +518,7 @@ class TestObjectQuery(unittest.TestCase):
         nexefile = StringIO(self._nexescript)
         conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -572,7 +563,7 @@ class TestObjectQuery(unittest.TestCase):
                              parse_location('swift://a/c/out'),
                              meta_data=meta,
                              content_type=content_type)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         timestamp = normalize_timestamp(time())
         req = Request.blank('/sda1/p/a/c/out',
@@ -621,7 +612,7 @@ class TestObjectQuery(unittest.TestCase):
                              meta_data=meta,
                              content_type=content_type)
         conf.add_new_channel('stderr', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         timestamp = normalize_timestamp(time())
         req = Request.blank('/sda1/p/a/c/out',
@@ -675,7 +666,7 @@ class TestObjectQuery(unittest.TestCase):
         nexefile = StringIO(self._nexescript)
         conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -702,7 +693,7 @@ class TestObjectQuery(unittest.TestCase):
         nexefile = StringIO(self._nexescript)
         conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -720,7 +711,7 @@ class TestObjectQuery(unittest.TestCase):
         nexefile = StringIO(self._nexescript)
         conf = ZvmNode(1, 'sort', '/c/exe')
         conf.add_new_channel('stderr', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -743,7 +734,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf.args = 'aaa bbb'
         conf.env = {'KEY_A': 'value_a', 'KEY_B': 'value_b'}
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -761,7 +752,7 @@ class TestObjectQuery(unittest.TestCase):
             'input', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel(
             'output', ACCESS_WRITABLE, parse_location('swift://a/c/o2'))
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -780,7 +771,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel(
             'stdout', ACCESS_WRITABLE, parse_location('swift://a/c/o2'))
         conf.add_new_channel('stderr', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -822,7 +813,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel(
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -858,7 +849,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel(
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             fp = open(tar, 'rb')
@@ -928,17 +919,16 @@ class TestObjectQuery(unittest.TestCase):
         self.assertEquals(resp.status_int, 500)
         self.assert_('Traceback' in resp.body)
 
-    def test_QUERY_script_invalid_etag(self):
+    def __test_QUERY_script_invalid_etag(self):
         # we cannot etag the tar stream because we mangle it while
         # transferring, on the fly
-        raise SkipTest
         self.setup_zerovm_query()
         req = self.zerovm_object_request()
         nexefile = StringIO(self._nexescript)
         conf = ZvmNode(1, 'sort', '/c/exe')
         conf.add_new_channel('stdin', ACCESS_READABLE, '/c/o')
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             fp = open(tar, 'rb')
@@ -1024,7 +1014,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel(
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -1049,7 +1039,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel(
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -1071,7 +1061,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel(
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -1094,7 +1084,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel(
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -1117,7 +1107,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel(
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             length = os.path.getsize(tar)
@@ -1137,7 +1127,7 @@ class TestObjectQuery(unittest.TestCase):
         self.setup_zerovm_query()
         nexefile = StringIO('return sleep(.2)')
         conf = ZvmNode(1, 'sleep', parse_location('swift://a/c/exe'))
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         maxreq_factor = 2
         r = range(0, maxreq_factor * 5)
@@ -1198,7 +1188,7 @@ class TestObjectQuery(unittest.TestCase):
             conf.add_new_channel(
                 'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
             conf.add_new_channel('stdout', ACCESS_WRITABLE)
-            conf = json.dumps(conf, cls=NodeEncoder)
+            conf = conf.dumps()
             sysmap = StringIO(conf)
             with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
                 self.create_object(
@@ -1227,7 +1217,7 @@ class TestObjectQuery(unittest.TestCase):
             conf.add_new_channel(
                 'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
             conf.add_new_channel('stdout', ACCESS_WRITABLE)
-            conf = json.dumps(conf, cls=NodeEncoder)
+            conf = conf.dumps()
             sysmap = StringIO(conf)
             with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
                 length = os.path.getsize(tar)
@@ -1276,7 +1266,7 @@ class TestObjectQuery(unittest.TestCase):
                 1, 'sysimage-test', parse_location('swift://a/c/exe'))
             conf.add_new_channel(dev, ACCESS_CDR)
             conf.add_new_channel('stdout', ACCESS_WRITABLE)
-            conf = json.dumps(conf, cls=NodeEncoder)
+            conf = conf.dumps()
             sysmap = StringIO(conf)
             with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
                 length = os.path.getsize(tar)
@@ -1317,7 +1307,7 @@ class TestObjectQuery(unittest.TestCase):
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf.add_new_channel('image', ACCESS_CDR)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'usr/bin/sort': nexefile}) as image_tar:
             with create_tar({'image': open(image_tar, 'rb'),
@@ -1363,7 +1353,7 @@ class TestObjectQuery(unittest.TestCase):
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf.add_new_channel('image', ACCESS_CDR)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'usr/bin/sort': nexefile}) as image_tar:
             import gzip
@@ -1422,7 +1412,7 @@ class TestObjectQuery(unittest.TestCase):
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
         conf.add_new_channel('image', ACCESS_CDR)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'usr/bin/sort': StringIO('bla-bla')}) as image_tar:
             with create_tar({'image': open(image_tar, 'rb'),
@@ -1465,7 +1455,7 @@ class TestObjectQuery(unittest.TestCase):
         nexefile = StringIO(self._nexescript)
         conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
         conf.add_new_channel('stdin', ACCESS_READABLE, 'bla-bla')
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'sysmap': sysmap, 'boot': nexefile}) as tar:
             length = os.path.getsize(tar)
@@ -1563,7 +1553,7 @@ class TestObjectQuery(unittest.TestCase):
         conf.add_new_channel(
             'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
         conf.add_new_channel('stdout', ACCESS_WRITABLE)
-        conf = json.dumps(conf, cls=NodeEncoder)
+        conf = conf.dumps()
         sysmap = StringIO(conf)
         with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
             req.headers['x-zerovm-valid'] = 'true'
@@ -1644,7 +1634,7 @@ class TestObjectQuery(unittest.TestCase):
             req = self.zerovm_object_request()
             nexefile = StringIO(self._nexescript)
             conf = ZvmNode(1, 'exit', parse_location('swift://a/c/exe'))
-            conf = json.dumps(conf, cls=NodeEncoder)
+            conf = conf.dumps()
             sysmap = StringIO(conf)
             with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
                 length = os.path.getsize(tar)
