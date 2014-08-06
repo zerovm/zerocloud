@@ -1577,17 +1577,6 @@ class ClusterController(ObjectController):
         # just dumps headers as a json object for now
         return json.dumps(dict(headers))
 
-    def replica_resolver(self, path_info, request=None):
-        if not request:
-            return self.app.get_object_ring(0).replica_count
-        try:
-            account, container, obj = split_path(path_info, 3, 3, True)
-        except ValueError:
-            return self.app.get_object_ring(0).replica_count
-        container_info = self.container_info(account, container, request)
-        ring = self.app.get_object_ring(container_info['storage_policy'])
-        return ring.replica_count
-
     @delay_denial
     @cors_validation
     def GET(self, req):
@@ -1848,24 +1837,6 @@ class ApiController(RestController):
                 time=float(self.middleware.zerovm_cache_config_timeout))
         self.config_path = config_path
         return None
-
-
-def _load_channel_data(node, extracted_file):
-    config = json.loads(extracted_file.read())
-    for new_ch in config['channels']:
-        old_ch = node.get_channel(device=new_ch['device'])
-        if old_ch:
-            old_ch.content_type = new_ch['content_type']
-            if new_ch.get('meta', None):
-                for k, v in new_ch.get('meta').iteritems():
-                    old_ch.meta[k] = v
-
-
-def _total_node_count(node_list):
-    count = 0
-    for n in node_list:
-        count += n.replicate
-    return count
 
 
 def _config_from_template(params, template, url):
