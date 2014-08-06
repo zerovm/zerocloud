@@ -1647,6 +1647,91 @@ class RestController(ClusterController):
         resp = self.handle_request(req)
         if resp:
             return resp
+        if self.object_name:
+            return self.handle_object_open(req)
+        return HTTPNotImplemented(request=req)
+
+    @delay_denial
+    @cors_validation
+    def POST(self, req):
+        resp = self.handle_request(req)
+        if resp:
+            return resp
+        return HTTPNotImplemented(request=req)
+
+    @delay_denial
+    @cors_validation
+    def PUT(self, req):
+        resp = self.handle_request(req)
+        if resp:
+            return resp
+        return HTTPNotImplemented(request=req)
+
+    @delay_denial
+    @cors_validation
+    def DELETE(self, req):
+        resp = self.handle_request(req)
+        if resp:
+            return resp
+        return HTTPNotImplemented(request=req)
+
+    @delay_denial
+    @cors_validation
+    def HEAD(self, req):
+        resp = self.handle_request(req)
+        if resp:
+            return resp
+        return HTTPNotImplemented(request=req)
+
+    def load_config(self, req, config_path):
+        memcache_client = cache_from_env(req.environ)
+        memcache_key = 'zvmapp' + config_path.path
+        if memcache_client:
+            config = memcache_client.get(memcache_key)
+            if config:
+                self.cluster_config = config
+                return None
+        config_req = req.copy_get()
+        config_req.query_string = None
+        buffer_length = self.middleware.zerovm_maxconfig * 2
+        config_req.range = 'bytes=0-%d' % (buffer_length - 1)
+        config_resp = ObjectController(
+            self.app,
+            self.account_name,
+            self.container_name,
+            self.object_name).GET(config_req)
+        if config_resp.status_int == HTTP_REQUESTED_RANGE_NOT_SATISFIABLE:
+            return None
+        if not is_success(config_resp.status_int) or \
+                config_resp.content_length > buffer_length:
+            return config_resp
+        if config_resp.content_type in TAR_MIMES + ['application/x-gzip']:
+            chunk_size = self.middleware.network_chunk_size
+            config_req.bytes_transferred = 0
+            self.read_system_map(config_resp.app_iter, chunk_size,
+                                 config_resp.content_type, config_req)
+            if memcache_client and self.cluster_config:
+                memcache_client.set(
+                    memcache_key,
+                    self.cluster_config,
+                    time=float(self.middleware.zerovm_cache_config_timeout))
+        return None
+
+    def handle_request(self, req):
+        swift_path = SwiftPath.init(self.account_name, self.container_name,
+                                    self.object_name)
+        error = self.load_config(req, swift_path)
+        if error:
+            return error
+        # if we successfully got config, we know that we have a zapp in hand
+        if self.cluster_config:
+            self.cgi_env = self.create_cgi_env(req)
+            req.headers['x-zerovm-source'] = swift_path.url
+            req.method = 'POST'
+            return self.post_job(req)
+        return None
+
+    def handle_object_open(self, req):
         obj_req = req.copy_get()
         obj_req.method = 'HEAD'
         obj_req.query_string = None
@@ -1699,86 +1784,6 @@ class RestController(ClusterController):
         if obj_req.method in 'GET':
             self.exe_resp = obj_resp
         return self.post_job(post_req)
-
-    @delay_denial
-    @cors_validation
-    def POST(self, req):
-        resp = self.handle_request(req)
-        if resp:
-            return resp
-        return HTTPNotImplemented(request=req)
-
-    @delay_denial
-    @cors_validation
-    def PUT(self, req):
-        resp = self.handle_request(req)
-        if resp:
-            return resp
-        return HTTPNotImplemented(request=req)
-
-    @delay_denial
-    @cors_validation
-    def DELETE(self, req):
-        resp = self.handle_request(req)
-        if resp:
-            return resp
-        return HTTPNotImplemented(request=req)
-
-    @delay_denial
-    @cors_validation
-    def HEAD(self, req):
-        resp = self.handle_request(req)
-        if resp:
-            return resp
-        return HTTPNotImplemented(request=req)
-
-    def load_config(self, req, config_path):
-        memcache_client = cache_from_env(req.environ)
-        memcache_key = 'zvmapp' + config_path
-        if memcache_client:
-            config = memcache_client.get(memcache_key)
-            if config:
-                self.cluster_config = config
-                return None
-        config_req = req.copy_get()
-        config_req.query_string = None
-        buffer_length = self.middleware.zerovm_maxconfig * 2
-        config_req.range = 'bytes=0-%d' % (buffer_length - 1)
-        config_resp = ObjectController(
-            self.app,
-            self.account_name,
-            self.container_name,
-            self.object_name).GET(config_req)
-        if config_resp.status_int == HTTP_REQUESTED_RANGE_NOT_SATISFIABLE:
-            return None
-        if not is_success(config_resp.status_int) or \
-                config_resp.content_length > buffer_length:
-            return config_resp
-        if config_resp.content_type in TAR_MIMES + ['application/x-gzip']:
-            chunk_size = self.middleware.network_chunk_size
-            config_req.bytes_transferred = 0
-            self.read_system_map(config_resp.app_iter, chunk_size,
-                                 config_resp.content_type, config_req)
-            if memcache_client and self.cluster_config:
-                memcache_client.set(
-                    memcache_key,
-                    self.cluster_config,
-                    time=float(self.middleware.zerovm_cache_config_timeout))
-        return None
-
-    def handle_request(self, req):
-        swift_path = SwiftPath.init(self.account_name, self.container_name,
-                                    self.object_name)
-        error = self.load_config(req, swift_path.path)
-        if error:
-            return error
-        # if we successfully got config, we know that we have a zapp in hand
-        if self.cluster_config:
-            self.cgi_env = self.create_cgi_env(req)
-            req.headers['x-zerovm-source'] = swift_path.url
-            req.method = 'POST'
-            return self.post_job(req)
-        return None
 
 
 def _load_channel_data(node, extracted_file):
