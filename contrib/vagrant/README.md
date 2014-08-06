@@ -61,7 +61,8 @@ First, log in to the vagrant box:
 
 `vagrant ssh`
 
-Next, we need to terminate DevStack:
+Next, we need to terminate all of the DevStack processes. The first time you do
+this, you need to use a little brute force. First, run `rejoin_stack.sh`:
 
 ```bash
 cd $HOME/devstack
@@ -69,11 +70,24 @@ cd $HOME/devstack
 ```
 
 This will put you into a screen session. To terminate DevStack,
-press 'ctrl+a backslash', then 'y' to confirm.
+press 'ctrl+a backslash', then 'y' to confirm. NOTE: The first time you restart
+DevStack after provisioning the machine, not all of the Swift processes will be
+killed. A little brute force is needed:
 
-To start DevStack again, type `./rejoin-stack.sh`. If you want to detach
-from this screen session (and return to the vagrant box shell), press
-'ctrl+a d'. You can log out ('ctrl+d') of the box now if you want and
-everything will still be running.
+`ps ax | grep [s]wift | awk '{print $1}' | xargs kill`
+
+Now restart DevStack:
+
+```bash
+cd $HOME/devstack
+./rejoin_stack.sh
+```
+
+If you make configuration changes after this first DevStack restart, subsequent
+restarts are easier. Run `rejoin_stack.sh` as above, press 'ctrl+a backslash',
+'y' to confirm, then run `rejoin_stack.sh` again.
+
+To log out of the vagrant box and keep everything running, press 'ctrl+a d' to
+detach from the screen session. You can now log out of the box ('ctrl+d').
 
 [restart]: #restarting-devstack-and-zerocloud
