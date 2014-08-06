@@ -3666,6 +3666,92 @@ class TestProxyQuery(unittest.TestCase):
         self.assertEqual(res.body, 'Quick brown fox')
         self.assertEqual(res.content_type, 'text/plain')
 
+    def test_restful_job_chain_with_payload(self):
+        self.setup_QUERY()
+        data = pickle.dumps('Quick brown fox', protocol=0)
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe = trim(r'''
+            import json
+            import urlparse
+            qs = zvm_environ['QUERY_STRING']
+            params = dict(urlparse.parse_qsl(qs, True))
+            path_info = zvm_environ['PATH_INFO']
+            conf = [
+                {
+                    'name': 'store',
+                    'exec': {'path': 'swift://a/c/store'},
+                    'file_list': [
+                        {
+                            'device': 'stdout',
+                            'path': 'swift:/%s' % path_info,
+                            'content_type': params['content_type']
+                        },
+                        {
+                            'device': 'stdin'
+                        }
+                    ]
+                }
+            ]
+            out = json.dumps(conf, indent=2)
+            resp = '\n'.join([
+                'HTTP/1.1 200 OK',
+                'Content-Type: application/json',
+                'X-Zerovm-Execute: 1.0',
+                '', ''
+                ])
+            return resp + out
+            ''')
+        self.create_object(prolis, '/v1/a/c/receive', nexe)
+        nexe = trim(r'''
+            return id
+            ''')
+        self.create_object(prolis, '/v1/a/c/store', nexe)
+        req = Request.blank('/v1/a/c',
+                            environ={'REQUEST_METHOD': 'POST'},
+                            headers={
+                                'X-Container-Meta-Rest-Endpoint':
+                                'swift://a/c/myapp'})
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 204)
+        req = Request.blank('/v1/a/c',
+                            environ={'REQUEST_METHOD': 'HEAD'})
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 204)
+        self.assertEqual(res.headers['X-Container-Meta-Rest-Endpoint'],
+                         'swift://a/c/myapp')
+        conf = [
+            {
+                'name': 'http',
+                'exec': {'path': 'swift://a/c/receive'},
+                'file_list': [
+                    {
+                        'device': 'stdout',
+                        'content_type': 'message/http'
+                    }
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            self.create_object(prolis, '/v1/a/c/myapp',
+                               open(tar, 'rb').read(),
+                               content_type='application/x-tar')
+            req = Request.blank('/api/a/c/my_object',
+                                environ={'REQUEST_METHOD': 'PUT'},
+                                headers={
+                                    'Content-Type': 'application/x-pickle'})
+            req.query_string = 'content_type=text/plain'
+            req.body = data
+            res = req.get_response(prosrv)
+            self.executed_successfully(res)
+            req = self.object_request('/v1/a/c/my_object')
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.body, 'Quick brown fox')
+            self.assertEqual(res.content_type, 'text/plain')
+
     def test_setting_nexe_headers(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
