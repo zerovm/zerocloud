@@ -9,8 +9,7 @@ def inject_before(some_list, item, target):
             some_list.insert(i, item)
             break
     else:
-        # just append to the list:
-        some_list.append(item)
+        raise RuntimeError("'%s' not found in pipeline" % target)
     return some_list
 
 
