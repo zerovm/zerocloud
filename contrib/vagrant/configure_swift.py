@@ -15,6 +15,18 @@ def inject_before(some_list, item, target):
 
 def config_add_filter(file_path, filter_name, func_name, inject_b4,
                       extras=None):
+    """
+    :param file_path:
+        Path to the Swift config file.
+    :param filter_name:
+        Name of the filter. This is the name that will be used to reference the
+        filter in the pipeline configuration.
+    :param func_name:
+        Middleware function name.
+    :param inject_b4:
+        When inserting a filter into the pipeline, place the filter (indicated
+        by `filter_name`) before `inject_b4`.
+    """
     cp = ConfigParser()
     cp.read(file_path)
     filt = 'filter:%s' % filter_name
