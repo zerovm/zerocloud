@@ -2,6 +2,8 @@
 
 ## Requests
 
+### Open requests
+
 To request a REST service endpoint the following request format can be used:
 
     <METHOD> /open/<account>/<container>/<zerovm app path>?<query string>
@@ -19,10 +21,33 @@ If you have a trouble using `/open/...` endpoint you can use standard
 `X-Auth-Storage-Url` but will have to set additional header: 
 `X-Zerovm-Execute: open/1.0`
 
+### Api requests
+
+To request a REST service endpoint the following request format can be used:
+
+    <METHOD> /api/<account>/<container>/<arbitrary path>?<query string>
+
+Where:
+ 
+- `<METHOD>` can be: `GET`, `HEAD`, `POST`, `PUT`, `DELETE`
+- `<account>` is the account name from `X-Auth-Storage-Url`
+- `<container>` is the container name
+- `<arbitrary path>` is the REST url that you will be able to use in your 
+application, `/<account>/<container>/<arbitrary path>` will be available as 
+`PATH_INFO` environment variable
+- `<query string>` is the request query string
+
+If you have a trouble using `/api/...` endpoint you can use standard 
+`X-Auth-Storage-Url` but will have to set additional header: 
+`X-Zerovm-Execute: api/1.0`
+
 ## How does it work?
 
 Your application will be invoked by fetching the `boot/system.map` from the 
 application archive and executing a job stored there.
+
+In case of Api request not only application archives could be used but also 
+any json object that adheres to servlet format (see `doc/Servlets.md`)
 
 Your application will get the `QUERY_STRING` and all other CGI-like 
 environment variables set in the environment. Including `REQUEST_METHOD`, 

@@ -53,7 +53,7 @@ from zerocloud.tarstream import StringBuffer, UntarStream, \
 from zerocloud.thread_pool import Zuid
 
 
-ZEROVM_COMMANDS = ['open']
+ZEROVM_COMMANDS = ['open', 'api']
 ZEROVM_EXECUTE = 'x-zerovm-execute'
 
 try:
@@ -588,6 +588,11 @@ class ProxyQueryMiddleware(object):
                 return RestController(self.app, account, container, obj, self,
                                       version)
             return None
+        elif version == 'api/1.0':
+            if container:
+                return ApiController(self.app, account, container, obj, self,
+                                     version)
+            return None
         return ClusterController(self.app, account, container, obj, self,
                                  version)
 
@@ -860,6 +865,7 @@ class ClusterController(ObjectController):
         return final_response
 
     def read_system_map(self, read_iter, chunk_size, content_type, req):
+        upload_expiration = time.time() + self.middleware.max_upload_time
         try:
             if content_type in ['application/x-gzip']:
                 read_iter = gunzip_iter(read_iter, chunk_size)
@@ -868,6 +874,8 @@ class ClusterController(ObjectController):
             untar_stream = UntarStream(read_iter, path_list)
             for chunk in untar_stream:
                 req.bytes_transferred += len(chunk)
+                if time.time() > upload_expiration:
+                    raise HTTPRequestTimeout(request=req)
         except (ReadError, zlib.error):
             raise HTTPUnprocessableEntity(
                 request=req,
@@ -894,13 +902,32 @@ class ClusterController(ObjectController):
                 data_resp.nodes = []
         return data_resp
 
+    def read_json_job(self, req, req_iter):
+        etag = md5()
+        upload_expiration = time.time() + self.middleware.max_upload_time
+        for chunk in req_iter:
+            req.bytes_transferred += len(chunk)
+            if time.time() > upload_expiration:
+                raise HTTPRequestTimeout(request=req)
+            if req.bytes_transferred > \
+                    self.middleware.zerovm_maxconfig:
+                raise HTTPRequestEntityTooLarge(request=req)
+            etag.update(chunk)
+            self.cluster_config += chunk
+        if 'content-length' in req.headers and \
+                int(req.headers['content-length']) != req.bytes_transferred:
+            raise HTTPClientDisconnect(request=req,
+                                       body='application/json '
+                                            'POST unfinished')
+        etag = etag.hexdigest()
+        if 'etag' in req.headers and req.headers['etag'].lower() != etag:
+            raise HTTPUnprocessableEntity(request=req)
+
     def post_job(self, req):
         chunk_size = self.middleware.network_chunk_size
         if 'content-type' not in req.headers:
             return HTTPBadRequest(request=req,
                                   body='Must specify Content-Type')
-        upload_expiration = time.time() + self.middleware.max_upload_time
-        etag = md5()
         rdata = req.environ['wsgi.input']
         req_iter = iter(lambda: rdata.read(chunk_size), '')
         data_resp = None
@@ -970,24 +997,7 @@ class ClusterController(ObjectController):
         elif req_content_type in 'application/json':
             # System map was sent as a POST body
             if not self.cluster_config:
-                for chunk in req_iter:
-                    req.bytes_transferred += len(chunk)
-                    if time.time() > upload_expiration:
-                        return HTTPRequestTimeout(request=req)
-                    if req.bytes_transferred > \
-                            self.middleware.zerovm_maxconfig:
-                        return HTTPRequestEntityTooLarge(request=req)
-                    etag.update(chunk)
-                    self.cluster_config += chunk
-                if 'content-length' in req.headers and \
-                   int(req.headers['content-length']) != req.bytes_transferred:
-                    return HTTPClientDisconnect(request=req,
-                                                body='application/json '
-                                                     'POST unfinished')
-                etag = etag.hexdigest()
-                if 'etag' in req.headers and\
-                   req.headers['etag'].lower() != etag:
-                    return HTTPUnprocessableEntity(request=req)
+                self.read_json_job(req, req_iter)
             try:
                 cluster_config = json.loads(self.cluster_config)
             except Exception:
@@ -1607,6 +1617,8 @@ class ClusterController(ObjectController):
 
 class RestController(ClusterController):
 
+    config_path = None
+
     def _get_content_config(self, req, content_type):
         req.template = None
         cont = self.middleware.zerovm_registry_path
@@ -1647,6 +1659,93 @@ class RestController(ClusterController):
         resp = self.handle_request(req)
         if resp:
             return resp
+        if self.object_name:
+            return self.handle_object_open(req)
+        return HTTPNotImplemented(request=req)
+
+    @delay_denial
+    @cors_validation
+    def POST(self, req):
+        resp = self.handle_request(req)
+        if resp:
+            return resp
+        return HTTPNotImplemented(request=req)
+
+    @delay_denial
+    @cors_validation
+    def PUT(self, req):
+        resp = self.handle_request(req)
+        if resp:
+            return resp
+        return HTTPNotImplemented(request=req)
+
+    @delay_denial
+    @cors_validation
+    def DELETE(self, req):
+        resp = self.handle_request(req)
+        if resp:
+            return resp
+        return HTTPNotImplemented(request=req)
+
+    @delay_denial
+    @cors_validation
+    def HEAD(self, req):
+        resp = self.handle_request(req)
+        if resp:
+            return resp
+        return HTTPNotImplemented(request=req)
+
+    def load_config(self, req, config_path):
+        memcache_client = cache_from_env(req.environ)
+        memcache_key = 'zvmapp' + config_path.path
+        if memcache_client:
+            config = memcache_client.get(memcache_key)
+            if config:
+                self.cluster_config = config
+                return None
+        config_req = req.copy_get()
+        config_req.path_info = config_path.path
+        config_req.query_string = None
+        buffer_length = self.middleware.zerovm_maxconfig * 2
+        config_req.range = 'bytes=0-%d' % (buffer_length - 1)
+        config_resp = ObjectController(
+            self.app,
+            self.account_name,
+            self.container_name,
+            self.object_name).GET(config_req)
+        if config_resp.status_int == HTTP_REQUESTED_RANGE_NOT_SATISFIABLE:
+            return None
+        if not is_success(config_resp.status_int) or \
+                config_resp.content_length > buffer_length:
+            return config_resp
+        if config_resp.content_type in TAR_MIMES + ['application/x-gzip']:
+            chunk_size = self.middleware.network_chunk_size
+            config_req.bytes_transferred = 0
+            self.read_system_map(config_resp.app_iter, chunk_size,
+                                 config_resp.content_type, config_req)
+            if memcache_client and self.cluster_config:
+                memcache_client.set(
+                    memcache_key,
+                    self.cluster_config,
+                    time=float(self.middleware.zerovm_cache_config_timeout))
+        self.config_path = config_path
+        return None
+
+    def handle_request(self, req):
+        swift_path = SwiftPath.init(self.account_name, self.container_name,
+                                    self.object_name)
+        error = self.load_config(req, swift_path)
+        if error:
+            return error
+        # if we successfully got config, we know that we have a zapp in hand
+        if self.cluster_config:
+            self.cgi_env = self.create_cgi_env(req)
+            req.headers['x-zerovm-source'] = self.config_path.url
+            req.method = 'POST'
+            return self.post_job(req)
+        return None
+
+    def handle_object_open(self, req):
         obj_req = req.copy_get()
         obj_req.method = 'HEAD'
         obj_req.query_string = None
@@ -1700,47 +1799,27 @@ class RestController(ClusterController):
             self.exe_resp = obj_resp
         return self.post_job(post_req)
 
-    @delay_denial
-    @cors_validation
-    def POST(self, req):
-        resp = self.handle_request(req)
-        if resp:
-            return resp
-        return HTTPNotImplemented(request=req)
 
-    @delay_denial
-    @cors_validation
-    def PUT(self, req):
-        resp = self.handle_request(req)
-        if resp:
-            return resp
-        return HTTPNotImplemented(request=req)
-
-    @delay_denial
-    @cors_validation
-    def DELETE(self, req):
-        resp = self.handle_request(req)
-        if resp:
-            return resp
-        return HTTPNotImplemented(request=req)
-
-    @delay_denial
-    @cors_validation
-    def HEAD(self, req):
-        resp = self.handle_request(req)
-        if resp:
-            return resp
-        return HTTPNotImplemented(request=req)
+class ApiController(RestController):
 
     def load_config(self, req, config_path):
         memcache_client = cache_from_env(req.environ)
-        memcache_key = 'zvmapp' + config_path
+        memcache_key = 'zvmapp' + config_path.path
         if memcache_client:
             config = memcache_client.get(memcache_key)
             if config:
                 self.cluster_config = config
                 return None
+        container_info = self.container_info(self.account_name,
+                                             self.container_name, req)
+        source = container_info['meta'].get('rest-endpoint')
+        if not source:
+            raise HTTPNotFound(request=req,
+                               body='No API endpoint configured for '
+                                    'container %s' % self.container_name)
+        config_path = parse_location(unquote(source))
         config_req = req.copy_get()
+        config_req.path_info = config_path.path
         config_req.query_string = None
         buffer_length = self.middleware.zerovm_maxconfig * 2
         config_req.range = 'bytes=0-%d' % (buffer_length - 1)
@@ -1759,25 +1838,16 @@ class RestController(ClusterController):
             config_req.bytes_transferred = 0
             self.read_system_map(config_resp.app_iter, chunk_size,
                                  config_resp.content_type, config_req)
-            if memcache_client and self.cluster_config:
-                memcache_client.set(
-                    memcache_key,
-                    self.cluster_config,
-                    time=float(self.middleware.zerovm_cache_config_timeout))
-        return None
-
-    def handle_request(self, req):
-        swift_path = SwiftPath.init(self.account_name, self.container_name,
-                                    self.object_name)
-        error = self.load_config(req, swift_path.path)
-        if error:
-            return error
-        # if we successfully got config, we know that we have a zapp in hand
-        if self.cluster_config:
-            self.cgi_env = self.create_cgi_env(req)
-            req.headers['x-zerovm-source'] = swift_path.url
-            req.method = 'POST'
-            return self.post_job(req)
+        elif config_resp.content_type in ['application/json']:
+            config_req.bytes_transferred = 0
+            config_req.content_length = config_resp.content_length
+            self.read_json_job(config_req, config_resp.app_iter)
+        if memcache_client and self.cluster_config:
+            memcache_client.set(
+                memcache_key,
+                self.cluster_config,
+                time=float(self.middleware.zerovm_cache_config_timeout))
+        self.config_path = config_path
         return None
 
 
