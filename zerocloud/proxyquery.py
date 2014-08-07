@@ -713,7 +713,8 @@ class ClusterController(ObjectController):
             exec_request.path_info = node.path_info
             exec_request.headers['x-zerovm-access'] = node.access
             if node.replicate > 1:
-                container_info = self.container_info(account, container)
+                container_info = self.container_info(account, container,
+                                                     exec_request)
                 container_partition = container_info['partition']
                 containers = container_info['nodes']
                 exec_headers = self._backend_requests(exec_request,
@@ -782,8 +783,6 @@ class ClusterController(ObjectController):
                 source_req.headers['X-Zerovm-Valid'] = 'true'
             acct, src_container_name, src_obj_name =\
                 split_path(load_from, 1, 3, True)
-            container_info = self.container_info(acct, src_container_name)
-            source_req.acl = container_info['read_acl']
             # left here for exec_acl support
             # if 'boot' in ch.device:
             #     source_req.acl = container_info['exec_acl']
@@ -852,7 +851,7 @@ class ClusterController(ObjectController):
                 req)
         if self.middleware.zerovm_use_cors and self.container_name:
             container_info = self.container_info(self.account_name,
-                                                 self.container_name)
+                                                 self.container_name, req)
             if container_info.get('cors', None):
                 if container_info['cors'].get('allow_origin', None):
                     final_response.headers['access-control-allow-origin'] = \
@@ -1810,8 +1809,8 @@ class ApiController(RestController):
             if config:
                 self.cluster_config = config
                 return None
-        container_info = self.container_info(self.account_name,
-                                             self.container_name, req)
+        container_info = self.container_info(config_path.account,
+                                             config_path.container, req)
         source = container_info['meta'].get('rest-endpoint')
         if not source:
             raise HTTPNotFound(request=req,
@@ -1825,9 +1824,9 @@ class ApiController(RestController):
         config_req.range = 'bytes=0-%d' % (buffer_length - 1)
         config_resp = ObjectController(
             self.app,
-            self.account_name,
-            self.container_name,
-            self.object_name).GET(config_req)
+            config_path.account,
+            config_path.container,
+            config_path.obj).GET(config_req)
         if config_resp.status_int == HTTP_REQUESTED_RANGE_NOT_SATISFIABLE:
             return None
         if not is_success(config_resp.status_int) or \
