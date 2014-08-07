@@ -12,14 +12,9 @@ from test.unit import FakeLogger, create_tar, trim
 from test.unit.test_proxyquery import ZEROVM_DEFAULT_MOCK
 from zerocloud import objectquery
 from zerocloud.common import ZvmNode, parse_location, ACCESS_READABLE, \
-    ACCESS_WRITABLE, NodeEncoder
+    ACCESS_WRITABLE, NodeEncoder, json
 from zerocloud.thread_pool import Zuid
 from eventlet.wsgi import Input
-
-try:
-    import simplejson as json
-except ImportError:
-    import json
 
 
 class FakeApp(ContainerController):
@@ -111,6 +106,7 @@ class TestContainerQuery(unittest.TestCase):
         req = self.zerovm_container_request()
         nexescript = trim(r'''
             import sqlite3
+            from zerocloud.common import json
             db_path = mnfst.channels['/dev/input']['path']
             con = sqlite3.connect(db_path)
             cursor = con.cursor()

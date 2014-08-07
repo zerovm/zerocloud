@@ -8,10 +8,6 @@ import unittest
 
 import swift
 
-try:
-    import simplejson as json
-except ImportError:
-    import json
 from swift.proxy import server as proxy_server
 from swift.account import server as account_server
 from swift.common.middleware import proxy_logging
@@ -26,6 +22,7 @@ from swift.common.storage_policy import StoragePolicy, \
     StoragePolicyCollection, POLICIES
 from test.unit import debug_logger, FakeMemcache, write_fake_ring, FakeRing
 from zerocloud import queue
+from zerocloud.common import json
 
 _test_coros = _test_servers = _test_sockets = _orig_container_listing_limit = \
     _testdir = _orig_SysLogHandler = _orig_POLICIES = _test_POLICIES = None

@@ -10,15 +10,6 @@ from argparse import ArgumentParser
 from eventlet import GreenPool, listen
 from nvram_parser import read_env
 
-try:
-    import simplejson as json
-except ImportError:
-    import json
-# NOTE(LB): This assert is here to silence pyflakes, because it complains about
-# an unused import. If we remove the import, however, some tests will fail.
-# I'm not exactly sure why. There's some funny monkey patching going on here.
-assert json
-
 
 def errdump(zvm_errcode, nexe_validity, nexe_errcode, nexe_etag,
             nexe_accounting, status_line):
