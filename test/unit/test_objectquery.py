@@ -1648,5 +1648,24 @@ class TestObjectQuery(unittest.TestCase):
                 )
             os.unlink(zerovm)
 
+
+class TestUtils(unittest.TestCase):
+    """
+    Tests for misc. utilities in :mod:`zerocloud.objectquery`.
+    """
+
+    def test_get_zerovm_sysimage_devices(self):
+        conf = dict(zerovm_sysimage_devices='image1 path1 image2 path2')
+        exp = dict(image1='path1', image2='path2')
+
+        self.assertEqual(exp, objectquery.get_zerovm_sysimage_devices(conf))
+
+        # If there are any trailing items in the list (that is, an odd number
+        # of list items), just ignore them:
+        conf = dict(zerovm_sysimage_devices='image1 path1 image2')
+        exp = dict(image1='path1')
+        self.assertEqual(exp, objectquery.get_zerovm_sysimage_devices(conf))
+
+
 if __name__ == '__main__':
     unittest.main()
