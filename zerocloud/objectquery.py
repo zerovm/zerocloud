@@ -487,11 +487,10 @@ class ObjectQueryMiddleware(object):
             return False
         try:
             channels['boot'] = os.path.join(zerovm_tmp, 'boot')
-            fp = open(channels['boot'], 'wb')
-            reader = iter(lambda: nexe.read(self.disk_chunk_size), '')
-            for chunk in reader:
-                fp.write(chunk)
-            fp.close()
+            with open(channels['boot'], 'wb') as fp:
+                reader = iter(lambda: nexe.read(self.disk_chunk_size), '')
+                for chunk in reader:
+                    fp.write(chunk)
             return True
         except IOError:
             pass
@@ -724,21 +723,20 @@ class ObjectQueryMiddleware(object):
                                 untar_stream.untar_file_iter(),
                                 self.network_chunk_size)
                         channels[fname] = os.path.join(zerovm_tmp, fname)
-                        fp = open(channels[fname], 'ab')
-                        untar_stream.to_write = info.size
-                        untar_stream.offset_data = info.offset_data
-                        try:
-                            for data in file_iter:
-                                fp.write(data)
-                                perf = "%s %s:%.3f" % (perf,
-                                                       info.name,
-                                                       time.time() - start)
-                        except zlib.error:
-                            return HTTPUnprocessableEntity(
-                                request=req,
-                                body='Failed to inflate gzipped image',
-                                headers=nexe_headers)
-                        fp.close()
+                        with open(channels[fname], 'ab') as fp:
+                            untar_stream.to_write = info.size
+                            untar_stream.offset_data = info.offset_data
+                            try:
+                                for data in file_iter:
+                                    fp.write(data)
+                                    perf = "%s %s:%.3f" % (perf,
+                                                           info.name,
+                                                           time.time() - start)
+                            except zlib.error:
+                                return HTTPUnprocessableEntity(
+                                    request=req,
+                                    body='Failed to inflate gzipped image',
+                                    headers=nexe_headers)
                     info = untar_stream.get_next_tarinfo()
             if 'content-length' in req.headers \
                     and int(req.content_length) != req.body_file.position:
@@ -753,14 +751,12 @@ class ObjectQueryMiddleware(object):
                 self.logger.info("PERF UNTAR: %s" % perf)
             if 'sysmap' in channels:
                 config_file = channels.pop('sysmap')
-                fp = open(config_file, 'rb')
-                try:
-                    config = json.load(fp)
-                except Exception:
-                    fp.close()
-                    return HTTPBadRequest(request=req,
-                                          body='Cannot parse system map')
-                fp.close()
+                with open(config_file, 'rb') as fp:
+                    try:
+                        config = json.load(fp)
+                    except ValueError:
+                        return HTTPBadRequest(request=req,
+                                              body='Cannot parse system map')
             else:
                 return HTTPBadRequest(request=req,
                                       body='No system map found in request')
@@ -1088,16 +1084,15 @@ class ObjectQueryMiddleware(object):
 
                 def resp_iter(channels, chunk_size):
                     for ch in channels:
-                        fp = open(ch['lpath'], 'rb')
-                        if ch.get('offset', None):
-                            fp.seek(ch['offset'])
-                        reader = iter(lambda: fp.read(chunk_size), '')
-                        for chunk in tar_stream.serve_chunk(ch['info']):
-                            yield chunk
-                        for data in reader:
-                            for chunk in tar_stream.serve_chunk(data):
+                        with open(ch['lpath'], 'rb') as fp:
+                            if ch.get('offset', None):
+                                fp.seek(ch['offset'])
+                            reader = iter(lambda: fp.read(chunk_size), '')
+                            for chunk in tar_stream.serve_chunk(ch['info']):
                                 yield chunk
-                        fp.close()
+                            for data in reader:
+                                for chunk in tar_stream.serve_chunk(data):
+                                    yield chunk
                         os.unlink(ch['lpath'])
                         blocks, remainder = divmod(ch['size'], BLOCKSIZE)
                         if remainder > 0:
