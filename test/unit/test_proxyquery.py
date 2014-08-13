@@ -1120,6 +1120,19 @@ class TestProxyQuery(unittest.TestCase):
         self.assertIn('name=SCRIPT_NAME, value=http_script', out)
         self.assertIn('name=SCRIPT_FILENAME, value=swift://a/c/exe2', out)
         self.check_container_integrity(prosrv, '/v1/a/c', {})
+        req = self.zerovm_request()
+        req.body = conf
+        req.headers['x-auth-token'] = 't'
+        req.headers['x-storage-token'] = 't'
+        req.headers['cookie'] = 'secret'
+        req.headers['x-backend-data'] = 'internal_data'
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        out = pickle.loads(res.body)
+        self.assertNotIn('name=HTTP_X_AUTH_TOKEN, value=t', out)
+        self.assertNotIn('name=HTTP_X_STORAGE_TOKEN, value=t', out)
+        self.assertNotIn('name=HTTP_COOKIE, value=secret', out)
+        self.assertNotIn('name=HTTP_X_BACKEND_DATA, value=internal_data', out)
 
     def test_QUERY_GET_response(self):
         self.setup_QUERY()

@@ -609,7 +609,7 @@ class ClusterController(ObjectController):
                          get_sys_meta_prefix('container'),
                          get_sys_meta_prefix('object'),
                          'x-backend', 'x-auth', 'content-type',
-                         'content-length']
+                         'content-length', 'x-storage-token', 'cookie']
 
     def __init__(self, app, account_name, container_name, obj_name, middleware,
                  command, **kwargs):
