@@ -252,6 +252,20 @@ class DualReader(object):
         self.tail.close()
 
 
+def get_zerovm_sysimage_devices(conf):
+    """
+    :param dict conf:
+        A dictionary-like of configuration items.
+
+    :return:
+        If `conf` contains "zerovm_sysimage_devices", return a `dict`, where
+        keys are the well-known names of each device, and values are the full
+        path to the device file on the filesystem.
+    """
+    devices = conf.get('zerovm_sysimage_devices', '').split()
+    return dict(zip(devices[0::2], devices[1::2]))
+
+
 class ObjectQueryMiddleware(object):
 
     DEFAULT_POOL_CONFIG = 'default = WaitPool(10,3); ' \
@@ -282,13 +296,7 @@ class ObjectQueryMiddleware(object):
         # will print performance data to system log
         self.zerovm_perf = config_true_value(conf.get('zerovm_perf', 'no'))
         # name-path pairs for sysimage devices on this node
-        zerovm_sysimage_devices = {}
-        sysimage_list = [i.strip()
-                         for i in
-                         conf.get('zerovm_sysimage_devices', '').split()
-                         if i.strip()]
-        for k, v in zip(*[iter(sysimage_list)]*2):
-            zerovm_sysimage_devices[k] = v
+        zerovm_sysimage_devices = get_zerovm_sysimage_devices(conf)
         # thread pools for advanced scheduling in proxy middleware
         self.zerovm_thread_pools = {}
         threadpool_list = [i.strip()
