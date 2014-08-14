@@ -947,6 +947,10 @@ class TestObjectQuery(unittest.TestCase):
             self.assertEquals(resp.status_int, 422)
 
     def test_QUERY_short_body(self):
+        # This test exercises a case where a request is submitted with a
+        # content length of X, but the actual amount of data sent in the body
+        # is _less_ than X.
+        # This is interpreted as a "499 Client Closed Request" (prematurely).
         class ShortBody():
 
             def __init__(self):
@@ -955,7 +959,7 @@ class TestObjectQuery(unittest.TestCase):
             def read(self, size=-1):
                 if not self.sent:
                     self.sent = True
-                    return '   '
+                    return ' ' * 3
                 return ''
 
         self.setup_zerovm_query()
@@ -975,6 +979,11 @@ class TestObjectQuery(unittest.TestCase):
         self.assertEquals(resp.status_int, 499)
 
     def test_QUERY_long_body(self):
+        # This test exercises a case where a request is submitted with a
+        # content length of X, but the actual amount of data sent in the body
+        # is _greater_ than X.
+        # This would indicate that the `Content-Length` is wrong, and thus
+        # results in a "400 Bad Request".
         class LongBody():
 
             def __init__(self):
@@ -983,24 +992,24 @@ class TestObjectQuery(unittest.TestCase):
             def read(self, size=-1):
                 if not self.sent:
                     self.sent = True
-                    return '   '
+                    return ' ' * 5
                 return ''
 
         self.setup_zerovm_query()
         req = Request.blank('/sda1/p/a/c/o',
                             environ={
                                 'REQUEST_METHOD': 'POST',
-                                'wsgi.input': Input(LongBody(), 2)
+                                'wsgi.input': Input(LongBody(), 4)
                             },
                             headers={
                                 'X-Timestamp': normalize_timestamp(time()),
                                 'x-zerovm-execute': '1.0',
                                 'x-zerocloud-id': self.uid_generator.get(),
-                                'Content-Length': '2',
+                                'Content-Length': '4',
                                 'Content-Type': 'application/x-gtar'
                             })
         resp = req.get_response(self.app)
-        self.assertEquals(resp.status_int, 499)
+        self.assertEquals(resp.status_int, 400)
 
     def test_QUERY_zerovm_stderr(self):
         self.setup_zerovm_query(trim(r'''

@@ -805,14 +805,22 @@ class ObjectQueryMiddleware(object):
                                     body='Failed to inflate gzipped image',
                                     headers=nexe_headers)
                     info = untar_stream.get_next_tarinfo()
-            if 'content-length' in req.headers \
-                    and int(req.content_length) != req.body_file.position:
-                self.logger.warning('Client disconnect %s != %d : %s'
-                                    % (req.headers['content-length'],
-                                       req.body_file.position,
-                                       str(req.headers)))
-                raise HTTPClientDisconnect(request=req,
-                                           headers=nexe_headers)
+            # Check if the all data was read from the request body. If the
+            # length of the data is less than the `Content-Length`, the client
+            # must have disconnected prematurely.
+            if 'content-length' in req.headers:
+                if req.body_file.position < int(req.content_length):
+                    self.logger.warning('Client disconnect %s != %d : %s'
+                                        % (req.headers['content-length'],
+                                           req.body_file.position,
+                                           str(req.headers)))
+                    raise HTTPClientDisconnect(request=req,
+                                               headers=nexe_headers)
+                elif req.body_file.position > int(req.content_length):
+                    raise HTTPBadRequest(
+                        request=req,
+                        body=("Actual content length is greater than the "
+                              "'Content-Length' header"))
             perf = "%s %.3f" % (perf, time.time() - start)
             if self.zerovm_perf:
                 self.logger.info("PERF UNTAR: %s" % perf)
