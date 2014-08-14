@@ -22,7 +22,7 @@ from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
     HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict, \
-    HTTPInsufficientStorage
+    HTTPInsufficientStorage, HTTPMethodNotAllowed
 from swift.common.swob import HTTPException
 from swift.common.utils import normalize_timestamp, \
     get_logger, mkdirs, disable_fallocate, config_true_value, \
@@ -724,6 +724,11 @@ class ObjectQueryMiddleware(object):
                              'specified but no x-timestamp '
                              'in request')
         elif container:
+            # For containers, only GET and POST requests are supported.
+            # GET is used in the case where a ZeroVM application attaches to a
+            # container (read-only).
+            # POSTs used for bi-directional communication between proxy and
+            # object nodes.
             if access_type == 'GET':
                 local_object.broker = \
                     self._diskfile_mgr.get_container_broker(
@@ -733,9 +738,11 @@ class ObjectQueryMiddleware(object):
                     raise HTTPNotFound(headers=nexe_headers,
                                        request=req)
             else:
-                raise HTTPBadRequest(
-                    body='Containers should be read-only',
+                raise HTTPMethodNotAllowed(
+                    body=("'%s' requests on containers are not supported." %
+                          access_type),
                     headers=nexe_headers)
+
         pool = req.headers.get('x-zerovm-pool', 'default').lower()
         thrdpool = self.zerovm_thread_pools.get(pool, None)
         if not thrdpool:
