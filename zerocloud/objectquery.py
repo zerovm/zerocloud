@@ -701,6 +701,11 @@ class ObjectQueryMiddleware(object):
                                        obj,
                                        policy_idx)
             except DiskFileDeviceUnavailable:
+                # NOTE(larsbutler): If a disk file device is unavailable, one
+                # might logically think to return a "404 Not Found". However,
+                # Swift itself returns a "507 Insufficient Storage" in this
+                # case. So for consistency, we do that as well. I wonder if
+                # this is a Swift bug.
                 raise HTTPInsufficientStorage(drive=device,
                                               request=req)
             if access_type == 'GET':
