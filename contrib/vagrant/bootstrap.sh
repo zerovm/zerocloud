@@ -25,9 +25,9 @@ echo "$LOCAL_CONF" >> local.conf
 
 ###
 # ZeroCloud
-git clone https://github.com/zerovm/zerocloud.git $HOME/zerocloud
-cd $HOME/zerocloud
-sudo python setup.py install
+# Install is from the code on the host, mapped to /zerocloud
+cd /zerocloud-root
+sudo python setup.py develop
 
 ###
 # Python system image for ZeroCloud/ZeroVM
