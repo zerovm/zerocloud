@@ -588,7 +588,56 @@ class ObjectQueryMiddleware(object):
         return writable_tmpdir
 
     def zerovm_query(self, req):
-        """Handle zerovm execution requests for the Swift Object Server."""
+        """Handle zerovm execution requests for the Swift Object Server.
+
+        Many different HTTP response can be given. The types of responses and
+        the causes of each are as follows. Note that these response are handled
+        internally, and many pieces of information (such as some of the
+        headers) are not exposed to the end user/client.
+
+            * 200 OK
+            * 400 BadRequest
+                - No 'Content-Type' header
+                - Invalid 'Content-Type' header
+                - Missing `X-Timestamp` header, when a locally writable object
+                  is specified
+                - A non-GET request is sent to a container
+                - Cannot find threadpool specified by `X-Zerovm-Pool`
+                - No system map found in request
+                - No executable found in request
+                - Could not resolve channel path for device
+            * 404 Not Found
+                - Disk file for the specified object was not found
+                - Target container is deleted
+            * 408 Request Timeout
+                - File upload time exceeds `max_upload_time`
+            * 413 Request Entity Too Large
+                - Request `Content-Length` exceeds `zerovm_maxinput`
+                - Request body file size exceeds `zerovm_maxinput`
+                - Container database file exceeds `zerovm_maxinput`
+            * 422 Unprocessable Entity
+                - Failure to inflate gzipped image (body file)
+            * 499 Client Closed Request (Client Disconnect)
+                - Client (apparently) stop sending data before all of the
+                  expected data was sent (that is, the number of bytes sent is
+                  < the number specified in `Content-Length`).
+            * 500 Internal Server Error
+                - No `X-Zerocloud-Id` header
+                - System image (specified in system map) does not exist
+                - Cannot find daemon nexe in system image
+                - Cannot connect to daemon, even after daemon restart
+            * 503 Service Unavailable
+                - Unknown problem with thread pool/scheduling
+            * 507 Insufficient Storage
+                - Disk file device is unavailable. (Intuitively, this does not
+                  seem like the correct reponse code--404 seems better--but
+                  this is consistent with how Swift behaves.)
+
+        :param req:
+            :class:`swift.common.swob.Request`
+        :returns:
+            :class:`swift.common.swob.Response`
+        """
 
         debug_dir = self._debug_init(req)
         daemon_sock = req.headers.get('x-zerovm-daemon', None)
