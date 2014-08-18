@@ -657,7 +657,8 @@ class ObjectQueryMiddleware(object):
             daemon_sock = os.path.join(self.zerovm_sockets_dir, daemon_sock)
         job_id = req.headers.get('x-zerocloud-id', None)
         if not job_id:
-            raise HTTPInternalServerError(request=req)
+            raise HTTPInternalServerError(
+                request=req, body='X-Zerocloud-Id header is missing')
         # print "URL: " + req.url
         nexe_headers = {
             'x-nexe-retcode': 0,
