@@ -13,11 +13,11 @@ def inject_before(some_list, item, target):
     return some_list
 
 
-def config_add_filter(file_path, filter_name, func_name, inject_b4,
+def config_add_filter(cp, filter_name, func_name, inject_b4,
                       extras=None):
     """
-    :param file_path:
-        Path to the Swift config file.
+    :param cp:
+        :class:`ConfigParser.ConfigParser` object
     :param filter_name:
         Name of the filter. This is the name that will be used to reference the
         filter in the pipeline configuration.
@@ -27,8 +27,6 @@ def config_add_filter(file_path, filter_name, func_name, inject_b4,
         When inserting a filter into the pipeline, place the filter (indicated
         by `filter_name`) before `inject_b4`.
     """
-    cp = ConfigParser()
-    cp.read(file_path)
     filt = 'filter:%s' % filter_name
     cp.add_section(filt)
     cp.set(filt, 'use', 'egg:zerocloud#%s' % func_name)
@@ -41,14 +39,15 @@ def config_add_filter(file_path, filter_name, func_name, inject_b4,
     pipeline = inject_before(pipeline, filter_name, inject_b4)
     cp.set('pipeline:main', 'pipeline', value=' '.join(pipeline))
 
-    with open(file_path, 'w') as fp:
-        cp.write(fp)
-
 
 if __name__ == '__main__':
+    # Object server:
+    cp = ConfigParser()
+    obj_server = '/etc/swift/object-server/1.conf'
+    cp.read(obj_server)
     # basic ZeroVM object server config
     config_add_filter(
-        '/etc/swift/object-server/1.conf',
+        cp,
         'object-query',
         'object_query',
         'object-server',
@@ -56,10 +55,18 @@ if __name__ == '__main__':
             'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar'
         }
     )
+    # Set verbose logging on the object server
+    cp.set('DEFAULT', 'log_level', 'DEBUG')
+    with open(obj_server, 'w') as fp:
+        cp.write(fp)
 
+    # Proxy server:
+    cp = ConfigParser()
+    proxy_server = '/etc/swift/proxy-server.conf'
+    cp.read(proxy_server)
     # basic ZeroVM proxy server config
     config_add_filter(
-        '/etc/swift/proxy-server.conf',
+        cp,
         'proxy-query',
         'proxy_query',
         'proxy-server',
@@ -67,16 +74,22 @@ if __name__ == '__main__':
             'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar'
         }
     )
-
     # proxy server job chaining middleware
     config_add_filter(
-        '/etc/swift/proxy-server.conf',
+        cp,
         'job-chain',
         'job_chain',
         'proxy-query'
     )
+    with open(proxy_server, 'w') as fp:
+        cp.write(fp)
+
+    # Container server:
+    cp = ConfigParser()
+    cont_server = '/etc/swift/container-server/1.conf',
+    cp.read(cont_server)
     config_add_filter(
-        '/etc/swift/container-server/1.conf',
+        cp,
         'object-query',
         'object_query',
         'container-server',
@@ -84,3 +97,5 @@ if __name__ == '__main__':
             'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar'
         }
     )
+    with open(cont_server, 'w') as fp:
+        cp.write(fp)
