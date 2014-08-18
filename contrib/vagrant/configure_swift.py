@@ -55,6 +55,8 @@ if __name__ == '__main__':
             'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar'
         }
     )
+    # Set verbose logging on the object server
+    cp.set('DEFAULT', 'log_level', 'DEBUG')
     with open(obj_server, 'w') as fp:
         cp.write(fp)
 
