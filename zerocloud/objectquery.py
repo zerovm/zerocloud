@@ -638,7 +638,10 @@ class ObjectQueryMiddleware(object):
         :returns:
             :class:`swift.common.swob.Response`
         """
+        resp = self._do_zerovm_query(req)
+        return resp
 
+    def _do_zerovm_query(self, req):
         debug_dir = self._debug_init(req)
         daemon_sock = req.headers.get('x-zerovm-daemon', None)
         if daemon_sock:
