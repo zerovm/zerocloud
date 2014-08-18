@@ -641,9 +641,13 @@ class ObjectQueryMiddleware(object):
         """
         try:
             resp = self._do_zerovm_query(req)
+            self.logger.debug("zerovm_query: %(status)s",
+                              dict(status=resp.status))
             return resp
         except HTTPException as http_exc:
             resp = req.get_response(http_exc)
+            self.logger.debug("zerovm_query: %(status)s - %(body)s",
+                              dict(status=resp.status, body=resp.body))
             return resp
 
     def _do_zerovm_query(self, req):
