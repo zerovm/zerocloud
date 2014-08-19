@@ -26,7 +26,7 @@ from swift.common.swob import Request, Response, HTTPNotFound, \
 from swift.common.swob import HTTPException
 from swift.common.utils import normalize_timestamp, \
     get_logger, mkdirs, disable_fallocate, config_true_value, \
-    hash_path, storage_directory
+    hash_path, storage_directory, get_log_line
 from swift.container.backend import ContainerBroker
 from swift.obj.diskfile import DiskFileManager, DiskFile, DiskFileWriter, \
     write_metadata
@@ -1276,17 +1276,12 @@ class ObjectQueryMiddleware(object):
                                              % (trans_time,
                                                 res.headers['x-nexe-cdr-line'])
         if self.log_requests:
-            log_line = '%s - - [%s] "%s %s" %s %s "%s" "%s" "%s" %.4f' % (
-                req.remote_addr,
-                time.strftime('%d/%b/%Y:%H:%M:%S +0000', time.gmtime()),
-                req.method, req.path, res.status.split()[0],
-                res.content_length or '-', req.referer or '-',
-                req.headers.get('x-trans-id', '-'),
-                req.user_agent or '-',
-                trans_time)
-
+            additional_info = 'node: %s, status: %s, cdr: %s' % \
+                              (res.headers.get('x-nexe-system', '-'),
+                               res.headers.get('x-nexe-status', '-'),
+                               res.headers.get('x-nexe-cdr-line', '-'))
+            log_line = get_log_line(req, res, trans_time, additional_info)
             self.logger.info(log_line)
-
         return res(env, start_response)
 
     def validate(self, req):
