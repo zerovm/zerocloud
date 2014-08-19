@@ -40,3 +40,8 @@ sudo wget -q http://packages.zerovm.org/zerovm-samples/python.tar
 # This includes setting up the cross-compiled python
 # distribution for ZeroVM.
 python /vagrant/configure_swift.py
+
+###
+# Set `demo` user password
+source /vagrant/adminrc
+keystone user-password-update --pass demo demo
