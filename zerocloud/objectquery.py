@@ -639,18 +639,6 @@ class ObjectQueryMiddleware(object):
         :returns:
             :class:`swift.common.swob.Response`
         """
-        try:
-            resp = self._do_zerovm_query(req)
-            self.logger.debug("zerovm_query: %(status)s",
-                              dict(status=resp.status))
-            return resp
-        except HTTPException as http_exc:
-            resp = req.get_response(http_exc)
-            self.logger.debug("zerovm_query: %(status)s - %(body)s",
-                              dict(status=resp.status, body=resp.body))
-            return resp
-
-    def _do_zerovm_query(self, req):
         debug_dir = self._debug_init(req)
         daemon_sock = req.headers.get('x-zerovm-daemon', None)
         if daemon_sock:
@@ -1232,6 +1220,8 @@ class ObjectQueryMiddleware(object):
             try:
                 if 'x-zerovm-execute' in req.headers and req.method == 'POST':
                     res = self.zerovm_query(req)
+                    self.logger.debug("zerovm_query: %(status)s",
+                                      dict(status=res.status))
                 elif req.method in ['PUT', 'POST'] \
                         and ('x-zerovm-validate' in req.headers
                              or req.headers.get('content-type', '')
@@ -1270,6 +1260,11 @@ class ObjectQueryMiddleware(object):
                     return self.app(env, validate_resp)
                 else:
                     return self.app(env, start_response)
+            except HTTPException as error_response:
+                res = error_response
+                self.logger.debug("zerovm_query: %(status)s - %(body)s",
+                                  dict(status=res.status,
+                                       body=res.body))
             except (Exception, Timeout):
                 self.logger.exception('ERROR __call__ error with %(method)s'
                                       ' %(path)s ',

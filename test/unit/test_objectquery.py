@@ -1152,7 +1152,7 @@ class TestObjectQuery(unittest.TestCase):
                         'default'] = WaitPool(size, queue)
                     spil_over = size + queue
                     for i in r:
-                        t[i] = pool.spawn(self.app.zerovm_query, req[i])
+                        t[i] = pool.spawn(req[i].get_response, self.app)
                     pool.waitall()
                     resp = copy(r)
                     for i in r[:spil_over]:
