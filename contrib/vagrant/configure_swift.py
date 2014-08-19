@@ -86,7 +86,7 @@ if __name__ == '__main__':
 
     # Container server:
     cp = ConfigParser()
-    cont_server = '/etc/swift/container-server/1.conf',
+    cont_server = '/etc/swift/container-server/1.conf'
     cp.read(cont_server)
     config_add_filter(
         cp,
