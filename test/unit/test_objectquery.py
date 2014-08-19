@@ -217,7 +217,7 @@ class TestObjectQuery(unittest.TestCase):
             with self.create_tar({'sysmap': sysmap, 'image': image}) as tar:
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
-                resp = self.app.zerovm_query(req)
+                resp = req.get_response(self.app)
                 print ['x-zerovm-daemon', resp.headers.get('x-zerovm-daemon',
                                                            '---')]
                 print ['x-nexe-cdr-line', resp.headers['x-nexe-cdr-line']]
@@ -251,7 +251,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             fd, name = mkstemp()
             for chunk in resp.app_iter:
                 os.write(fd, chunk)
@@ -291,7 +291,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             fd, name = mkstemp()
             for chunk in resp.app_iter:
                 os.write(fd, chunk)
@@ -341,7 +341,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             fd, name = mkstemp()
             for chunk in resp.app_iter:
                 os.write(fd, chunk)
@@ -392,7 +392,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             fd, name = mkstemp()
             for chunk in resp.app_iter:
                 os.write(fd, chunk)
@@ -442,7 +442,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             fd, name = mkstemp()
             for chunk in resp.app_iter:
                 os.write(fd, chunk)
@@ -484,7 +484,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             fd, name = mkstemp()
             for chunk in resp.app_iter:
                 os.write(fd, chunk)
@@ -524,7 +524,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             fd, name = mkstemp()
             for chunk in resp.app_iter:
                 os.write(fd, chunk)
@@ -579,7 +579,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEqual(resp.status_int, 200)
             self.assertEqual(resp.content_length, 0)
             self.assertEqual(resp.headers['x-nexe-retcode'], '0')
@@ -628,7 +628,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEqual(resp.status_int, 200)
             self.assertEqual(resp.headers['x-nexe-retcode'], '0')
             self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
@@ -672,7 +672,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             fd, name = mkstemp()
             for chunk in resp.app_iter:
                 os.write(fd, chunk)
@@ -699,12 +699,8 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            raised = False
-            try:
-                resp = self.app.zerovm_query(req)
-            except Exception:
-                raised = True
-            self.assert_(raised, "Exception not raised")
+            resp = req.get_response(self.app)
+            self.assertEqual(resp.status_int, 500)
 
         self.setup_zerovm_query()
         req = self.zerovm_free_request()
@@ -717,12 +713,8 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            raised = False
-            try:
-                resp = self.app.zerovm_query(req)
-            except Exception:
-                raised = True
-            self.assert_(raised, "Exception not raised")
+            resp = req.get_response(self.app)
+            self.assertEqual(resp.status_int, 500)
 
     def test_QUERY_nexe_environment(self):
         self.setup_zerovm_query()
@@ -740,7 +732,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEquals(resp.status_int, 200)
 
     def test_QUERY_multichannel(self):
@@ -758,7 +750,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEquals(resp.status_int, 200)
 
     def test_QUERY_std_list(self):
@@ -777,7 +769,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEquals(resp.status_int, 200)
             fd, name = mkstemp()
             for chunk in resp.app_iter:
@@ -819,7 +811,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEquals(resp.status_int, 404)
 
     def test_QUERY_invalid_path(self):
@@ -937,13 +929,13 @@ class TestObjectQuery(unittest.TestCase):
             fp.close()
             req.headers['etag'] = etag.hexdigest()
             req.body_file = open(tar, 'rb')
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEquals(resp.status_int, 200)
             etag = md5()
             etag.update('blah-blah')
             req.headers['etag'] = etag.hexdigest()
             req.body_file = open(tar, 'rb')
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEquals(resp.status_int, 422)
 
     def test_QUERY_short_body(self):
@@ -1020,7 +1012,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEquals(resp.status_int, 500)
             self.assertIn('ERROR OBJ.QUERY retcode=OK,  '
                           'zerovm_stdout=some shit happened',
@@ -1045,7 +1037,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEqual(resp.status_int, 500)
             self.assertIn('ERROR OBJ.QUERY retcode=Output too long', resp.body)
 
@@ -1068,7 +1060,7 @@ class TestObjectQuery(unittest.TestCase):
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
             req.headers['x-zerovm-timeout'] = 1
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEqual(resp.status_int, 500)
             self.assertIn(
                 'ERROR OBJ.QUERY retcode=Output too long', resp.body)
@@ -1091,7 +1083,7 @@ class TestObjectQuery(unittest.TestCase):
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
             req.headers['x-zerovm-timeout'] = 1
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEquals(resp.status_int, 500)
             self.assertIn('ERROR OBJ.QUERY retcode=Timed out', resp.body)
 
@@ -1117,7 +1109,7 @@ class TestObjectQuery(unittest.TestCase):
             try:
                 self.app.zerovm_kill_timeout = 0.1
                 req.headers['x-zerovm-timeout'] = 1
-                resp = self.app.zerovm_query(req)
+                resp = req.get_response(self.app)
                 self.assertEquals(resp.status_int, 500)
                 self.assertIn('ERROR OBJ.QUERY retcode=Killed', resp.body)
             finally:
@@ -1199,7 +1191,7 @@ class TestObjectQuery(unittest.TestCase):
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
                 req.content_length = length
-                resp = self.app.zerovm_query(req)
+                resp = req.get_response(self.app)
                 self.assertEqual(resp.status_int, 413)
                 self.assertEqual(resp.body, 'Data object too large')
         finally:
@@ -1223,7 +1215,7 @@ class TestObjectQuery(unittest.TestCase):
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
                 req.content_length = length
-                resp = self.app.zerovm_query(req)
+                resp = req.get_response(self.app)
                 self.assertEquals(resp.status_int, 200)
                 self.assertEqual(resp.headers['x-nexe-retcode'], '0')
                 self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
@@ -1242,14 +1234,14 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEqual(resp.status_int, 400)
             self.assertEqual(resp.body, 'Cannot parse system map')
         with create_tar({'boot': nexefile}) as tar:
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             self.assertEqual(resp.status_int, 400)
             self.assertEqual(resp.body, 'No system map found in request')
 
@@ -1272,7 +1264,7 @@ class TestObjectQuery(unittest.TestCase):
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
                 req.content_length = length
-                resp = self.app.zerovm_query(req)
+                resp = req.get_response(self.app)
                 fd, name = mkstemp()
                 self.assertEqual(resp.status_int, 200)
                 for chunk in resp.app_iter:
@@ -1315,7 +1307,7 @@ class TestObjectQuery(unittest.TestCase):
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
                 req.content_length = length
-                resp = self.app.zerovm_query(req)
+                resp = req.get_response(self.app)
                 fd, name = mkstemp()
                 self.assertEqual(resp.status_int, 200)
                 for chunk in resp.app_iter:
@@ -1369,7 +1361,7 @@ class TestObjectQuery(unittest.TestCase):
                     length = os.path.getsize(tar)
                     req.body_file = Input(open(tar, 'rb'), length)
                     req.content_length = length
-                    resp = self.app.zerovm_query(req)
+                    resp = req.get_response(self.app)
                     fd, name = mkstemp()
                     self.assertEqual(resp.status_int, 200)
                     for chunk in resp.app_iter:
@@ -1420,7 +1412,7 @@ class TestObjectQuery(unittest.TestCase):
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
                 req.content_length = length
-                resp = self.app.zerovm_query(req)
+                resp = req.get_response(self.app)
                 fd, name = mkstemp()
                 self.assertEqual(resp.status_int, 200)
                 for chunk in resp.app_iter:
@@ -1461,7 +1453,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             fd, name = mkstemp()
             self.assertEqual(resp.status_int, 400)
             self.assertEqual(
@@ -1560,7 +1552,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             fd, name = mkstemp()
             for chunk in resp.app_iter:
                 os.write(fd, chunk)
@@ -1588,7 +1580,7 @@ class TestObjectQuery(unittest.TestCase):
             length = os.path.getsize(tar)
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
-            resp = self.app.zerovm_query(req)
+            resp = req.get_response(self.app)
             fd, name = mkstemp()
             for chunk in resp.app_iter:
                 os.write(fd, chunk)
@@ -1640,7 +1632,7 @@ class TestObjectQuery(unittest.TestCase):
                 length = os.path.getsize(tar)
                 req.body_file = Input(open(tar, 'rb'), length)
                 req.content_length = length
-                resp = self.app.zerovm_query(req)
+                resp = req.get_response(self.app)
                 self.assertEquals(resp.status_int, 500)
                 self.assertIn(
                     'ERROR OBJ.QUERY retcode=Error,  zerovm_stdout=',
