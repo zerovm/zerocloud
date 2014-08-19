@@ -22,7 +22,7 @@ from swift.common.swob import Request, Response, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
     HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict, \
-    HTTPInsufficientStorage
+    HTTPInsufficientStorage, HTTPMethodNotAllowed
 from swift.common.swob import HTTPException
 from swift.common.utils import normalize_timestamp, \
     get_logger, mkdirs, disable_fallocate, config_true_value, \
@@ -701,6 +701,11 @@ class ObjectQueryMiddleware(object):
                                        obj,
                                        policy_idx)
             except DiskFileDeviceUnavailable:
+                # NOTE(larsbutler): If a disk file device is unavailable, one
+                # might logically think to return a "404 Not Found". However,
+                # Swift itself returns a "507 Insufficient Storage" in this
+                # case. So for consistency, we do that as well. I wonder if
+                # this is a Swift bug.
                 raise HTTPInsufficientStorage(drive=device,
                                               request=req)
             if access_type == 'GET':
@@ -719,6 +724,11 @@ class ObjectQueryMiddleware(object):
                              'specified but no x-timestamp '
                              'in request')
         elif container:
+            # For containers, only GET and POST requests are supported.
+            # GET is used in the case where a ZeroVM application attaches to a
+            # container (read-only).
+            # POSTs used for bi-directional communication between proxy and
+            # object nodes.
             if access_type == 'GET':
                 local_object.broker = \
                     self._diskfile_mgr.get_container_broker(
@@ -728,9 +738,11 @@ class ObjectQueryMiddleware(object):
                     raise HTTPNotFound(headers=nexe_headers,
                                        request=req)
             else:
-                raise HTTPBadRequest(
-                    body='Containers should be read-only',
+                raise HTTPMethodNotAllowed(
+                    body=("'%s' requests on containers are not supported." %
+                          access_type),
                     headers=nexe_headers)
+
         pool = req.headers.get('x-zerovm-pool', 'default').lower()
         thrdpool = self.zerovm_thread_pools.get(pool, None)
         if not thrdpool:
@@ -800,14 +812,22 @@ class ObjectQueryMiddleware(object):
                                     body='Failed to inflate gzipped image',
                                     headers=nexe_headers)
                     info = untar_stream.get_next_tarinfo()
-            if 'content-length' in req.headers \
-                    and int(req.content_length) != req.body_file.position:
-                self.logger.warning('Client disconnect %s != %d : %s'
-                                    % (req.headers['content-length'],
-                                       req.body_file.position,
-                                       str(req.headers)))
-                raise HTTPClientDisconnect(request=req,
-                                           headers=nexe_headers)
+            # Check if the all data was read from the request body. If the
+            # length of the data is less than the `Content-Length`, the client
+            # must have disconnected prematurely.
+            if 'content-length' in req.headers:
+                if req.body_file.position < int(req.content_length):
+                    self.logger.warning('Client disconnect %s != %d : %s'
+                                        % (req.headers['content-length'],
+                                           req.body_file.position,
+                                           str(req.headers)))
+                    raise HTTPClientDisconnect(request=req,
+                                               headers=nexe_headers)
+                elif req.body_file.position > int(req.content_length):
+                    raise HTTPBadRequest(
+                        request=req,
+                        body=("Actual content length is greater than the "
+                              "'Content-Length' header"))
             perf = "%s %.3f" % (perf, time.time() - start)
             if self.zerovm_perf:
                 self.logger.info("PERF UNTAR: %s" % perf)
