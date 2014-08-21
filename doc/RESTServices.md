@@ -41,6 +41,26 @@ If you have a trouble using `/api/...` endpoint you can use standard
 `X-Auth-Storage-Url` but will have to set additional header: 
 `X-Zerovm-Execute: api/1.0`
 
+To setup your application as an end-point for an api request you will need 
+to set `X-Container-Meta-Rest-Endpoint` metadata header on the api container.
+
+Example:
+
+    POST /v1/AUTH_account/my-api
+    X-Container-Meta-Rest-Endpoint: swift://AUTH_account/myapp/myapp-1.0.zapp
+
+If you then issue:
+
+    GET /api/AUTH_account/my-api/some/path/info?a=1&b=2
+    
+The application at `/v1/AUTH_account/myapp/myapp-1.0.zapp` wil be executed, 
+and it will receive the following in environment:
+    
+    ......
+    PATH_INFO /api/AUTH_account/my-api/some/path/info
+    QUERY_STRING a=1&b=2
+    ......
+    
 ## How does it work?
 
 Your application will be invoked by fetching the `boot/system.map` from the 
