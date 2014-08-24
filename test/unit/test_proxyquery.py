@@ -2501,7 +2501,8 @@ class TestProxyQuery(unittest.TestCase):
         req.body = conf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 400)
-        self.assertEqual(res.body, 'Unknown device stdtest in sort')
+        self.assertEqual(res.body, 'Could not resolve channel path "" for '
+                                   'device: stdtest')
         conf = [
             {
                 'name': 'sort',
@@ -2647,7 +2648,7 @@ class TestProxyQuery(unittest.TestCase):
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 400)
             self.assertEqual(res.body, ('Could not resolve channel path '
-                                        'swift://a/%s for device: stdin'
+                                        '"swift://a/%s" for device: stdin'
                                         % path) * 2)
             self.assertEqual(res.headers['x-nexe-system'], 'sort,sort')
             self.assertEqual(res.headers['x-nexe-status'],
