@@ -1075,11 +1075,10 @@ class ClusterController(ObjectController):
 
         req.path_info = '/' + self.account_name
         try:
-            replica_count = None
-            if self.middleware.ignore_replication:
-                replica_count = 1
 
             def replica_resolver(account, container):
+                if self.middleware.ignore_replication:
+                    return 1
                 container_info = self.container_info(account, container, req)
                 ring = self.app.get_object_ring(
                     container_info['storage_policy'])
@@ -1088,7 +1087,6 @@ class ClusterController(ObjectController):
             self.parser.parse(cluster_config,
                               self.image_resp is not None,
                               self.account_name,
-                              replica_count,
                               replica_resolver=replica_resolver,
                               request=req)
         except ClusterConfigParsingError, e:
