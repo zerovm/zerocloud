@@ -2896,7 +2896,7 @@ class TestProxyQuery(unittest.TestCase):
                             },
                             {
                                 "device": "stderr",
-                                "path": "swift://./single/script2.err",
+                                "path": "swift://./single/*.err",
                                 "content_type": "text/plain"
                             }
                         ]
@@ -2933,7 +2933,7 @@ class TestProxyQuery(unittest.TestCase):
             self.assertTrue(obj_path in path)
             dev, path = body[5].split(', ')
             self.assertEqual(path, '/dev/out/reducer')
-            req = self.object_request('/v1/a/single/script2.err')
+            req = self.object_request('/v1/a/single/reducer.err')
             res = req.get_response(prosrv)
             body = res.body.split('\n')
             dev, path = body[0].split(':')

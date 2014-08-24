@@ -225,7 +225,7 @@ class ClusterConfigParser(object):
                 % node_name)
 
     def parse(self, cluster_config, add_user_image, account_name=None,
-              replica_count=1, replica_resolver=None, **kwargs):
+              replica_resolver=None, **kwargs):
         """
         Parse deserialized config and build separate job configs per node
 
@@ -329,33 +329,13 @@ class ClusterConfigParser(object):
                         if chan.path and is_swift_path(chan.path):
                             if '*' in chan.path.url:
                                 if read_group:
-                                    for i in range(1, node_count + 1):
-                                        new_node = self.nodes.get(
-                                            _create_node_name(
-                                                zvm_node.name, i))
-                                        new_url = \
-                                            _extract_stored_wildcards(
-                                                chan.path,
-                                                new_node)
-                                        new_loc = parse_location(new_url)
-                                        new_node.add_channel(channel=chan,
-                                                             path=new_loc)
+                                    self._add_to_group(node_count, zvm_node,
+                                                       chan)
                                 else:
-                                    read_group = True
-                                    for i in range(1, node_count + 1):
-                                        new_name = \
-                                            _create_node_name(zvm_node.name, i)
-                                        new_url = \
-                                            chan.path.url.replace('*',
-                                                                  new_name)
-                                        new_loc = parse_location(new_url)
-                                        new_node = self._get_or_create_node(
-                                            zvm_node, index=i)
-                                        new_node.add_channel(channel=chan,
-                                                             path=new_loc)
-                                        new_node.wildcards = \
-                                            [new_name] * \
-                                            chan.path.url.count('*')
+                                    if node_count > 1:
+                                        read_group = True
+                                    self._create_new_group(node_count,
+                                                           zvm_node, chan)
                             else:
                                 if node_count > 1:
                                     raise ClusterConfigParsingError(
@@ -422,11 +402,33 @@ class ClusterConfigParser(object):
             for node in self.node_list:
                 node.add_new_channel('image', ACCESS_CDR, removable='yes')
         if account_name:
-            self.resolve_path_info(account_name, replica_count,
-                                   replica_resolver)
+            self.resolve_path_info(account_name, replica_resolver)
         self.total_count = 0
         for n in self.node_list:
             self.total_count += n.replicate
+
+    def _add_to_group(self, node_count, zvm_node, chan):
+        for i in range(1, node_count + 1):
+            new_node = self.nodes.get(_create_node_name(zvm_node.name, i))
+            new_url = _extract_stored_wildcards(chan.path, new_node)
+            new_loc = parse_location(new_url)
+            new_node.add_channel(channel=chan, path=new_loc)
+
+    def _create_new_group(self, node_count, zvm_node, chan):
+        if node_count == 1:
+            new_url = chan.path.url.replace('*', zvm_node.name)
+            new_loc = parse_location(new_url)
+            new_node = self._get_or_create_node(zvm_node)
+            new_node.add_channel(channel=chan, path=new_loc)
+            new_node.wildcards = [zvm_node.name] * chan.path.url.count('*')
+            return
+        for i in range(1, node_count + 1):
+            new_name = _create_node_name(zvm_node.name, i)
+            new_url = chan.path.url.replace('*', new_name)
+            new_loc = parse_location(new_url)
+            new_node = self._get_or_create_node(zvm_node, index=i)
+            new_node.add_channel(channel=chan, path=new_loc)
+            new_node.wildcards = [new_name] * chan.path.url.count('*')
 
     def _add_connection(self, node, bind_name,
                         src_device=None,
@@ -746,8 +748,7 @@ class ClusterConfigParser(object):
                                  % config['name_service']
         return zerovm_inputmnfst
 
-    def resolve_path_info(self, account_name, replica_count,
-                          replica_resolver=None):
+    def resolve_path_info(self, account_name, replica_resolver):
         default_path_info = '/%s' % account_name
         for node in self.node_list:
             top_channel = None
@@ -770,12 +771,10 @@ class ClusterConfigParser(object):
                 elif top_channel.access & ACCESS_WRITABLE \
                         and node.replicate > 0:
                     node.path_info = top_channel.path.path
-                    if replica_resolver and replica_count is None:
+                    if replica_resolver:
                         node.replicate = replica_resolver(
                             top_channel.path.account,
                             top_channel.path.container)
-                    else:
-                        node.replicate = replica_count
                     node.access = 'PUT'
                 else:
                     node.path_info = default_path_info
