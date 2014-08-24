@@ -1395,6 +1395,8 @@ class ClusterController(ObjectController):
             return conn
         if resp.content_length == 0:
             return conn
+        if 'x-nexe-error' in resp.headers:
+            resp.status = 500
         node = conn.cnode
         untar_stream = UntarStream(resp.app_iter)
         bytes_transferred = 0

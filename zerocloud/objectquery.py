@@ -569,7 +569,8 @@ class ObjectQueryMiddleware(object):
                               zerovm_inputmnfst_fn, timeout, zerovm_args)
         return thrd
 
-    def _create_exec_error(self, nexe_headers, zerovm_retcode, zerovm_stdout):
+    def _create_exec_error(self, nexe_headers, zerovm_retcode,
+                           zerovm_stdout, response_channels):
         err = 'ERROR OBJ.QUERY retcode=%s, ' \
               ' zerovm_stdout=%s' \
               % (RETCODE_MAP[zerovm_retcode],
@@ -578,6 +579,7 @@ class ObjectQueryMiddleware(object):
         resp = HTTPInternalServerError(body=err)
         nexe_headers['x-nexe-status'] = 'ZeroVM runtime error'
         resp.headers = nexe_headers
+        _channel_cleanup(response_channels)
         return resp
 
     def get_writable_tmpdir(self, device):
@@ -934,7 +936,6 @@ class ObjectQueryMiddleware(object):
                 (output_fd, nvram_file) = mkstemp()
                 os.close(output_fd)
                 start = time.time()
-                daemon_status = None
                 if daemon_sock:
                     zerovm_inputmnfst = \
                         self.parser.prepare_for_forked(config, nvram_file,
@@ -1003,18 +1004,17 @@ class ObjectQueryMiddleware(object):
                         if len(report) < REPORT_LENGTH or zerovm_retcode > 1:
                             resp = self._create_exec_error(nexe_headers,
                                                            zerovm_retcode,
-                                                           zerovm_stdout)
-                            return req.get_response(resp)
+                                                           zerovm_stdout,
+                                                           response_channels)
+                            return resp
                         else:
                             try:
-                                daemon_status = int(report[REPORT_DAEMON])
                                 _parse_zerovm_report(nexe_headers, report)
                             except Exception:
-                                resp = HTTPInternalServerError(
+                                raise HTTPInternalServerError(
                                     body=zerovm_stdout)
-                                return req.get_response(resp)
-                        if daemon_status != 1:
-                            return HTTPInternalServerError(body=zerovm_stdout)
+                        if 'x-zerovm-daemon' not in nexe_headers:
+                            raise HTTPInternalServerError(body=zerovm_stdout)
                         zerovm_inputmnfst = \
                             self.parser.prepare_for_forked(
                                 config, nvram_file,
@@ -1076,35 +1076,32 @@ class ObjectQueryMiddleware(object):
                 report = zerovm_stdout.split('\n', REPORT_LENGTH - 1)
                 if len(report) == REPORT_LENGTH:
                     try:
-                        if daemon_status != 1:
-                            daemon_status = int(report[REPORT_DAEMON])
                         _parse_zerovm_report(nexe_headers, report)
                     except ValueError:
                         resp = self._create_exec_error(nexe_headers,
                                                        zerovm_retcode,
-                                                       zerovm_stdout)
-                        _channel_cleanup(response_channels)
-                        return req.get_response(resp)
+                                                       zerovm_stdout,
+                                                       response_channels)
+                        return resp
                 if zerovm_retcode > 1 or len(report) < REPORT_LENGTH:
                     resp = self._create_exec_error(nexe_headers,
                                                    zerovm_retcode,
-                                                   zerovm_stdout)
-                    _channel_cleanup(response_channels)
-                    return req.get_response(resp)
+                                                   zerovm_stdout,
+                                                   response_channels)
+                    return resp
 
                 self.logger.info('Zerovm CDR: %s'
                                  % nexe_headers['x-nexe-cdr-line'])
 
                 response = Response(request=req)
+                if zerovm_retcode > 0:
+                    response.headers['x-nexe-error'] = 'bad return code'
                 update_headers(response, nexe_headers)
                 response.headers['X-Timestamp'] =\
                     normalize_timestamp(time.time())
                 response.headers['x-nexe-system'] = \
                     nexe_headers['x-nexe-system']
                 response.content_type = 'application/x-gtar'
-                if daemon_status == 1:
-                    response.headers['x-zerovm-daemon'] = \
-                        req.headers.get('x-zerovm-daemon', None)
                 tar_stream = TarStream(format=PAX_FORMAT, encoding='utf-8',
                                        chunk_size=self.network_chunk_size)
                 resp_size = 0
@@ -1142,15 +1139,12 @@ class ObjectQueryMiddleware(object):
                             'message/cgi'):
                         self._read_cgi_response(
                             local_object.channel, nph=False)
-                    error = self._finalize_local_file(
-                        local_object.channel,
-                        local_object.disk_file,
-                        nexe_headers['x-nexe-etag'],
-                        account, container, obj,
-                        req,
-                        device, policy_idx)
-                    if error:
-                        return error
+                    self._finalize_local_file(local_object.channel,
+                                              local_object.disk_file,
+                                              nexe_headers['x-nexe-etag'],
+                                              account, container, obj,
+                                              req,
+                                              device, policy_idx)
 
                 def resp_iter(channels, chunk_size):
                     for ch in channels:
@@ -1394,12 +1388,12 @@ class ObjectQueryMiddleware(object):
                 reported_etag = etag
                 break
         if not reported_etag:
-            return HTTPUnprocessableEntity(
+            raise HTTPUnprocessableEntity(
                 body='No etag found for resulting object '
                      'after writing channel %s data'
                      % disk_file.channel_device)
         if len(reported_etag) != MD5HASH_LENGTH:
-            return HTTPUnprocessableEntity(
+            raise HTTPUnprocessableEntity(
                 body='Bad etag for %s: %s'
                      % (disk_file.channel_device, reported_etag))
         try:
@@ -1441,7 +1435,7 @@ class ObjectQueryMiddleware(object):
                                   os.read(fd, self.disk_chunk_size), ''):
                     new_etag.update(chunk)
             except IOError:
-                return HTTPInternalServerError(
+                raise HTTPInternalServerError(
                     body='Cannot read resulting file for device %s'
                          % disk_file.channel_device)
             metadata['ETag'] = new_etag.hexdigest()
@@ -1510,6 +1504,9 @@ def _parse_zerovm_report(nexe_headers, report):
     nexe_headers['x-nexe-cdr-line'] = report[REPORT_CDR]
     nexe_headers['x-nexe-status'] = \
         report[REPORT_STATUS].replace('\n', ' ').rstrip()
+    daemon_status = int(report[REPORT_DAEMON])
+    if daemon_status > 0:
+        nexe_headers['x-zerovm-daemon'] = daemon_status
 
 
 def _channel_cleanup(response_channels):

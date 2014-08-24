@@ -1649,6 +1649,47 @@ class TestObjectQuery(unittest.TestCase):
                 )
             os.unlink(zerovm)
 
+    def test_zerovm_bad_retcode(self):
+        self.setup_zerovm_query()
+        req = self.zerovm_object_request()
+        nexe = trim(r'''
+            global error_code
+            error_code = 4
+            return pickle.dumps(sorted(id))
+            ''')
+        nexefile = StringIO(nexe)
+        conf = ZvmNode(1, 'sort', parse_location('swift://a/c/exe'))
+        conf.add_new_channel(
+            'stdin', ACCESS_READABLE, parse_location('swift://a/c/o'))
+        conf.add_new_channel('stdout', ACCESS_WRITABLE)
+        conf = conf.dumps()
+        sysmap = StringIO(conf)
+        with create_tar({'boot': nexefile, 'sysmap': sysmap}) as tar:
+            length = os.path.getsize(tar)
+            req.body_file = Input(open(tar, 'rb'), length)
+            req.content_length = length
+            resp = req.get_response(self.app)
+            self.assertEqual(resp.status_int, 200)
+            self.assertEqual(resp.headers['x-nexe-retcode'], '0')
+            self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
+            self.assertEqual(resp.headers['x-nexe-validation'], '0')
+            self.assertEqual(resp.headers['x-nexe-system'], 'sort')
+            self.assertEqual(resp.headers['x-nexe-error'], 'bad return code')
+            fd, name = mkstemp()
+            for chunk in resp.app_iter:
+                os.write(fd, chunk)
+            os.close(fd)
+            self.assertEqual(os.path.getsize(name), resp.content_length)
+            tar = tarfile.open(name)
+            names = tar.getnames()
+            members = tar.getmembers()
+            self.assertIn('stdout', names)
+            self.assertEqual(names[-1], 'stdout')
+            fh = tar.extractfile(members[-1])
+            self.assertEqual(fh.read(), self._sortednumbers)
+            self.assertEqual(
+                resp.headers['content-type'], 'application/x-gtar')
+
 
 class TestUtils(unittest.TestCase):
     """

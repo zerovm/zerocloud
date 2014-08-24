@@ -3762,6 +3762,33 @@ class TestProxyQuery(unittest.TestCase):
             self.assertEqual(res.body, 'Quick brown fox')
             self.assertEqual(res.content_type, 'text/plain')
 
+    def test_return_bad_retcode(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        prosrv = _test_servers[0]
+        nexe = trim(r'''
+            global error_code
+            error_code = 1
+            return 'hello, world'
+            ''')
+        self.create_object(prolis, '/v1/a/c/rc.nexe', nexe)
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/c/rc.nexe"},
+                "file_list": [
+                    {"device": "stdout"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request()
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 500)
+        self.assertEqual(res.body, 'hello, world')
+        self.check_container_integrity(prosrv, '/v1/a/c', {})
+
     def test_setting_nexe_headers(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]

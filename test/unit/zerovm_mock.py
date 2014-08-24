@@ -290,6 +290,7 @@ except Exception:
 
 zvm_environ = read_env(mnfst.nvram['path'])
 od = ''
+error_code = 0
 try:
     od = str(eval_as_function(exe))
 except Exception, e:
@@ -326,4 +327,4 @@ err.close()
 if mnfst.err['etag']:
     mnfst.err['etag'] = mnfst.err['etag'].hexdigest()
     mnfst.Etag += ' %s %s' % (mnfst.err['device'], mnfst.err['etag'])
-errdump(0, valid, retcode, mnfst.Etag, accounting, 'ok.')
+errdump(error_code, valid, retcode, mnfst.Etag, accounting, 'ok.')
