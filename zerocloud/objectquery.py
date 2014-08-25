@@ -909,12 +909,13 @@ class ObjectQueryMiddleware(object):
                     ch['lpath'] = self.parser.get_sysimage(ch['device'])
                 elif ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
                     if not ch.get('lpath'):
-                        if not chan_path or is_image_path(chan_path)\
+                        if not chan_path or is_image_path(chan_path) \
                                 or is_swift_path(chan_path):
                             raise HTTPBadRequest(
                                 request=req,
-                                body='Could not resolve channel path %s for '
-                                     'device: %s' % (ch['path'], ch['device']))
+                                body='Could not resolve channel path "%s" for '
+                                     'device: %s' % (ch['path'] or '',
+                                                     ch['device']))
                 elif ch['access'] & ACCESS_WRITABLE:
                     writable_tmpdir = self.get_writable_tmpdir(device)
                     (output_fd, output_fn) = mkstemp(dir=writable_tmpdir)

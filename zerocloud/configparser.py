@@ -275,13 +275,6 @@ class ClusterConfigParser(object):
                                     and not channel.access & ACCESS_READABLE:
                                 raise ClusterConfigParsingError(
                                     'Container path must be read-only')
-                        if channel.access < 0:
-                            if self.is_sysimage_device(channel.device):
-                                other_list.append(channel)
-                                continue
-                            raise ClusterConfigParsingError(
-                                'Unknown device %s in %s'
-                                % (channel.device, zvm_node.name))
                         if channel.access & ACCESS_READABLE:
                             read_list.insert(0, channel)
                         elif channel.access & ACCESS_CDR:
@@ -359,13 +352,8 @@ class ClusterConfigParser(object):
                                 new_node = self._get_or_create_node(zvm_node)
                                 new_node.add_channel(channel=chan)
                     for chan in other_list:
-                        if self.is_sysimage_device(chan.device):
+                        if not chan.path:
                             chan.access = ACCESS_RANDOM | ACCESS_READABLE
-                        else:
-                            if not chan.path:
-                                raise ClusterConfigParsingError(
-                                    'Path is required for device: %s'
-                                    % chan.device)
                         if node_count > 1 or read_group:
                             for i in range(1, node_count + 1):
                                 new_node = self._get_or_create_node(
@@ -790,7 +778,6 @@ class ClusterConfigParser(object):
         for ch in node.channels:
             if is_swift_path(ch.path) \
                     and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
-                    and not self.is_sysimage_device(ch.device) \
                     and ch.path.path != getattr(node, 'path_info', None):
                 channels.append(ch)
         return channels
@@ -865,7 +852,7 @@ def _create_channel(channel, node, default_content_type=None):
     if not device:
         raise ClusterConfigParsingError(
             'Must specify device for file in %s' % node.name)
-    access = DEVICE_MAP.get(device, -1)
+    access = DEVICE_MAP.get(device, 0)
     mode = channel.get('mode', None)
     meta = channel.get('meta', {})
     min_size = channel.get('min_size', 0)

@@ -620,7 +620,7 @@ class ClusterController(ObjectController):
         self.middleware = middleware
         self.command = command
         self.parser = ClusterConfigParser(
-            self.middleware.zerovm_sysimage_devices,
+            {},
             self.middleware.zerovm_content_type,
             self.middleware.parser_config,
             self.middleware.list_account,

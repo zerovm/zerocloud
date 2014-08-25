@@ -1463,10 +1463,9 @@ class TestObjectQuery(unittest.TestCase):
             req.body_file = Input(open(tar, 'rb'), length)
             req.content_length = length
             resp = req.get_response(self.app)
-            fd, name = mkstemp()
             self.assertEqual(resp.status_int, 400)
             self.assertEqual(
-                resp.body, 'Could not resolve channel path bla-bla for '
+                resp.body, 'Could not resolve channel path "bla-bla" for '
                            'device: stdin')
 
     def test_QUERY_filter_factory(self):
