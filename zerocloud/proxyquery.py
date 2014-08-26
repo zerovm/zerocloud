@@ -600,18 +600,6 @@ class ProxyQueryMiddleware(object):
             except AttributeError:
                 return HTTPPreconditionFailed(request=req,
                                               body='Bad HTTP method')
-            # we do not deny access based on user account permissions
-            # as users can allow other users to run their code and be billed
-            # accordingly
-            # more than that, accounts can allow anonymous people to run
-            # executables, and these accounts will be billed for that
-            # if 'swift.authorize' in req.environ:
-            #     resp = req.environ['swift.authorize'](req)
-            #     if not resp:
-            #         del req.environ['swift.authorize']
-            #     else:
-            #         if not getattr(handler, 'delay_denial', None):
-            #             return resp
             start_time = time.time()
             # each request is assigned a unique k-sorted id
             # it will be used by QoS code to assign slots/priority
@@ -765,8 +753,6 @@ class ClusterController(ObjectController):
                         partition))
                 exec_request.headers['X-Backend-Storage-Policy-Index'] = \
                     str(policy_index)
-            exec_request.path_info = node.path_info
-            exec_request.headers['x-zerovm-access'] = node.access
             if node.replicate > 1:
                 container_info = self.container_info(account, container,
                                                      exec_request)
@@ -836,11 +822,9 @@ class ClusterController(ObjectController):
             if self.middleware.zerovm_prevalidate \
                     and 'boot' in channel.device:
                 source_req.headers['X-Zerovm-Valid'] = 'true'
-            acct, src_container_name, src_obj_name =\
+            acct, src_container_name, src_obj_name = \
                 split_path(load_from, 1, 3, True)
-            # left here for exec_acl support
-            # if 'boot' in ch.device:
-            #     source_req.acl = container_info['exec_acl']
+            self.authorize_job(source_req, acl='read_acl')
             source_resp = \
                 ObjectController(self.app,
                                  acct,
@@ -1107,6 +1091,7 @@ class ClusterController(ObjectController):
             req, req_iter, data_resp = self._process_source_header(
                 req, source_header
             )
+        self.authorize_job(req, remove_auth=False)
         req.bytes_transferred = 0
         if req.content_type in TAR_MIMES:
             # Tarball (presumably with system.map) has been POSTed
@@ -1166,12 +1151,13 @@ class ClusterController(ObjectController):
                                      swift_source='zerocloud')
         source_req.path_info = source_loc.path
         source_req.query_string = None
+        source_req.headers['x-zerovm-source'] = req.headers['x-zerovm-source']
+        self.authorize_job(source_req, acl='read_acl', save_env=req.environ)
         sink_req = Request.blank(req.path_info,
                                  environ=req.environ, headers=req.headers)
         source_resp = source_req.get_response(self.app)
         if not is_success(source_resp.status_int):
             return source_resp
-        del sink_req.headers['X-Zerovm-Source']
         sink_req.content_length = source_resp.content_length
         sink_req.content_type = source_resp.headers['Content-Type']
         sink_req.etag = source_resp.etag
@@ -1227,9 +1213,17 @@ class ClusterController(ObjectController):
             exec_request = Request.blank(path_info,
                                          environ=req.environ,
                                          headers=req.headers)
-            exec_request.path_info = path_info
+            exec_request.path_info = node.path_info
+            exec_request.headers['x-zerovm-access'] = node.access
             exec_request.etag = None
             exec_request.content_type = TAR_MIMES[0]
+            acl = None
+            if node.access == 'GET':
+                acl = 'read_acl'
+            elif node.access == 'PUT':
+                acl = 'write_acl'
+            if acl:
+                self.authorize_job(exec_request, acl=acl, remove_auth=False)
             # chunked encoding handling looks broken in Swift
             # but let's leave it here, maybe somebody will fix it
             # exec_request.content_length = None
@@ -1242,10 +1236,6 @@ class ClusterController(ObjectController):
             if len(node.connect) > 0 or len(node.bind) > 0:
                 # node operation depends on connection to other nodes
                 exec_request.headers['x-zerovm-pool'] = 'cluster'
-            if 'swift.authorize' in exec_request.environ:
-                aresp = exec_request.environ['swift.authorize'](exec_request)
-                if aresp:
-                    return aresp
             if ns_server:
                 node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
             if cluster_config.total_count > 1:
@@ -1293,8 +1283,6 @@ class ClusterController(ObjectController):
                         repl_node.last_data = data_resp
                         data_resp.nodes.append({'node': repl_node,
                                                 'dev': 'stdin'})
-            if not getattr(node, 'path_info', None):
-                node.path_info = path_info
             exec_request.node = node
             exec_request.resp_headers = nexe_headers
             sock = self.get_daemon_socket(node)
@@ -1530,14 +1518,20 @@ class ClusterController(ObjectController):
                 dest_req.environ['wsgi.input'] = ExtractedFile(untar_stream)
                 dest_req.content_type = headers['Content-Type']
                 check_headers_metadata(dest_req, headers, 'object', request)
-                dest_resp = \
-                    ObjectController(self.app,
-                                     chan.path.account,
-                                     chan.path.container,
-                                     chan.path.obj).PUT(dest_req)
+                try:
+                    self.authorize_job(dest_req, acl='write_acl')
+                    dest_resp = \
+                        ObjectController(self.app,
+                                         chan.path.account,
+                                         chan.path.container,
+                                         chan.path.obj).PUT(dest_req)
+                except HTTPException as error_resp:
+                    dest_resp = error_resp
                 if dest_resp.status_int >= 300:
                     conn.error = 'Status %s when putting %s' \
                                  % (dest_resp.status, chan.path.path)
+                    if resp.status_int < dest_resp.status_int:
+                        resp.status = dest_resp.status
                     return conn
                 info = untar_stream.get_next_tarinfo()
             bytes_transferred += len(data)
@@ -1695,6 +1689,50 @@ class ClusterController(ObjectController):
     def POST(self, req):
         return self.post_job(req)
 
+    def authorize_job(self, req, acl=None, remove_auth=True, save_env=None):
+        """
+        Authorizes a request using the acl attribute and authorize() function
+        from environment
+
+        :param req: `swob.Request` instance that we are authorizing
+        :param acl: type of the acl we read from container info
+        :param remove_auth: if True will remove authorize() from environment
+        :param save_env: if not None will save container info in the
+                         provided environment dictionary
+
+        :raises: various HTTPException instances
+        """
+        container_info = {'meta': {}}
+        try:
+            if 'swift.authorize' in req.environ:
+                version, account, container, obj = \
+                    split_path(req.path, 2, 4, True)
+                if container:
+                    container_info = self.container_info(account, container)
+                elif 'zerovm.source' in req.environ:
+                    container_info = req.environ['zerovm.source']
+                if acl:
+                    req.acl = container_info.get(acl)
+                aresp = req.environ['swift.authorize'](req)
+                if aresp and container_info:
+                    source_header = req.headers.get('X-Zerovm-Source')
+                    setuid_acl = container_info['meta'].get('zerovm-suid')
+                    endpoint = container_info['meta'].get('rest-endpoint')
+                    if all((source_header, setuid_acl, endpoint)) \
+                            and endpoint == source_header:
+                        req.acl = setuid_acl
+                        aresp = req.environ['swift.authorize'](req)
+                if aresp:
+                    raise aresp
+                if remove_auth:
+                    del req.environ['swift.authorize']
+        except ValueError:
+            raise HTTPNotFound(request=req)
+        finally:
+            if save_env:
+                save_env['zerovm.source'] = container_info
+            req.acl = None
+
 
 class RestController(ClusterController):
 
@@ -1715,10 +1753,7 @@ class RestController(ClusterController):
         config_req.path_info = config_path
         config_req.query_string = None
         config_resp = ObjectController(
-            self.app,
-            self.account_name,
-            cont,
-            obj).GET(config_req)
+            self.app, self.account_name, cont, obj).GET(config_req)
         if config_resp.status_int == 200:
             req.template = ''
             for chunk in config_resp.app_iter:
@@ -1791,10 +1826,8 @@ class RestController(ClusterController):
         buffer_length = self.middleware.zerovm_maxconfig * 2
         config_req.range = 'bytes=0-%d' % (buffer_length - 1)
         config_resp = ObjectController(
-            self.app,
-            self.account_name,
-            self.container_name,
-            self.object_name).GET(config_req)
+            self.app, self.account_name,
+            self.container_name, self.object_name).GET(config_req)
         if config_resp.status_int == HTTP_REQUESTED_RANGE_NOT_SATISFIABLE:
             return None
         if not is_success(config_resp.status_int) or \
@@ -1893,7 +1926,7 @@ class ApiController(RestController):
                 self.config_path = SwiftPath(config_path_url)
                 return None
         container_info = self.container_info(config_path.account,
-                                             config_path.container, req)
+                                             config_path.container)
         source = container_info['meta'].get('rest-endpoint')
         if not source:
             raise HTTPNotFound(request=req,
@@ -1905,6 +1938,9 @@ class ApiController(RestController):
         config_req.query_string = None
         buffer_length = self.middleware.zerovm_maxconfig * 2
         config_req.range = 'bytes=0-%d' % (buffer_length - 1)
+        config_req.headers['X-Zerovm-Source'] = self.config_path.url
+        self.authorize_job(config_req, acl='read_acl',
+                           save_env=req.environ)
         config_resp = ObjectController(
             self.app,
             self.config_path.account,

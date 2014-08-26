@@ -48,6 +48,8 @@ class ChainContext(WSGIContext):
             new_req.environ['chain.input'] = env['chain.input']
             new_req.environ['chain.input_size'] = env['chain.input_size']
             new_req.environ['chain.input_type'] = env['chain.input_type']
+            if 'zerovm.source' in env:
+                new_req.environ['zerovm.source'] = env['zerovm.source']
             env = new_req.environ
 
     def do_chain_response(self, total_time):

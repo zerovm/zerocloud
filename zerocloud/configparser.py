@@ -785,7 +785,7 @@ class ClusterConfigParser(object):
                     node.access = 'PUT'
                 else:
                     node.path_info = default_path_info
-            if not top_channel:
+            else:
                 node.path_info = default_path_info
             if node.replicate == 0:
                 node.replicate = 1

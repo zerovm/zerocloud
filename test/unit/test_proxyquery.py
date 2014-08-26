@@ -19,7 +19,7 @@ import cPickle as pickle
 from time import time
 from swift.common.middleware import proxy_logging
 from swift.common.memcached import MemcacheConnectionError
-from swift.common.swob import Request, HTTPUnauthorized
+from swift.common.swob import Request, HTTPUnauthorized, HTTPForbidden
 from hashlib import md5
 from tempfile import mkstemp, mkdtemp
 from shutil import rmtree
@@ -42,7 +42,9 @@ from swift.common.storage_policy import StoragePolicy, \
 from zerocloud import proxyquery, objectquery, chain
 from test.unit import connect_tcp, readuntil2crlfs, fake_http_connect, trim, \
     debug_logger, FakeMemcache, write_fake_ring, FakeRing
-from zerocloud.common import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
+from zerocloud.common import CLUSTER_CONFIG_FILENAME
+from zerocloud.common import NODE_CONFIG_FILENAME
+from zerocloud.common import SwiftPath
 from zerocloud.configparser import ClusterConfigParser, \
     ClusterConfigParsingError
 
@@ -109,228 +111,7 @@ class FakeMemcache(object):
         return True
 
 
-def do_setup(the_object_server):
-    utils.HASH_PATH_SUFFIX = 'endcap'
-    global _testdir, _test_servers, _test_sockets, \
-        _orig_container_listing_limit, _test_coros, _orig_SysLogHandler, \
-        _orig_POLICIES, _test_POLICIES, _pqm
-    _orig_POLICIES = storage_policy._POLICIES
-    _orig_SysLogHandler = utils.SysLogHandler
-    utils.SysLogHandler = mock.MagicMock()
-    # Since we're starting up a lot here, we're going to test more than
-    # just chunked puts; we're also going to test parts of
-    # proxy_server.Application we couldn't get to easily otherwise.
-    _testdir = \
-        os.path.join(mkdtemp(), 'tmp_test_proxy_server_chunked')
-    mkdirs(_testdir)
-    rmtree(_testdir)
-    mkdirs(os.path.join(_testdir, 'sda1'))
-    mkdirs(os.path.join(_testdir, 'sda1', 'tmp'))
-    mkdirs(os.path.join(_testdir, 'sdb1'))
-    mkdirs(os.path.join(_testdir, 'sdb1', 'tmp'))
-    conf = {'devices': _testdir, 'swift_dir': _testdir,
-            'mount_check': 'false',
-            'allowed_headers': 'content-encoding, x-object-manifest, '
-                               'content-disposition, foo',
-            'disable_fallocate': 'true',
-            'allow_versions': 'True',
-            'zerovm_maxoutput': 1024 * 1024 * 10}
-    prolis = listen(('localhost', 0))
-    acc1lis = listen(('localhost', 0))
-    acc2lis = listen(('localhost', 0))
-    con1lis = listen(('localhost', 0))
-    con2lis = listen(('localhost', 0))
-    obj1lis = listen(('localhost', 0))
-    obj2lis = listen(('localhost', 0))
-    _test_sockets = \
-        (prolis, acc1lis, acc2lis, con1lis, con2lis, obj1lis, obj2lis)
-    account_ring_path = os.path.join(_testdir, 'account.ring.gz')
-    account_devs = [
-        {'port': acc1lis.getsockname()[1]},
-        {'port': acc2lis.getsockname()[1]},
-    ]
-    write_fake_ring(account_ring_path, *account_devs)
-    container_ring_path = os.path.join(_testdir, 'container.ring.gz')
-    container_devs = [
-        {'port': con1lis.getsockname()[1]},
-        {'port': con2lis.getsockname()[1]},
-    ]
-    write_fake_ring(container_ring_path, *container_devs)
-    storage_policy._POLICIES = StoragePolicyCollection([
-        StoragePolicy(0, 'zero', True),
-        StoragePolicy(1, 'one', False),
-        StoragePolicy(2, 'two', False)])
-    obj_rings = {
-        0: ('sda1', 'sdb1'),
-        1: ('sdc1', 'sdd1'),
-        2: ('sde1', 'sdf1'),
-    }
-    for policy_index, devices in obj_rings.items():
-        policy = POLICIES[policy_index]
-        dev1, dev2 = devices
-        obj_ring_path = os.path.join(_testdir, policy.ring_name + '.ring.gz')
-        obj_devs = [
-            {'port': obj1lis.getsockname()[1], 'device': dev1},
-            {'port': obj2lis.getsockname()[1], 'device': dev2},
-        ]
-        write_fake_ring(obj_ring_path, *obj_devs)
-    prosrv = proxy_server.Application(conf, FakeMemcacheReturnsNone(),
-                                      logger=debug_logger('proxy'))
-    for policy in POLICIES:
-        # make sure all the rings are loaded
-        prosrv.get_object_ring(policy.idx)
-    # don't loose this one!
-    _test_POLICIES = storage_policy._POLICIES
-    acc1srv = account_server.AccountController(
-        conf, logger=debug_logger('acct1'))
-    acc2srv = account_server.AccountController(
-        conf, logger=debug_logger('acct2'))
-    con1srv = container_server.ContainerController(
-        conf, logger=debug_logger('cont1'))
-    con2srv = container_server.ContainerController(
-        conf, logger=debug_logger('cont2'))
-    obj1srv = the_object_server.ObjectController(
-        conf, logger=debug_logger('obj1'))
-    obj2srv = the_object_server.ObjectController(
-        conf, logger=debug_logger('obj2'))
-    pqm = proxyquery.ProxyQueryMiddleware(prosrv, conf,
-                                          logger=prosrv.logger)
-    cmdlwr = chain.ChainMiddleware(pqm, conf, logger=prosrv.logger)
-    nl = NullLogger()
-    logging_prosv = proxy_logging.ProxyLoggingMiddleware(cmdlwr, conf,
-                                                         logger=prosrv.logger)
-    prospa = spawn(wsgi.server, prolis, logging_prosv, nl)
-    acc1spa = spawn(wsgi.server, acc1lis, acc1srv, nl)
-    acc2spa = spawn(wsgi.server, acc2lis, acc2srv, nl)
-    cqm1 = objectquery.ObjectQueryMiddleware(con1srv, conf,
-                                             logger=con1srv.logger)
-    cqm2 = objectquery.ObjectQueryMiddleware(con2srv, conf,
-                                             logger=con2srv.logger)
-    con1spa = spawn(wsgi.server, con1lis, cqm1, nl)
-    con2spa = spawn(wsgi.server, con2lis, cqm2, nl)
-    oqm1 = objectquery.ObjectQueryMiddleware(obj1srv, conf,
-                                             logger=obj1srv.logger)
-    oqm2 = objectquery.ObjectQueryMiddleware(obj2srv, conf,
-                                             logger=obj2srv.logger)
-    obj1spa = spawn(wsgi.server, obj1lis, oqm1, nl)
-    obj2spa = spawn(wsgi.server, obj2lis, oqm2, nl)
-    _test_servers = \
-        (logging_prosv, acc1srv, acc2srv, cqm1, cqm2, oqm1, oqm2)
-    _test_coros = \
-        (prospa, acc1spa, acc2spa, con1spa, con2spa, obj1spa, obj2spa)
-    _pqm = pqm
-    # Create account
-    ts = normalize_timestamp(time())
-    partition, nodes = prosrv.account_ring.get_nodes('a')
-    for node in nodes:
-        conn = swift.proxy.controllers.obj.http_connect(node['ip'],
-                                                        node['port'],
-                                                        node['device'],
-                                                        partition, 'PUT', '/a',
-                                                        {'X-Timestamp': ts,
-                                                         'x-trans-id': 'test'})
-        resp = conn.getresponse()
-        assert(resp.status == 201)
-    # Create stats account
-    ts = normalize_timestamp(time())
-    partition, nodes = prosrv.account_ring.get_nodes('userstats')
-    for node in nodes:
-        conn = swift.proxy.controllers.obj.http_connect(node['ip'],
-                                                        node['port'],
-                                                        node['device'],
-                                                        partition, 'PUT',
-                                                        '/userstats',
-                                                        {'X-Timestamp': ts,
-                                                         'x-trans-id': 'test'})
-        resp = conn.getresponse()
-        assert(resp.status == 201)
-    # Create containers, 1 per test policy
-    sock = connect_tcp(('localhost', prolis.getsockname()[1]))
-    fd = sock.makefile()
-    fd.write('PUT /v1/a/c HTTP/1.1\r\nHost: localhost\r\n'
-             'Connection: close\r\nX-Auth-Token: t\r\n'
-             'Content-Length: 0\r\n\r\n')
-    fd.flush()
-    headers = readuntil2crlfs(fd)
-    exp = 'HTTP/1.1 201'
-    assert headers[:len(exp)] == exp, "Expected '%s', encountered '%s'" % (
-        exp, headers[:len(exp)])
-
-    sock = connect_tcp(('localhost', prolis.getsockname()[1]))
-    fd = sock.makefile()
-    fd.write(
-        'PUT /v1/a/c1 HTTP/1.1\r\nHost: localhost\r\n'
-        'Connection: close\r\nX-Auth-Token: t\r\nX-Storage-Policy: one\r\n'
-        'Content-Length: 0\r\n\r\n')
-    fd.flush()
-    headers = readuntil2crlfs(fd)
-    exp = 'HTTP/1.1 201'
-    assert headers[:len(exp)] == exp, \
-        "Expected '%s', encountered '%s'" % (exp, headers[:len(exp)])
-
-    sock = connect_tcp(('localhost', prolis.getsockname()[1]))
-    fd = sock.makefile()
-    fd.write(
-        'PUT /v1/a/c2 HTTP/1.1\r\nHost: localhost\r\n'
-        'Connection: close\r\nX-Auth-Token: t\r\nX-Storage-Policy: two\r\n'
-        'Content-Length: 0\r\n\r\n')
-    fd.flush()
-    headers = readuntil2crlfs(fd)
-    exp = 'HTTP/1.1 201'
-    assert headers[:len(exp)] == exp, \
-        "Expected '%s', encountered '%s'" % (exp, headers[:len(exp)])
-
-
-def setup():
-    do_setup(object_server)
-
-
-def teardown():
-    for server in _test_coros:
-        server.kill()
-    rmtree(os.path.dirname(_testdir))
-    utils.SysLogHandler = _orig_SysLogHandler
-    storage_policy._POLICIES = _orig_POLICIES
-
-
-@contextmanager
-def save_globals():
-    orig_http_connect = getattr(
-        swift.proxy.controllers.base, 'http_connect', None)
-    orig_query_connect = getattr(proxyquery, 'http_connect', None)
-    orig_account_info = getattr(
-        proxy_server.ObjectController, 'account_info', None)
-    try:
-        yield True
-    finally:
-        proxy_server.http_connect = orig_http_connect
-        swift.proxy.controllers.base.http_connect = orig_http_connect
-        swift.proxy.controllers.obj.http_connect = orig_http_connect
-        swift.proxy.controllers.account.http_connect = orig_http_connect
-        swift.proxy.controllers.container.http_connect = orig_http_connect
-        proxy_server.ObjectController.account_info = orig_account_info
-        proxyquery.http_connect = orig_query_connect
-
-
-class TestProxyQuery(unittest.TestCase):
-
-    def setUp(self):
-        self.proxy_app = \
-            proxy_server.Application(None, FakeMemcache(),
-                                     logger=debug_logger('proxy-ut'),
-                                     account_ring=FakeRing(),
-                                     container_ring=FakeRing())
-        self.pqm = proxyquery.ProxyQueryMiddleware(
-            self.proxy_app, {},
-            logger=self.proxy_app.logger,
-            object_ring=FakeRing(),
-            container_ring=FakeRing())
-
-        self.zerovm_mock = None
-
-    def tearDown(self):
-        if self.zerovm_mock:
-            os.unlink(self.zerovm_mock)
+class Utils(object):
 
     def create_container(self, prolis, url, auto_account=False):
         sock = connect_tcp(('localhost', prolis.getsockname()[1]))
@@ -384,6 +165,27 @@ class TestProxyQuery(unittest.TestCase):
         else:
             return pickle.dumps(numlist, protocol=0)
 
+    def authorize(self, req):
+        _junk, account, container, obj = req.split_path(1, 4, True)
+        perm = 'Denied'
+        if not req.remote_user:
+            who = 'Anonymous'
+            if req.acl == '.r:*':
+                perm = 'Allowed'
+        elif req.remote_user == self.users[account]:
+            who = 'Owner'
+            perm = 'Allowed'
+        else:
+            who = req.remote_user
+            if req.acl == req.remote_user:
+                perm = 'Allowed'
+        what = SwiftPath.init(account, container, obj).url
+        ver = req.headers.get('x-zerovm-execute', 'v1')
+        self.actions.append('%s %s to %s %s with %s' % (perm, who, req.method,
+                                                        what, ver))
+        if perm == 'Denied':
+            return HTTPForbidden(request=req)
+
     def setup_QUERY(self, mock=None):
 
         def set_zerovm_mock():
@@ -415,6 +217,10 @@ class TestProxyQuery(unittest.TestCase):
         self.create_container(prolis, '/v1/a/c_in2')
         self.create_container(prolis, '/v1/a/c_out1')
         self.create_container(prolis, '/v1/a/c_out2')
+        self.create_container(prolis, '/v1/a/auth')
+        self.create_container(prolis, '/v1/a/auth1')
+        self.create_container(prolis, '/v1/a1/auth')
+        self.create_container(prolis, '/v1/a1/auth1')
         self.create_object(prolis, '/v1/a/c/o', self._randomnumbers)
         self.create_object(prolis, '/v1/a/c/exe', self._nexescript)
 
@@ -430,18 +236,22 @@ class TestProxyQuery(unittest.TestCase):
         self.create_object(prolis, '/v1/a/c_in2/junk', 'junk')
         self.create_container(prolis, '/v1/userstats/a')
 
-    def zerovm_request(self):
+    def zerovm_request(self, user=None):
         req = Request.blank('/v1/a',
                             environ={'REQUEST_METHOD': 'POST'},
                             headers={'Content-Type': 'application/json',
                                      'x-zerovm-execute': '1.0'})
+        if user:
+            self.add_auth_data(req, user)
         return req
 
-    def zerovm_tar_request(self):
+    def zerovm_tar_request(self, user=None):
         req = Request.blank('/v1/a',
                             environ={'REQUEST_METHOD': 'POST'},
                             headers={'Content-Type': 'application/x-gtar',
                                      'x-zerovm-execute': '1.0'})
+        if user:
+            self.add_auth_data(req, user)
         return req
 
     def object_request(self, path):
@@ -559,6 +369,250 @@ class TestProxyQuery(unittest.TestCase):
                 for _ in res.app_iter:
                     pass
         self.assertEqual(len(objdict), 0)
+
+    def add_auth_data(self, req, user):
+        req.environ['swift.authorize'] = self.authorize
+        if user == 'anon':
+            req.remote_user = None
+        else:
+            req.remote_user = user
+
+
+def do_setup(the_object_server):
+    utils.HASH_PATH_SUFFIX = 'endcap'
+    global _testdir, _test_servers, _test_sockets, \
+        _orig_container_listing_limit, _test_coros, _orig_SysLogHandler, \
+        _orig_POLICIES, _test_POLICIES, _pqm
+    _orig_POLICIES = storage_policy._POLICIES
+    _orig_SysLogHandler = utils.SysLogHandler
+    utils.SysLogHandler = mock.MagicMock()
+    # Since we're starting up a lot here, we're going to test more than
+    # just chunked puts; we're also going to test parts of
+    # proxy_server.Application we couldn't get to easily otherwise.
+    _testdir = \
+        os.path.join(mkdtemp(), 'tmp_test_proxy_server_chunked')
+    mkdirs(_testdir)
+    rmtree(_testdir)
+    mkdirs(os.path.join(_testdir, 'sda1'))
+    mkdirs(os.path.join(_testdir, 'sda1', 'tmp'))
+    mkdirs(os.path.join(_testdir, 'sdb1'))
+    mkdirs(os.path.join(_testdir, 'sdb1', 'tmp'))
+    conf = {'devices': _testdir, 'swift_dir': _testdir,
+            'mount_check': 'false',
+            'allowed_headers': 'content-encoding, x-object-manifest, '
+                               'content-disposition, foo',
+            'disable_fallocate': 'true',
+            'allow_versions': 'True',
+            'zerovm_maxoutput': 1024 * 1024 * 10}
+    prolis = listen(('localhost', 0))
+    acc1lis = listen(('localhost', 0))
+    acc2lis = listen(('localhost', 0))
+    con1lis = listen(('localhost', 0))
+    con2lis = listen(('localhost', 0))
+    obj1lis = listen(('localhost', 0))
+    obj2lis = listen(('localhost', 0))
+    _test_sockets = \
+        (prolis, acc1lis, acc2lis, con1lis, con2lis, obj1lis, obj2lis)
+    account_ring_path = os.path.join(_testdir, 'account.ring.gz')
+    account_devs = [
+        {'port': acc1lis.getsockname()[1]},
+        {'port': acc2lis.getsockname()[1]},
+    ]
+    write_fake_ring(account_ring_path, *account_devs)
+    container_ring_path = os.path.join(_testdir, 'container.ring.gz')
+    container_devs = [
+        {'port': con1lis.getsockname()[1]},
+        {'port': con2lis.getsockname()[1]},
+    ]
+    write_fake_ring(container_ring_path, *container_devs)
+    storage_policy._POLICIES = StoragePolicyCollection([
+        StoragePolicy(0, 'zero', True),
+        StoragePolicy(1, 'one', False),
+        StoragePolicy(2, 'two', False)])
+    obj_rings = {
+        0: ('sda1', 'sdb1'),
+        1: ('sdc1', 'sdd1'),
+        2: ('sde1', 'sdf1'),
+    }
+    for policy_index, devices in obj_rings.items():
+        policy = POLICIES[policy_index]
+        dev1, dev2 = devices
+        obj_ring_path = os.path.join(_testdir, policy.ring_name + '.ring.gz')
+        obj_devs = [
+            {'port': obj1lis.getsockname()[1], 'device': dev1},
+            {'port': obj2lis.getsockname()[1], 'device': dev2},
+        ]
+        write_fake_ring(obj_ring_path, *obj_devs)
+    prosrv = proxy_server.Application(conf, FakeMemcacheReturnsNone(),
+                                      logger=debug_logger('proxy'))
+    for policy in POLICIES:
+        # make sure all the rings are loaded
+        prosrv.get_object_ring(policy.idx)
+    # don't loose this one!
+    _test_POLICIES = storage_policy._POLICIES
+    acc1srv = account_server.AccountController(
+        conf, logger=debug_logger('acct1'))
+    acc2srv = account_server.AccountController(
+        conf, logger=debug_logger('acct2'))
+    con1srv = container_server.ContainerController(
+        conf, logger=debug_logger('cont1'))
+    con2srv = container_server.ContainerController(
+        conf, logger=debug_logger('cont2'))
+    obj1srv = the_object_server.ObjectController(
+        conf, logger=debug_logger('obj1'))
+    obj2srv = the_object_server.ObjectController(
+        conf, logger=debug_logger('obj2'))
+    pqm = proxyquery.ProxyQueryMiddleware(prosrv, conf,
+                                          logger=prosrv.logger)
+    cmdlwr = chain.ChainMiddleware(pqm, conf, logger=prosrv.logger)
+    nl = NullLogger()
+    logging_prosv = proxy_logging.ProxyLoggingMiddleware(cmdlwr, conf,
+                                                         logger=prosrv.logger)
+    prospa = spawn(wsgi.server, prolis, logging_prosv, nl)
+    acc1spa = spawn(wsgi.server, acc1lis, acc1srv, nl)
+    acc2spa = spawn(wsgi.server, acc2lis, acc2srv, nl)
+    cqm1 = objectquery.ObjectQueryMiddleware(con1srv, conf,
+                                             logger=con1srv.logger)
+    cqm2 = objectquery.ObjectQueryMiddleware(con2srv, conf,
+                                             logger=con2srv.logger)
+    con1spa = spawn(wsgi.server, con1lis, cqm1, nl)
+    con2spa = spawn(wsgi.server, con2lis, cqm2, nl)
+    oqm1 = objectquery.ObjectQueryMiddleware(obj1srv, conf,
+                                             logger=obj1srv.logger)
+    oqm2 = objectquery.ObjectQueryMiddleware(obj2srv, conf,
+                                             logger=obj2srv.logger)
+    obj1spa = spawn(wsgi.server, obj1lis, oqm1, nl)
+    obj2spa = spawn(wsgi.server, obj2lis, oqm2, nl)
+    _test_servers = \
+        (logging_prosv, acc1srv, acc2srv, cqm1, cqm2, oqm1, oqm2)
+    _test_coros = \
+        (prospa, acc1spa, acc2spa, con1spa, con2spa, obj1spa, obj2spa)
+    _pqm = pqm
+    # Create accounts
+    ts = normalize_timestamp(time())
+    partition, nodes = prosrv.account_ring.get_nodes('a')
+    for node in nodes:
+        conn = swift.proxy.controllers.obj.http_connect(node['ip'],
+                                                        node['port'],
+                                                        node['device'],
+                                                        partition, 'PUT', '/a',
+                                                        {'X-Timestamp': ts,
+                                                         'x-trans-id': 'test'})
+        resp = conn.getresponse()
+        assert(resp.status == 201)
+    ts = normalize_timestamp(time())
+    partition, nodes = prosrv.account_ring.get_nodes('a1')
+    for node in nodes:
+        conn = swift.proxy.controllers.obj.http_connect(node['ip'],
+                                                        node['port'],
+                                                        node['device'],
+                                                        partition, 'PUT',
+                                                        '/a1',
+                                                        {'X-Timestamp': ts,
+                                                         'x-trans-id': 'test'})
+        resp = conn.getresponse()
+        assert(resp.status == 201)
+    # Create stats account
+    ts = normalize_timestamp(time())
+    partition, nodes = prosrv.account_ring.get_nodes('userstats')
+    for node in nodes:
+        conn = swift.proxy.controllers.obj.http_connect(node['ip'],
+                                                        node['port'],
+                                                        node['device'],
+                                                        partition, 'PUT',
+                                                        '/userstats',
+                                                        {'X-Timestamp': ts,
+                                                         'x-trans-id': 'test'})
+        resp = conn.getresponse()
+        assert(resp.status == 201)
+    # Create containers, 1 per test policy
+    sock = connect_tcp(('localhost', prolis.getsockname()[1]))
+    fd = sock.makefile()
+    fd.write('PUT /v1/a/c HTTP/1.1\r\nHost: localhost\r\n'
+             'Connection: close\r\nX-Auth-Token: t\r\n'
+             'Content-Length: 0\r\n\r\n')
+    fd.flush()
+    headers = readuntil2crlfs(fd)
+    exp = 'HTTP/1.1 201'
+    assert headers[:len(exp)] == exp, "Expected '%s', encountered '%s'" % (
+        exp, headers[:len(exp)])
+
+    sock = connect_tcp(('localhost', prolis.getsockname()[1]))
+    fd = sock.makefile()
+    fd.write(
+        'PUT /v1/a/c1 HTTP/1.1\r\nHost: localhost\r\n'
+        'Connection: close\r\nX-Auth-Token: t\r\nX-Storage-Policy: one\r\n'
+        'Content-Length: 0\r\n\r\n')
+    fd.flush()
+    headers = readuntil2crlfs(fd)
+    exp = 'HTTP/1.1 201'
+    assert headers[:len(exp)] == exp, \
+        "Expected '%s', encountered '%s'" % (exp, headers[:len(exp)])
+
+    sock = connect_tcp(('localhost', prolis.getsockname()[1]))
+    fd = sock.makefile()
+    fd.write(
+        'PUT /v1/a/c2 HTTP/1.1\r\nHost: localhost\r\n'
+        'Connection: close\r\nX-Auth-Token: t\r\nX-Storage-Policy: two\r\n'
+        'Content-Length: 0\r\n\r\n')
+    fd.flush()
+    headers = readuntil2crlfs(fd)
+    exp = 'HTTP/1.1 201'
+    assert headers[:len(exp)] == exp, \
+        "Expected '%s', encountered '%s'" % (exp, headers[:len(exp)])
+
+
+def setup():
+    do_setup(object_server)
+
+
+def teardown():
+    for server in _test_coros:
+        server.kill()
+    rmtree(os.path.dirname(_testdir))
+    utils.SysLogHandler = _orig_SysLogHandler
+    storage_policy._POLICIES = _orig_POLICIES
+
+
+@contextmanager
+def save_globals():
+    orig_http_connect = getattr(
+        swift.proxy.controllers.base, 'http_connect', None)
+    orig_query_connect = getattr(proxyquery, 'http_connect', None)
+    orig_account_info = getattr(
+        proxy_server.ObjectController, 'account_info', None)
+    try:
+        yield True
+    finally:
+        proxy_server.http_connect = orig_http_connect
+        swift.proxy.controllers.base.http_connect = orig_http_connect
+        swift.proxy.controllers.obj.http_connect = orig_http_connect
+        swift.proxy.controllers.account.http_connect = orig_http_connect
+        swift.proxy.controllers.container.http_connect = orig_http_connect
+        proxy_server.ObjectController.account_info = orig_account_info
+        proxyquery.http_connect = orig_query_connect
+
+
+class TestProxyQuery(unittest.TestCase, Utils):
+
+    def setUp(self):
+        self.proxy_app = \
+            proxy_server.Application(None, FakeMemcache(),
+                                     logger=debug_logger('proxy-ut'),
+                                     account_ring=FakeRing(),
+                                     container_ring=FakeRing())
+        self.pqm = proxyquery.ProxyQueryMiddleware(
+            self.proxy_app, {},
+            logger=self.proxy_app.logger,
+            object_ring=FakeRing(),
+            container_ring=FakeRing())
+
+        self.zerovm_mock = None
+        self.users = {'a': 'user', 'a1': 'user1'}
+
+    def tearDown(self):
+        if self.zerovm_mock:
+            os.unlink(self.zerovm_mock)
 
     def test_QUERY_name_service(self):
         peers = 3
@@ -3039,7 +3093,7 @@ class TestProxyQuery(unittest.TestCase):
         except ClusterConfigParsingError:
             self.assertTrue(False, msg='ClusterConfigParsingError is raised')
         self.assertEqual(len(parser.nodes), 5)
-        for n in parser.nodes.itervalues():
+        for n in parser.node_list:
             parser.build_connect_string(n, cluster_id='cluster1')
             self.assertEqual(len(n.bind), 4)
             for line in n.bind:
@@ -3177,7 +3231,7 @@ class TestProxyQuery(unittest.TestCase):
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            import json
+            from zerocloud.common import json
             import sqlite3
             db_path = mnfst.channels['/dev/input']['path']
             con = sqlite3.connect(db_path)
@@ -3538,10 +3592,11 @@ class TestProxyQuery(unittest.TestCase):
 
     def test_job_chain(self):
         self.setup_QUERY()
+        self.actions = []
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            import json
+            from zerocloud.common import json
             conf = [
                 {
                     'name': 'http',
@@ -3589,7 +3644,7 @@ class TestProxyQuery(unittest.TestCase):
             }
         ]
         conf = json.dumps(conf)
-        req = self.zerovm_request()
+        req = self.zerovm_request(user=self.users['a'])
         req.body = conf
         res = req.get_response(prosrv)
         self.assertEqual(res.status_int, 200)
@@ -3598,13 +3653,19 @@ class TestProxyQuery(unittest.TestCase):
         self.assertEqual(res.headers['x-object-meta-key2'], 'value2')
         self.assertEqual(res.body, '<html><body>Test this</body></html>')
         self.check_container_integrity(prosrv, '/v1/a/c', {})
+        self.assertEqual(
+            ['Allowed Owner to POST swift://a with 1.0',
+             'Allowed Owner to GET swift://a/c/chainer with 1.0',
+             'Allowed Owner to POST swift://a with 1.0',
+             'Allowed Owner to GET swift://a/c/exe2 with 1.0'],
+            self.actions)
 
     def test_job_chain_timeout(self):
         self.setup_QUERY()
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            import json
+            from zerocloud.common import json
             conf = [
                 {
                     'name': 'http',
@@ -3662,7 +3723,7 @@ class TestProxyQuery(unittest.TestCase):
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            import json
+            from zerocloud.common import json
             import urlparse
             qs = zvm_environ['QUERY_STRING']
             params = dict(urlparse.parse_qsl(qs, True))
@@ -3729,7 +3790,7 @@ class TestProxyQuery(unittest.TestCase):
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            import json
+            from zerocloud.common import json
             import urlparse
             qs = zvm_environ['QUERY_STRING']
             params = dict(urlparse.parse_qsl(qs, True))
@@ -3972,7 +4033,7 @@ class TestProxyQuery(unittest.TestCase):
         prosrv = _test_servers[0]
         prolis = _test_sockets[0]
         nexe = trim(r'''
-            import json
+            from zerocloud.common import json
             out = {
                 'data': sorted(id),
                 'env': zvm_environ
@@ -4154,3 +4215,627 @@ class TestProxyQuery(unittest.TestCase):
             self.assertEqual(res.headers['x-seq-start'], str(start))
             self.assertEqual(res.headers['x-seq-end'], str(end))
             self.check_container_integrity(prosrv, '/v1/a/c', {})
+
+
+class TestAuth(unittest.TestCase, Utils):
+
+    def setUp(self):
+        self.setup_QUERY()
+        prolis = _test_sockets[0]
+        nexe = trim(r'''
+            return 'hello, world'
+            ''')
+        self.create_object(prolis, '/v1/a/auth/hello.nexe', nexe)
+        self.actions = []
+        self.zerovm_mock = None
+        self.users = {'a': 'user', 'a1': 'user1'}
+
+    def tearDown(self):
+        if self.zerovm_mock:
+            os.unlink(self.zerovm_mock)
+
+    def remove_acls(self, url):
+        req = Request.blank(url,
+                            environ={'REQUEST_METHOD': 'POST'},
+                            headers={'X-Remove-Container-Read': 't',
+                                     'X-Remove-Container-Write': 't'})
+        req.environ['swift_owner'] = True
+        res = req.get_response(_test_servers[0])
+        self.assertEqual(res.status_int, 204)
+
+    def set_acls(self, url, read=None, write=None):
+        headers = {}
+        if read:
+            headers['X-Container-Read'] = read
+        if write:
+            headers['X-Container-Write'] = write
+        req = Request.blank(url,
+                            environ={'REQUEST_METHOD': 'POST'},
+                            headers=headers)
+        req.environ['swift_owner'] = True
+        res = req.get_response(_test_servers[0])
+        self.assertEqual(res.status_int, 204)
+
+    def set_suid(self, url, endpoint, acl):
+        headers = {
+            'X-Container-Meta-Rest-Endpoint': endpoint,
+            'X-Container-Meta-Zerovm-Suid': acl
+        }
+        req = Request.blank(url,
+                            environ={'REQUEST_METHOD': 'POST'},
+                            headers=headers)
+        req.environ['swift_owner'] = True
+        res = req.get_response(_test_servers[0])
+        self.assertEqual(res.status_int, 204)
+
+    def remove_suid(self, url):
+        headers = {
+            'X-Remove-Container-Meta-Rest-Endpoint': 't',
+            'X-Remove-Container-Meta-Zerovm-Suid': 't'
+        }
+        req = Request.blank(url,
+                            environ={'REQUEST_METHOD': 'POST'},
+                            headers=headers)
+        req.environ['swift_owner'] = True
+        res = req.get_response(_test_servers[0])
+        self.assertEqual(res.status_int, 204)
+
+    def test_post_owner(self):
+        # test owner posts json
+        prosrv = _test_servers[0]
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/auth/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request(user=self.users['a'])
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, 'hello, world')
+        self.check_container_integrity(prosrv, '/v1/a/auth', {})
+        self.assertEqual(
+            ['Allowed Owner to POST swift://a with 1.0',
+             'Allowed Owner to GET swift://a/auth/hello.nexe with 1.0'],
+            self.actions)
+
+    def test_post_other(self):
+        # test other user posts json
+        prosrv = _test_servers[0]
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/auth/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request(user=self.users['a1'])
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 403)
+        self.assertTrue(res.body is not None)
+        self.assertEqual(len(self.actions), 1)
+        self.assertEqual(['Denied user1 to POST swift://a with 1.0'],
+                         self.actions)
+
+    def test_post_owner_read_other_with_perm(self):
+        # test owner post json that reads object in another account,
+        # and read permission is set
+        prosrv = _test_servers[0]
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/auth/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        self.remove_acls('/v1/a/auth')
+        self.set_acls('/v1/a/auth', read='user1')
+        req = self.zerovm_request(user=self.users['a1'])
+        req.path_info = '/v1/a1'
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, 'hello, world')
+        self.assertEqual(
+            ['Allowed Owner to POST swift://a1 with 1.0',
+             'Allowed user1 to GET swift://a/auth/hello.nexe with 1.0'],
+            self.actions)
+
+    def test_post_owner_read_other_no_perm(self):
+        # test owner post json that reads object in another account,
+        # and read permission is NOT set
+        prosrv = _test_servers[0]
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/auth/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        self.remove_acls('/v1/a/auth')
+        req = self.zerovm_request(user=self.users['a1'])
+        req.path_info = '/v1/a1'
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 403)
+        self.assertTrue(res.body is not None)
+        self.assertEqual(
+            ['Allowed Owner to POST swift://a1 with 1.0',
+             'Denied user1 to GET swift://a/auth/hello.nexe with 1.0'],
+            self.actions)
+
+    def test_post_owner_read_write_other_no_perm(self):
+        # test owner post json that reads object in another account,
+        # and read permission is set, it also writes to another object, and
+        # write permission is NOT set
+        prosrv = _test_servers[0]
+        self.remove_acls('/v1/a/auth')
+        self.set_acls('/v1/a/auth', read='user1')
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/auth/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"},
+                    {"device": "stderr",
+                     "path": "swift://a/auth/hello.log"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request(user=self.users['a1'])
+        req.path_info = '/v1/a1'
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 403)
+        self.assertTrue(res.body is not None)
+        self.assertEqual(
+            ['Allowed Owner to POST swift://a1 with 1.0',
+             'Allowed user1 to GET swift://a/auth/hello.nexe with 1.0',
+             'Denied user1 to PUT swift://a/auth/hello.log with 1.0'],
+            self.actions)
+
+    def test_post_owner_read_write_other_with_perm(self):
+        # test owner post json that reads object in another account,
+        # and read permission is set, it also writes to another object, and
+        # write permission is set
+        prosrv = _test_servers[0]
+        self.remove_acls('/v1/a/auth')
+        self.set_acls('/v1/a/auth', read='user1', write='user1')
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/auth/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"},
+                    {"device": "stderr",
+                     "path": "swift://a/auth/hello.log"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request(user=self.users['a1'])
+        req.path_info = '/v1/a1'
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, 'hello, world')
+        self.assertEqual(
+            ['Allowed Owner to POST swift://a1 with 1.0',
+             'Allowed user1 to GET swift://a/auth/hello.nexe with 1.0',
+             'Allowed user1 to PUT swift://a/auth/hello.log with 1.0'],
+            self.actions)
+
+    def test_post_owner_read_local_read_write_remote(self):
+        # test owner post json that reads object locally, another object
+        # remotely and writes yet another object
+        prosrv = _test_servers[0]
+        self.remove_acls('/v1/a/auth')
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/auth/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"},
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {"device": "stderr",
+                     "path": "swift://a/auth/hello.log"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request(user=self.users['a'])
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, 'hello, world')
+        self.assertEqual(
+            ['Allowed Owner to POST swift://a with 1.0',
+             'Allowed Owner to POST swift://a/c/o with 1.0',
+             'Allowed Owner to GET swift://a/auth/hello.nexe with 1.0',
+             'Allowed Owner to PUT swift://a/auth/hello.log with 1.0'],
+            self.actions)
+
+    def test_post_owner_read_local_read_write_remote_other(self):
+        # test owner post json that reads object from other account locally,
+        # reads another object from other account remotely and writes yet
+        # another object from other account, and NO permissions are set
+        prosrv = _test_servers[0]
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/auth/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"},
+                    {'device': 'stdin', 'path': 'swift://a/c/o'},
+                    {"device": "stderr",
+                     "path": "swift://a/auth/hello.log"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        self.remove_acls('/v1/a/auth')
+        self.set_acls('/v1/a/auth', read='user1', write='user1')
+        req = self.zerovm_request(user=self.users['a1'])
+        req.path_info = '/v1/a1'
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 403)
+        self.assertTrue(res.body is not None)
+        self.assertEqual(
+            ['Allowed Owner to POST swift://a1 with 1.0',
+             'Denied user1 to POST swift://a/c/o with 1.0'],
+            self.actions)
+
+    def test_post_owner_read_local_read_write_remote_other_with_perm(self):
+        # test owner post json that reads object from other account locally,
+        # reads another object from other account remotely and writes yet
+        # another object from other account, and permissions are set for
+        # both read and write
+        prosrv = _test_servers[0]
+        self.remove_acls('/v1/a/auth')
+        self.set_acls('/v1/a/auth', read='user1', write='user1')
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/auth/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"},
+                    {'device': 'stdin',
+                     'path': 'swift://a/auth/hello.nexe'},
+                    {"device": "stderr",
+                     "path": "swift://a/auth/hello.log"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request(user=self.users['a1'])
+        req.path_info = '/v1/a1'
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 500)
+        self.assertTrue(res.body is not None)
+        self.assertEqual(
+            ['Allowed Owner to POST swift://a1 with 1.0',
+             'Allowed user1 to POST swift://a/auth/hello.nexe with 1.0',
+             'Allowed user1 to GET swift://a/auth/hello.nexe with 1.0',
+             'Allowed user1 to PUT swift://a/auth/hello.log with 1.0'],
+            self.actions)
+
+    def test_post_owner_read_same_object_twice_with_perm(self):
+        # test owner post json that writes object to other account locally,
+        # reads another object from other account remotely and reads the
+        # same object from other account remotely on other channel, although
+        # the permissions are good the call will fail because it's not
+        # a valid call (same object referenced twice in remote context)
+        prosrv = _test_servers[0]
+        self.remove_acls('/v1/a/auth')
+        self.set_acls('/v1/a/auth', read='user1', write='user1')
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/auth/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"},
+                    {'device': 'stdin',
+                     'path': 'swift://a/auth/hello.nexe'},
+                    {"device": "stderr",
+                     "path": "swift://a/auth/hello.log"}
+                ],
+                "attach": "stderr"
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request(user=self.users['a1'])
+        req.path_info = '/v1/a1'
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 400)
+        self.assertTrue(res.body is not None)
+        self.assertEqual(
+            ['Allowed Owner to POST swift://a1 with 1.0',
+             'Allowed user1 to POST swift://a/auth/hello.log with 1.0',
+             'Allowed user1 to GET swift://a/auth/hello.nexe with 1.0'],
+            self.actions)
+
+    def test_x_source_with_setuid(self):
+        # test an app called by other user from x-zerovm-source with set-uid
+        # permission set
+        prosrv = _test_servers[0]
+        self.remove_acls('/v1/a/auth')
+        self.set_suid('/v1/a/auth', 'swift://a/auth/myapp', 'user1')
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/auth/hello.nexe'},
+                'devices': [
+                    {'name': 'stdin'},
+                    {'name': 'stdout'},
+                    {'name': 'stderr', 'path': 'swift://a/auth/hello.log'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        prolis = _test_sockets[0]
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            self.create_object(prolis, '/v1/a/auth/myapp',
+                               open(tar, 'rb').read(),
+                               content_type='application/x-tar')
+            req = self.zerovm_request(user=self.users['a1'])
+            req.headers['x-zerovm-source'] = 'swift://a/auth/myapp'
+            req.headers['content-type'] = 'application/x-pickle'
+            random_data = self.get_random_numbers()
+            data = StringIO(random_data)
+            req.body_file = data
+            req.content_length = len(random_data)
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.body, 'hello, world')
+        self.assertEqual(
+            ['Denied user1 to GET swift://a/auth/myapp with v1',
+             'Allowed user1 to GET swift://a/auth/myapp with v1',
+             'Denied user1 to POST swift://a with 1.0',
+             'Allowed user1 to POST swift://a with 1.0',
+             'Denied user1 to GET swift://a/auth/hello.nexe with 1.0',
+             'Allowed user1 to GET swift://a/auth/hello.nexe with 1.0',
+             'Denied user1 to PUT swift://a/auth/hello.log with 1.0',
+             'Allowed user1 to PUT swift://a/auth/hello.log with 1.0'],
+            self.actions)
+
+    def test_x_source_with_read_setuid_and_no_write_setuid(self):
+        # test an app called by other user from x-zerovm-source with set-uid
+        # permission set and NO set-uid permission set on writeable channel
+        self.remove_acls('/v1/a/auth')
+        self.set_suid('/v1/a/auth', 'swift://a/auth/myapp', 'user1')
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/auth/hello.nexe'},
+                'devices': [
+                    {'name': 'stdin'},
+                    {'name': 'stdout'},
+                    {'name': 'stderr', 'path': 'swift://a/auth1/hello.log'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        prolis = _test_sockets[0]
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            self.create_object(prolis, '/v1/a/auth/myapp',
+                               open(tar, 'rb').read(),
+                               content_type='application/x-tar')
+            req = self.zerovm_request(user=self.users['a1'])
+            req.headers['x-zerovm-source'] = 'swift://a/auth/myapp'
+            req.headers['content-type'] = 'application/x-pickle'
+            random_data = self.get_random_numbers()
+            data = StringIO(random_data)
+            req.body_file = data
+            req.content_length = len(random_data)
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 403)
+            self.assertTrue(res.body is not None)
+        self.assertEqual(
+            ['Denied user1 to GET swift://a/auth/myapp with v1',
+             'Allowed user1 to GET swift://a/auth/myapp with v1',
+             'Denied user1 to POST swift://a with 1.0',
+             'Allowed user1 to POST swift://a with 1.0',
+             'Denied user1 to GET swift://a/auth/hello.nexe with 1.0',
+             'Allowed user1 to GET swift://a/auth/hello.nexe with 1.0',
+             'Denied user1 to PUT swift://a/auth1/hello.log with 1.0'],
+            self.actions)
+
+    def test_x_source_with_read_setuid_and_write_setuid(self):
+        # test an app called by other user from x-zerovm-source with set-uid
+        # permission set and set-uid permission set on writeable channel
+        self.remove_acls('/v1/a/auth')
+        self.set_suid('/v1/a/auth', 'swift://a/auth/myapp', 'user1')
+        self.set_suid('/v1/a/auth1', 'swift://a/auth/myapp', 'user1')
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/auth/hello.nexe'},
+                'devices': [
+                    {'name': 'stdin'},
+                    {'name': 'stdout'},
+                    {'name': 'stderr', 'path': 'swift://a/auth1/hello.log'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        prolis = _test_sockets[0]
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            self.create_object(prolis, '/v1/a/auth/myapp',
+                               open(tar, 'rb').read(),
+                               content_type='application/x-tar')
+            req = self.zerovm_request(user=self.users['a1'])
+            req.headers['x-zerovm-source'] = 'swift://a/auth/myapp'
+            req.headers['content-type'] = 'application/x-pickle'
+            random_data = self.get_random_numbers()
+            data = StringIO(random_data)
+            req.body_file = data
+            req.content_length = len(random_data)
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.body, 'hello, world')
+        self.assertEqual(
+            ['Denied user1 to GET swift://a/auth/myapp with v1',
+             'Allowed user1 to GET swift://a/auth/myapp with v1',
+             'Denied user1 to POST swift://a with 1.0',
+             'Allowed user1 to POST swift://a with 1.0',
+             'Denied user1 to GET swift://a/auth/hello.nexe with 1.0',
+             'Allowed user1 to GET swift://a/auth/hello.nexe with 1.0',
+             'Denied user1 to PUT swift://a/auth1/hello.log with 1.0',
+             'Allowed user1 to PUT swift://a/auth1/hello.log with 1.0'],
+            self.actions)
+
+    def test_x_source_with_setuid_for_other_object(self):
+        # test an app called by other user from x-zerovm-source with set-uid
+        # permission set for different x-zerovm-source header
+        self.remove_acls('/v1/a/auth')
+        self.remove_suid('/v1/a/auth1')
+        self.set_suid('/v1/a/auth', 'swift://a/auth/myapp1', 'user1')
+        conf = [
+            {
+                'name': 'sort',
+                'exec': {'path': 'swift://a/auth/hello.nexe'},
+                'devices': [
+                    {'name': 'stdin'},
+                    {'name': 'stdout'},
+                    {'name': 'stderr', 'path': 'swift://a/auth/hello.log'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        prolis = _test_sockets[0]
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            self.create_object(prolis, '/v1/a/auth/myapp',
+                               open(tar, 'rb').read(),
+                               content_type='application/x-tar')
+            req = self.zerovm_request(user=self.users['a1'])
+            req.headers['x-zerovm-source'] = 'swift://a/auth/myapp'
+            req.headers['content-type'] = 'application/x-pickle'
+            random_data = self.get_random_numbers()
+            data = StringIO(random_data)
+            req.body_file = data
+            req.content_length = len(random_data)
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 403)
+            self.assertTrue(res.body is not None)
+        self.assertEqual(
+            ['Denied user1 to GET swift://a/auth/myapp with v1'],
+            self.actions)
+
+    def test_open_owner(self):
+        # test an open call to app by owner
+        self.remove_acls('/v1/a/auth')
+        self.remove_suid('/v1/a/auth')
+        self.remove_suid('/v1/a/auth1')
+        conf = [
+            {
+                'name': 'zapp-post',
+                'exec': {'path': 'swift://a/auth/hello.nexe'},
+                'devices': [
+                    {'name': 'stdin'},
+                    {'name': 'stdout'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        prolis = _test_sockets[0]
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            self.create_object(prolis, '/v1/a/c/myapp',
+                               open(tar, 'rb').read(),
+                               content_type='application/x-tar')
+            req = Request.blank('/open/a/c/myapp',
+                                environ={'REQUEST_METHOD': 'POST'},
+                                headers={
+                                    'Content-Type': 'application/x-pickle'})
+            self.add_auth_data(req, 'user')
+            random_data = self.get_random_numbers()
+            data = StringIO(random_data)
+            req.body_file = data
+            req.content_length = len(random_data)
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.body, 'hello, world')
+            self.assertEqual(
+                ['Allowed Owner to GET swift://a/c/myapp with open/1.0',
+                 'Allowed Owner to GET swift://a/c/myapp with v1',
+                 'Allowed Owner to POST swift://a/c/myapp with open/1.0',
+                 'Allowed Owner to GET swift://a/auth/hello.nexe with '
+                 'open/1.0'],
+                self.actions)
+
+    def test_api_anonymous(self):
+        # test an api POST call to auth container by anonymous user with
+        # set-uid permission set allowing anonymous access
+        self.remove_acls('/v1/a/auth')
+        self.remove_suid('/v1/a/auth')
+        self.remove_suid('/v1/a/auth1')
+        self.set_suid('/v1/a/auth', 'swift://a/auth/myapp', '.r:*')
+        conf = [
+            {
+                'name': 'zapp-post',
+                'exec': {'path': 'swift://a/auth/hello.nexe'},
+                'devices': [
+                    {'name': 'stdin'},
+                    {'name': 'stdout'}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        prolis = _test_sockets[0]
+        sysmap = StringIO(conf)
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
+            self.create_object(prolis, '/v1/a/auth/myapp',
+                               open(tar, 'rb').read(),
+                               content_type='application/x-tar')
+            req = Request.blank('/api/a/auth',
+                                environ={'REQUEST_METHOD': 'POST'},
+                                headers={
+                                    'Content-Type': 'application/x-pickle'})
+            self.add_auth_data(req, 'anon')
+            random_data = self.get_random_numbers()
+            data = StringIO(random_data)
+            req.body_file = data
+            req.content_length = len(random_data)
+            res = req.get_response(prosrv)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.body, 'hello, world')
+            self.assertEqual(
+                ['Denied Anonymous to GET swift://a/auth/myapp with api/1.0',
+                 'Allowed Anonymous to GET swift://a/auth/myapp with api/1.0',
+                 'Denied Anonymous to GET swift://a/auth/myapp with v1',
+                 'Allowed Anonymous to GET swift://a/auth/myapp with v1',
+                 'Denied Anonymous to POST swift://a/auth with api/1.0',
+                 'Allowed Anonymous to POST swift://a/auth with api/1.0',
+                 'Denied Anonymous to GET swift://a/auth/hello.nexe '
+                 'with api/1.0',
+                 'Allowed Anonymous to GET swift://a/auth/hello.nexe '
+                 'with api/1.0'],
+                self.actions)
