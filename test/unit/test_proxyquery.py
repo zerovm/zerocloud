@@ -3428,7 +3428,8 @@ class TestProxyQuery(unittest.TestCase):
             req.body_file = open(tar, 'rb')
             req.content_length = os.path.getsize(tar)
             res = req.get_response(prosrv)
-            self.assertEqual(res.status_int, 400)
+            self.assertEqual(res.status_int, 200)
+            self.assertEqual(res.body, '')
             self.create_object(prolis, '/v1/a/c/myapp',
                                open(tar, 'rb').read(),
                                content_type='application/x-tar')
