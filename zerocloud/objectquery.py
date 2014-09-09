@@ -907,6 +907,9 @@ class ObjectQueryMiddleware(object):
                         local_object.channel = ch
                 if self.parser.is_sysimage_device(ch['device']):
                     ch['lpath'] = self.parser.get_sysimage(ch['device'])
+                elif not ch['path'] and not ch.get('lpath') \
+                        and ch['device'] == 'stdin':
+                    ch['lpath'] = '/dev/null'
                 elif ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
                     if not ch.get('lpath'):
                         if not chan_path or is_image_path(chan_path) \
