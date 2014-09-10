@@ -17,6 +17,7 @@ import os
 import cPickle as pickle
 from time import time
 from swift.common.middleware import proxy_logging
+from swift.common.memcached import MemcacheConnectionError
 from swift.common.swob import Request, HTTPUnauthorized
 from hashlib import md5
 from tempfile import mkstemp, mkdtemp
@@ -62,6 +63,50 @@ class FakeMemcacheReturnsNone(FakeMemcache):
         # Returns None as the timestamp of the container; assumes we're only
         # using the FakeMemcache for container existence checks.
         return None
+
+
+class FakeMemcache(object):
+
+    def __init__(self):
+        self.store = {}
+        self.error_on_incr = False
+        self.init_incr_return_neg = False
+        self.call = {'get': 0, 'set': 0}
+
+    def get(self, key):
+        self.call['get'] += 1
+        return self.store.get(key)
+
+    def set(self, key, value, serialize=False, time=0):
+        self.call['set'] += 1
+        self.store[key] = value
+        return True
+
+    def incr(self, key, delta=1, time=0):
+        if self.error_on_incr:
+            raise MemcacheConnectionError('Memcache restarting')
+        if self.init_incr_return_neg:
+            # simulate initial hit, force reset of memcache
+            self.init_incr_return_neg = False
+            return -10000000
+        self.store[key] = int(self.store.setdefault(key, 0)) + int(delta)
+        if self.store[key] < 0:
+            self.store[key] = 0
+        return int(self.store[key])
+
+    def decr(self, key, delta=1, time=0):
+        return self.incr(key, delta=-delta, time=time)
+
+    @contextmanager
+    def soft_lock(self, key, timeout=0, retries=5):
+        yield True
+
+    def delete(self, key):
+        try:
+            del self.store[key]
+        except Exception:
+            pass
+        return True
 
 
 def do_setup(the_object_server):
@@ -3746,18 +3791,30 @@ class TestProxyQuery(unittest.TestCase):
         ]
         conf = json.dumps(conf)
         sysmap = StringIO(conf)
+        cache = FakeMemcache()
         with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
             self.create_object(prolis, '/v1/a/c/myapp',
                                open(tar, 'rb').read(),
                                content_type='application/x-tar')
-            req = Request.blank('/api/a/c/my_object',
-                                environ={'REQUEST_METHOD': 'PUT'},
-                                headers={
-                                    'Content-Type': 'application/x-pickle'})
-            req.query_string = 'content_type=text/plain'
-            req.body = data
+
+            def create_req(cache):
+                req = Request.blank(
+                    '/api/a/c/my_object',
+                    environ={'REQUEST_METHOD': 'PUT'},
+                    headers={
+                        'Content-Type': 'application/x-pickle'})
+                req.query_string = 'content_type=text/plain'
+                req.body = data
+                req.environ['swift.cache'] = cache
+                return req
+            req = create_req(cache)
             res = req.get_response(prosrv)
             self.executed_successfully(res)
+            self.assertEqual(cache.call, {'set': 1, 'get': 1})
+            req = create_req(cache)
+            res = req.get_response(prosrv)
+            self.executed_successfully(res)
+            self.assertEqual(cache.call, {'set': 1, 'get': 2})
             req = self.object_request('/v1/a/c/my_object')
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 200)

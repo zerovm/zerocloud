@@ -1684,6 +1684,7 @@ class RestController(ClusterController):
         return HTTPNotImplemented(request=req)
 
     def load_config(self, req, config_path):
+        self.config_path = config_path
         memcache_client = cache_from_env(req.environ)
         memcache_key = 'zvmapp' + config_path.path
         if memcache_client:
@@ -1716,7 +1717,6 @@ class RestController(ClusterController):
                     memcache_key,
                     self.cluster_config,
                     time=float(self.middleware.zerovm_cache_config_timeout))
-        self.config_path = config_path
         return None
 
     def handle_request(self, req):
@@ -1796,7 +1796,7 @@ class ApiController(RestController):
         if memcache_client:
             config = memcache_client.get(memcache_key)
             if config:
-                self.cluster_config = config
+                self.cluster_config, self.config_path = config
                 return None
         container_info = self.container_info(config_path.account,
                                              config_path.container, req)
@@ -1805,17 +1805,17 @@ class ApiController(RestController):
             raise HTTPNotFound(request=req,
                                body='No API endpoint configured for '
                                     'container %s' % self.container_name)
-        config_path = parse_location(unquote(source))
+        self.config_path = parse_location(unquote(source))
         config_req = req.copy_get()
-        config_req.path_info = config_path.path
+        config_req.path_info = self.config_path.path
         config_req.query_string = None
         buffer_length = self.middleware.zerovm_maxconfig * 2
         config_req.range = 'bytes=0-%d' % (buffer_length - 1)
         config_resp = ObjectController(
             self.app,
-            config_path.account,
-            config_path.container,
-            config_path.obj).GET(config_req)
+            self.config_path.account,
+            self.config_path.container,
+            self.config_path.obj).GET(config_req)
         if config_resp.status_int == HTTP_REQUESTED_RANGE_NOT_SATISFIABLE:
             return None
         if not is_success(config_resp.status_int) or \
@@ -1833,9 +1833,8 @@ class ApiController(RestController):
         if memcache_client and self.cluster_config:
             memcache_client.set(
                 memcache_key,
-                self.cluster_config,
+                (self.cluster_config, self.config_path),
                 time=float(self.middleware.zerovm_cache_config_timeout))
-        self.config_path = config_path
         return None
 
 
