@@ -1,7 +1,10 @@
 from time import time
 from swift.common.swob import Request
-from swift.common.utils import split_path, get_logger
-from swift.common.wsgi import WSGIContext, make_subrequest, CloseableChain
+from swift.common.utils import split_path
+from swift.common.utils import get_logger
+from swift.common.wsgi import WSGIContext
+from swift.common.wsgi import make_subrequest
+from swift.common.wsgi import CloseableChain
 from zerocloud.proxyquery import is_zerocloud_request
 
 

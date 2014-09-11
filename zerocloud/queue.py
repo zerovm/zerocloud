@@ -2,13 +2,25 @@ from eventlet import Timeout
 from time import time
 import uuid
 
-from swift.common.exceptions import ListingIterNotFound, ListingIterError
-from swift.common.http import HTTP_NOT_FOUND, is_success
-from swift.common.swob import wsgify, HTTPNotFound, HTTPRequestEntityTooLarge, HTTPException, HTTPServerError, \
-    HTTPUnprocessableEntity, HTTPPreconditionFailed, Response, HTTPNoContent, \
-    HTTPCreated
-from swift.common.utils import get_logger, split_path, json, \
-    normalize_timestamp, readconf
+from swift.common.exceptions import ListingIterNotFound
+from swift.common.exceptions import ListingIterError
+from swift.common.http import HTTP_NOT_FOUND
+from swift.common.http import is_success
+from swift.common.swob import wsgify
+from swift.common.swob import HTTPNotFound
+from swift.common.swob import HTTPRequestEntityTooLarge
+from swift.common.swob import HTTPException
+from swift.common.swob import HTTPServerError
+from swift.common.swob import HTTPUnprocessableEntity
+from swift.common.swob import HTTPPreconditionFailed
+from swift.common.swob import Response
+from swift.common.swob import HTTPNoContent
+from swift.common.swob import HTTPCreated
+from swift.common.utils import get_logger
+from swift.common.utils import split_path
+from swift.common.utils import json
+from swift.common.utils import normalize_timestamp
+from swift.common.utils import readconf
 from swift.common.wsgi import make_subrequest
 from swiftclient.utils import TRUE_VALUES
 

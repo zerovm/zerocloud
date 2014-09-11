@@ -6,9 +6,13 @@ import traceback
 import tarfile
 from contextlib import contextmanager
 from hashlib import md5
-from tempfile import mkstemp, mkdtemp
+from tempfile import mkstemp
+from tempfile import mkdtemp
 
-from eventlet.green import select, subprocess, os, socket
+from eventlet.green import select
+from eventlet.green import subprocess
+from eventlet.green import os
+from eventlet.green import socket
 from eventlet.timeout import Timeout
 from eventlet.green.httplib import HTTPResponse
 import errno
@@ -18,32 +22,68 @@ import zlib
 from os.path import exists
 from swift.common.request_helpers import get_name_and_placement
 from swift.common.storage_policy import POLICIES
-from swift.common.swob import Request, Response, HTTPNotFound, \
-    HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
-    HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
-    HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict, \
-    HTTPInsufficientStorage, HTTPMethodNotAllowed
+from swift.common.swob import Request
+from swift.common.swob import Response
+from swift.common.swob import HTTPNotFound
+from swift.common.swob import HTTPPreconditionFailed
+from swift.common.swob import HTTPRequestTimeout
+from swift.common.swob import HTTPRequestEntityTooLarge
+from swift.common.swob import HTTPBadRequest
+from swift.common.swob import HTTPUnprocessableEntity
+from swift.common.swob import HTTPServiceUnavailable
+from swift.common.swob import HTTPClientDisconnect
+from swift.common.swob import HTTPInternalServerError
+from swift.common.swob import HeaderKeyDict
+from swift.common.swob import HTTPInsufficientStorage
+from swift.common.swob import HTTPMethodNotAllowed
 from swift.common.swob import HTTPException
-from swift.common.utils import normalize_timestamp, \
-    get_logger, mkdirs, disable_fallocate, config_true_value, \
-    hash_path, storage_directory, get_log_line
+from swift.common.utils import normalize_timestamp
+from swift.common.utils import get_logger
+from swift.common.utils import mkdirs
+from swift.common.utils import disable_fallocate
+from swift.common.utils import config_true_value
+from swift.common.utils import hash_path
+from swift.common.utils import storage_directory
+from swift.common.utils import get_log_line
 from swift.container.backend import ContainerBroker
-from swift.obj.diskfile import DiskFileManager, DiskFile, DiskFileWriter, \
-    write_metadata
+from swift.obj.diskfile import DiskFileManager
+from swift.obj.diskfile import DiskFile
+from swift.obj.diskfile import DiskFileWriter
+from swift.obj.diskfile import write_metadata
 from swift.common.constraints import check_utf8
-from swift.common.exceptions import DiskFileNotExist, DiskFileNoSpace, \
-    DiskFileDeviceUnavailable, DiskFileQuarantined
+from swift.common.exceptions import DiskFileNotExist
+from swift.common.exceptions import DiskFileNoSpace
+from swift.common.exceptions import DiskFileDeviceUnavailable
+from swift.common.exceptions import DiskFileQuarantined
 from swift.proxy.controllers.base import update_headers
-from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, \
-    ACCESS_WRITABLE, MD5HASH_LENGTH, parse_location, is_image_path, \
-    ACCESS_NETWORK, ACCESS_RANDOM, REPORT_VALIDATOR, REPORT_RETCODE, \
-    REPORT_ETAG, REPORT_CDR, REPORT_STATUS, SwiftPath, REPORT_LENGTH, \
-    REPORT_DAEMON, load_server_conf, is_swift_path, TIMEOUT_GRACE
+from zerocloud.common import TAR_MIMES
+from zerocloud.common import ACCESS_READABLE
+from zerocloud.common import ACCESS_CDR
+from zerocloud.common import ACCESS_WRITABLE
+from zerocloud.common import MD5HASH_LENGTH
+from zerocloud.common import parse_location
+from zerocloud.common import is_image_path
+from zerocloud.common import ACCESS_NETWORK
+from zerocloud.common import ACCESS_RANDOM
+from zerocloud.common import REPORT_VALIDATOR
+from zerocloud.common import REPORT_RETCODE
+from zerocloud.common import REPORT_ETAG
+from zerocloud.common import REPORT_CDR
+from zerocloud.common import REPORT_STATUS
+from zerocloud.common import SwiftPath
+from zerocloud.common import REPORT_LENGTH
+from zerocloud.common import REPORT_DAEMON
+from zerocloud.common import load_server_conf
+from zerocloud.common import is_swift_path
+from zerocloud.common import TIMEOUT_GRACE
 from zerocloud.configparser import ClusterConfigParser
 from zerocloud.proxyquery import gunzip_iter
-
-from zerocloud.tarstream import UntarStream, TarStream, \
-    REGTYPE, BLOCKSIZE, NUL, PAX_FORMAT
+from zerocloud.tarstream import UntarStream
+from zerocloud.tarstream import TarStream
+from zerocloud.tarstream import REGTYPE
+from zerocloud.tarstream import BLOCKSIZE
+from zerocloud.tarstream import NUL
+from zerocloud.tarstream import PAX_FORMAT
 import zerocloud.thread_pool as zpool
 
 try:
