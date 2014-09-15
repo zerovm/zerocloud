@@ -5,7 +5,8 @@ sudo apt-get install python-software-properties --yes --force-yes
 # Add PPA for ZeroVM packages
 sudo add-apt-repository ppa:zerovm-ci/zerovm-latest -y
 sudo apt-get update
-sudo apt-get install git zerovm-cli zpm --yes --force-yes
+sudo apt-get install git python-pip zerovm --yes --force-yes
+sudo pip install python-swiftclient==2.2.0
 
 
 ###
