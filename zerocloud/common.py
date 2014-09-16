@@ -3,7 +3,8 @@ import re
 from hashlib import md5
 
 from swift.common.swob import Response
-from swift.common.utils import split_path, readconf
+from swift.common.utils import split_path
+from swift.common.utils import readconf
 
 
 try:

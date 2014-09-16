@@ -10,7 +10,10 @@ import uuid
 from hashlib import md5
 from random import randrange, choice
 import greenlet
-from eventlet import GreenPile, GreenPool, Queue, spawn_n
+from eventlet import GreenPile
+from eventlet import GreenPool
+from eventlet import Queue
+from eventlet import spawn_n
 from eventlet.green import socket
 from eventlet.timeout import Timeout
 import zlib
@@ -20,36 +23,79 @@ from swift.common.storage_policy import POLICIES
 from swift.common.request_helpers import get_sys_meta_prefix
 from swift.common.wsgi import make_subrequest
 from swiftclient.client import quote
-from swift.common.http import HTTP_CONTINUE, is_success, \
-    HTTP_INSUFFICIENT_STORAGE, is_client_error, HTTP_NOT_FOUND, \
-    HTTP_REQUESTED_RANGE_NOT_SATISFIABLE
-from swift.proxy.controllers.base import update_headers, delay_denial, \
-    cors_validation, get_info, close_swift_conn
-from swift.common.utils import split_path, get_logger, TRUE_VALUES, \
-    get_remote_client, ContextPool, cache_from_env, normalize_timestamp, \
-    GreenthreadSafeIterator
-from swift.proxy.server import ObjectController, ContainerController, \
-    AccountController
+from swift.common.http import HTTP_CONTINUE
+from swift.common.http import is_success
+from swift.common.http import HTTP_INSUFFICIENT_STORAGE
+from swift.common.http import is_client_error
+from swift.common.http import HTTP_NOT_FOUND
+from swift.common.http import HTTP_REQUESTED_RANGE_NOT_SATISFIABLE
+from swift.proxy.controllers.base import update_headers
+from swift.proxy.controllers.base import delay_denial
+from swift.proxy.controllers.base import cors_validation
+from swift.proxy.controllers.base import get_info
+from swift.proxy.controllers.base import close_swift_conn
+from swift.common.utils import split_path
+from swift.common.utils import get_logger
+from swift.common.utils import TRUE_VALUES
+from swift.common.utils import get_remote_client
+from swift.common.utils import ContextPool
+from swift.common.utils import cache_from_env
+from swift.common.utils import normalize_timestamp
+from swift.common.utils import GreenthreadSafeIterator
+from swift.proxy.server import ObjectController
+from swift.proxy.server import ContainerController
+from swift.proxy.server import AccountController
 from swift.common.bufferedhttp import http_connect
-from swift.common.exceptions import ConnectionTimeout, ChunkReadTimeout
-from swift.common.constraints import check_utf8, MAX_FILE_SIZE, MAX_HEADER_SIZE, \
-    MAX_META_NAME_LENGTH, MAX_META_VALUE_LENGTH, MAX_META_COUNT, \
-    MAX_META_OVERALL_SIZE
-from swift.common.swob import Request, Response, HTTPNotFound, \
-    HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
-    HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
-    HTTPClientDisconnect, wsgify, HTTPNotImplemented, HeaderKeyDict, \
-    HTTPException
-from zerocloud.common import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, TAR_MIMES, \
-    POST_TEXT_OBJECT_SYSTEM_MAP, POST_TEXT_ACCOUNT_SYSTEM_MAP, \
-    merge_headers, DEFAULT_EXE_SYSTEM_MAP, \
-    STREAM_CACHE_SIZE, parse_location, is_swift_path, \
-    is_image_path, can_run_as_daemon, SwiftPath, load_server_conf, \
-    expand_account_path, TIMEOUT_GRACE
-from zerocloud.configparser import ClusterConfigParser, \
-    ClusterConfigParsingError
-from zerocloud.tarstream import StringBuffer, UntarStream, \
-    TarStream, REGTYPE, BLOCKSIZE, NUL, ExtractedFile, Path, ReadError
+from swift.common.exceptions import ConnectionTimeout
+from swift.common.exceptions import ChunkReadTimeout
+from swift.common.constraints import check_utf8
+from swift.common.constraints import MAX_FILE_SIZE
+from swift.common.constraints import MAX_HEADER_SIZE
+from swift.common.constraints import MAX_META_NAME_LENGTH
+from swift.common.constraints import MAX_META_VALUE_LENGTH
+from swift.common.constraints import MAX_META_COUNT
+from swift.common.constraints import MAX_META_OVERALL_SIZE
+from swift.common.swob import Request
+from swift.common.swob import Response
+from swift.common.swob import HTTPNotFound
+from swift.common.swob import HTTPPreconditionFailed
+from swift.common.swob import HTTPRequestTimeout
+from swift.common.swob import HTTPRequestEntityTooLarge
+from swift.common.swob import HTTPBadRequest
+from swift.common.swob import HTTPUnprocessableEntity
+from swift.common.swob import HTTPServiceUnavailable
+from swift.common.swob import HTTPClientDisconnect
+from swift.common.swob import wsgify
+from swift.common.swob import HTTPNotImplemented
+from swift.common.swob import HeaderKeyDict
+from swift.common.swob import HTTPException
+from zerocloud.common import CLUSTER_CONFIG_FILENAME
+from zerocloud.common import NODE_CONFIG_FILENAME
+from zerocloud.common import TAR_MIMES
+from zerocloud.common import POST_TEXT_OBJECT_SYSTEM_MAP
+from zerocloud.common import POST_TEXT_ACCOUNT_SYSTEM_MAP
+from zerocloud.common import merge_headers
+from zerocloud.common import DEFAULT_EXE_SYSTEM_MAP
+from zerocloud.common import STREAM_CACHE_SIZE
+from zerocloud.common import parse_location
+from zerocloud.common import is_swift_path
+from zerocloud.common import is_image_path
+from zerocloud.common import can_run_as_daemon
+from zerocloud.common import SwiftPath
+from zerocloud.common import load_server_conf
+from zerocloud.common import expand_account_path
+from zerocloud.common import TIMEOUT_GRACE
+from zerocloud.configparser import ClusterConfigParser
+from zerocloud.configparser import ClusterConfigParsingError
+from zerocloud.tarstream import StringBuffer
+from zerocloud.tarstream import UntarStream
+from zerocloud.tarstream import TarStream
+from zerocloud.tarstream import REGTYPE
+from zerocloud.tarstream import BLOCKSIZE
+from zerocloud.tarstream import NUL
+from zerocloud.tarstream import ExtractedFile
+from zerocloud.tarstream import Path
+from zerocloud.tarstream import ReadError
 from zerocloud.thread_pool import Zuid
 
 
