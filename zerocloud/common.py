@@ -31,7 +31,8 @@ DEVICE_MAP = {
     'script': ACCESS_RANDOM | ACCESS_READABLE,
 }
 
-TAR_MIMES = ['application/x-tar', 'application/x-gtar', 'application/x-ustar']
+TAR_MIMES = ['application/x-tar', 'application/x-gtar', 'application/x-ustar',
+             'application/x-gzip']
 CLUSTER_CONFIG_FILENAME = 'boot/cluster.map'
 NODE_CONFIG_FILENAME = 'boot/system.map'
 STREAM_CACHE_SIZE = 128 * 1024

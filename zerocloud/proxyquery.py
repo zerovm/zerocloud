@@ -1128,8 +1128,6 @@ class ClusterController(ObjectController):
             req = sink_req
         req.bytes_transferred = 0
         req_content_type = req.content_type
-        if req_content_type in ['application/x-gzip']:
-            req_content_type = TAR_MIMES[0]
         if req_content_type in TAR_MIMES:
             # Tarball (presumably with system.map) has been POSTed
             cluster_config = self._post_job_handle_tarball(req, req_iter)
@@ -1774,7 +1772,7 @@ class RestController(ClusterController):
         if not is_success(config_resp.status_int) or \
                 config_resp.content_length > buffer_length:
             return config_resp
-        if config_resp.content_type in TAR_MIMES + ['application/x-gzip']:
+        if config_resp.content_type in TAR_MIMES:
             chunk_size = self.middleware.network_chunk_size
             config_req.bytes_transferred = 0
             self.read_system_map(config_resp.app_iter, chunk_size,
@@ -1888,7 +1886,7 @@ class ApiController(RestController):
         if not is_success(config_resp.status_int) or \
                 config_resp.content_length > buffer_length:
             return config_resp
-        if config_resp.content_type in TAR_MIMES + ['application/x-gzip']:
+        if config_resp.content_type in TAR_MIMES:
             chunk_size = self.middleware.network_chunk_size
             config_req.bytes_transferred = 0
             self.read_system_map(config_resp.app_iter, chunk_size,
