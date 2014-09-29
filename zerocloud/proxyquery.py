@@ -968,6 +968,125 @@ class ClusterController(ObjectController):
         if 'etag' in req.headers and req.headers['etag'].lower() != etag:
             raise HTTPUnprocessableEntity(request=req)
 
+    def _post_job_handle_tarball(self, req, req_iter):
+        # Tarball (presumably with system.map) has been POSTed
+
+        # we must have Content-Length set for tar-based requests
+        # as it will be impossible to stream them otherwise
+        if 'content-length' not in req.headers:
+            raise HTTPBadRequest(request=req,
+                                 body='Must specify Content-Length')
+        headers = {'Content-Type': req.content_type,
+                   'Content-Length': req.content_length}
+        if not self.cluster_config:
+            # buffer first blocks of tar file
+            # and search for the system map
+            cached_body = CachedBody(req_iter)
+            self.read_system_map(
+                cached_body.cache,
+                self.middleware.network_chunk_size,
+                req.content_type,
+                req
+            )
+            if not self.cluster_config:
+                raise HTTPBadRequest(request=req,
+                                     body='System boot map was not '
+                                          'found in request')
+            req_iter = iter(cached_body)
+        if not self.image_resp:
+            self.image_resp = Response(app_iter=req_iter,
+                                       headers=headers)
+        self.image_resp.nodes = []
+        try:
+            cluster_config = json.loads(self.cluster_config)
+            return cluster_config
+        except Exception:
+            raise HTTPUnprocessableEntity(body='Could not parse '
+                                               'system map')
+
+    def _post_job_handle_system_map(self, req, req_iter):
+        # System map was sent as a POST body
+        if not self.cluster_config:
+            self.read_json_job(req, req_iter)
+        try:
+            cluster_config = json.loads(self.cluster_config)
+            return cluster_config
+        except Exception:
+            raise HTTPUnprocessableEntity(
+                body='Could not parse system map')
+
+    def _post_job_handle_script(self, req, req_iter):
+        if 'content-length' not in req.headers:
+            raise HTTPBadRequest(request=req,
+                                 body='Must specify Content-Length')
+        cached_body = CachedBody(req_iter)
+        # all scripts must start with shebang
+        if not cached_body.cache[0].startswith('#!'):
+            raise HTTPBadRequest(request=req,
+                                 body='Unsupported Content-Type')
+        buf = ''
+        shebang = None
+        for chunk in cached_body.cache:
+            i = chunk.find('\n')
+            if i > 0:
+                shebang = buf + chunk[0:i]
+                break
+            buf += chunk
+        if not shebang:
+            raise HTTPBadRequest(request=req,
+                                 body='Cannot find '
+                                      'shebang (#!) in script')
+        command_line = re.split('\s+',
+                                re.sub('^#!\s*(.*)', '\\1', shebang), 1)
+        sysimage = None
+        args = None
+        exe_path = command_line[0]
+        location = parse_location(exe_path)
+        if not location:
+            raise HTTPBadRequest(request=req,
+                                 body='Bad interpreter %s' % exe_path)
+        if is_image_path(location):
+            if 'image' == location.image:
+                raise HTTPBadRequest(request=req,
+                                     body='Must supply image name '
+                                          'in shebang url %s'
+                                          % location.url)
+            sysimage = location.image
+        if len(command_line) > 1:
+            args = command_line[1]
+        params = {'exe_path': exe_path}
+        if args:
+            params['args'] = args.strip() + " "
+        if self.container_name and self.object_name:
+            template = POST_TEXT_OBJECT_SYSTEM_MAP
+            location = SwiftPath.init(self.account_name,
+                                      self.container_name,
+                                      self.object_name)
+            config = _config_from_template(params, template, location.url)
+        else:
+            template = POST_TEXT_ACCOUNT_SYSTEM_MAP
+            config = _config_from_template(params, template, '')
+
+        try:
+            cluster_config = json.loads(config)
+        except Exception:
+            raise HTTPUnprocessableEntity(body='Could not parse '
+                                               'system map')
+        if sysimage:
+            cluster_config[0]['file_list'].append({'device': sysimage})
+        string_path = Path(REGTYPE,
+                           'script',
+                           int(req.headers['content-length']),
+                           cached_body)
+        stream = TarStream(path_list=[string_path])
+        stream_length = stream.get_total_stream_length()
+        self.image_resp = Response(app_iter=iter(stream),
+                                   headers={
+                                       'Content-Length': stream_length})
+        self.image_resp.nodes = []
+
+        return cluster_config
+
     def post_job(self, req):
         chunk_size = self.middleware.network_chunk_size
         if 'content-type' not in req.headers:
@@ -1012,112 +1131,14 @@ class ClusterController(ObjectController):
         if req_content_type in ['application/x-gzip']:
             req_content_type = TAR_MIMES[0]
         if req_content_type in TAR_MIMES:
-            # we must have Content-Length set for tar-based requests
-            # as it will be impossible to stream them otherwise
-            if 'content-length' not in req.headers:
-                return HTTPBadRequest(request=req,
-                                      body='Must specify Content-Length')
-            headers = {'Content-Type': req.content_type,
-                       'Content-Length': req.content_length}
-            if not self.cluster_config:
-                # buffer first blocks of tar file
-                # and search for the system map
-                cached_body = CachedBody(req_iter)
-                self.read_system_map(cached_body.cache, chunk_size,
-                                     req.content_type, req)
-                if not self.cluster_config:
-                    return HTTPBadRequest(request=req,
-                                          body='System boot map was not '
-                                               'found in request')
-                req_iter = iter(cached_body)
-            if not self.image_resp:
-                self.image_resp = Response(app_iter=req_iter,
-                                           headers=headers)
-            self.image_resp.nodes = []
-            try:
-                cluster_config = json.loads(self.cluster_config)
-            except Exception:
-                return HTTPUnprocessableEntity(body='Could not parse '
-                                                    'system map')
+            # Tarball (presumably with system.map) has been POSTed
+            cluster_config = self._post_job_handle_tarball(req, req_iter)
         elif req_content_type in 'application/json':
             # System map was sent as a POST body
-            if not self.cluster_config:
-                self.read_json_job(req, req_iter)
-            try:
-                cluster_config = json.loads(self.cluster_config)
-            except Exception:
-                return HTTPUnprocessableEntity(
-                    body='Could not parse system map')
+            cluster_config = self._post_job_handle_system_map(req, req_iter)
         else:
             # assume the posted data is a script and try to execute
-            if 'content-length' not in req.headers:
-                return HTTPBadRequest(request=req,
-                                      body='Must specify Content-Length')
-            cached_body = CachedBody(req_iter)
-            # all scripts must start with shebang
-            if not cached_body.cache[0].startswith('#!'):
-                return HTTPBadRequest(request=req,
-                                      body='Unsupported Content-Type')
-            buf = ''
-            shebang = None
-            for chunk in cached_body.cache:
-                i = chunk.find('\n')
-                if i > 0:
-                    shebang = buf + chunk[0:i]
-                    break
-                buf += chunk
-            if not shebang:
-                return HTTPBadRequest(request=req,
-                                      body='Cannot find '
-                                           'shebang (#!) in script')
-            command_line = re.split('\s+',
-                                    re.sub('^#!\s*(.*)', '\\1', shebang), 1)
-            sysimage = None
-            args = None
-            exe_path = command_line[0]
-            location = parse_location(exe_path)
-            if not location:
-                return HTTPBadRequest(request=req,
-                                      body='Bad interpreter %s' % exe_path)
-            if is_image_path(location):
-                if 'image' == location.image:
-                    return HTTPBadRequest(request=req,
-                                          body='Must supply image name '
-                                               'in shebang url %s'
-                                               % location.url)
-                sysimage = location.image
-            if len(command_line) > 1:
-                args = command_line[1]
-            params = {'exe_path': exe_path}
-            if args:
-                params['args'] = args.strip() + " "
-            if self.container_name and self.object_name:
-                template = POST_TEXT_OBJECT_SYSTEM_MAP
-                location = SwiftPath.init(self.account_name,
-                                          self.container_name,
-                                          self.object_name)
-                config = _config_from_template(params, template, location.url)
-            else:
-                template = POST_TEXT_ACCOUNT_SYSTEM_MAP
-                config = _config_from_template(params, template, '')
-
-            try:
-                cluster_config = json.loads(config)
-            except Exception:
-                return HTTPUnprocessableEntity(body='Could not parse '
-                                                    'system map')
-            if sysimage:
-                cluster_config[0]['file_list'].append({'device': sysimage})
-            string_path = Path(REGTYPE,
-                               'script',
-                               int(req.headers['content-length']),
-                               cached_body)
-            stream = TarStream(path_list=[string_path])
-            stream_length = stream.get_total_stream_length()
-            self.image_resp = Response(app_iter=iter(stream),
-                                       headers={
-                                           'Content-Length': stream_length})
-            self.image_resp.nodes = []
+            cluster_config = self._post_job_handle_script(req, req_iter)
 
         req.path_info = '/' + self.account_name
         try:
