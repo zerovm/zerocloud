@@ -91,3 +91,22 @@ To log out of the vagrant box and keep everything running, press 'ctrl+a d' to
 detach from the screen session. You can now log out of the box ('ctrl+d').
 
 [restart]: #restarting-devstack-and-zerocloud
+
+## Testing the vagrant development environment
+
+Once everything is set up, it's a good idea to test that ZeroVM and ZeroCloud
+are functioning properly. First, you need to install `pip`: see
+https://pip.pypa.io/en/latest/installing.html.
+
+Next, you'll need to install `tox`, for running the tests:
+
+```bash
+$ pip install tox
+```
+
+From the same directory as the `Vagrantfile` (and this README), execute the
+tests:
+
+```bash
+$ tox
+```
