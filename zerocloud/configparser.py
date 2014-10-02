@@ -261,7 +261,7 @@ class ClusterConfigParser(object):
         try:
             connect_devices = {}
             for node in cluster_config:
-                zvm_node = _create_node(node)
+                zvm_node = ZvmNode.fromdict(node)
                 if is_swift_path(zvm_node.exe):
                     zvm_node.exe = expand_account_path(account_name,
                                                        zvm_node.exe)
@@ -832,34 +832,6 @@ def _extract_stored_wildcards(path, node):
     return new_url
 
 
-def _create_node(node_config):
-    name = node_config.get('name')
-    if not name:
-        raise ClusterConfigParsingError('Must specify node name')
-    if has_control_chars(name):
-        raise ClusterConfigParsingError('Invalid node name')
-    nexe = node_config.get('exec')
-    if not nexe:
-        raise ClusterConfigParsingError(
-            'Must specify exec stanza for %s' % name)
-    exe = parse_location(nexe.get('path'))
-    if not exe:
-        raise ClusterConfigParsingError(
-            'Must specify executable path for %s' % name)
-    if is_zvm_path(exe):
-        raise ClusterConfigParsingError(
-            'Executable path cannot be a zvm path in %s' % name)
-    args = nexe.get('args')
-    env = nexe.get('env')
-    if has_control_chars('%s %s %s' % (exe.url, args, env)):
-        raise ClusterConfigParsingError(
-            'Invalid nexe property for %s' % name)
-    replicate = node_config.get('replicate', 1)
-    attach = node_config.get('attach', 'default')
-    exe_name = nexe.get('name')
-    return ZvmNode(0, name, exe, args, env, replicate, attach, exe_name)
-
-
 def _create_channel(channel, node, default_content_type=None):
     device = DEVICE.fetch_from(channel)
     if has_control_chars(device):
@@ -908,6 +880,34 @@ class ZvmNode(object):
         self.access = ''
         self.exe_name = exe_name
         self.data_in = False
+
+    @classmethod
+    def fromdict(cls, node_config):
+        name = node_config.get('name')
+        if not name:
+            raise ClusterConfigParsingError('Must specify node name')
+        if has_control_chars(name):
+            raise ClusterConfigParsingError('Invalid node name')
+        nexe = node_config.get('exec')
+        if not nexe:
+            raise ClusterConfigParsingError(
+                'Must specify exec stanza for %s' % name)
+        exe = parse_location(nexe.get('path'))
+        if not exe:
+            raise ClusterConfigParsingError(
+                'Must specify executable path for %s' % name)
+        if is_zvm_path(exe):
+            raise ClusterConfigParsingError(
+                'Executable path cannot be a zvm path in %s' % name)
+        args = nexe.get('args')
+        env = nexe.get('env')
+        if has_control_chars('%s %s %s' % (exe.url, args, env)):
+            raise ClusterConfigParsingError(
+                'Invalid nexe property for %s' % name)
+        replicate = node_config.get('replicate', 1)
+        attach = node_config.get('attach', 'default')
+        exe_name = nexe.get('name')
+        return ZvmNode(0, name, exe, args, env, replicate, attach, exe_name)
 
     def copy(self, id, name=None):
         newnode = deepcopy(self)
