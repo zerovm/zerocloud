@@ -1,3 +1,4 @@
+import json
 import os
 import tarfile
 from tempfile import mkdtemp, mkstemp
@@ -14,7 +15,6 @@ from zerocloud import objectquery
 from zerocloud.common import parse_location
 from zerocloud.common import ACCESS_READABLE
 from zerocloud.common import ACCESS_WRITABLE
-from zerocloud.common import json
 from zerocloud.configparser import NodeEncoder
 from zerocloud.configparser import ZvmNode
 from zerocloud.thread_pool import Zuid
@@ -110,7 +110,7 @@ class TestContainerQuery(unittest.TestCase):
         req = self.zerovm_container_request()
         nexescript = trim(r'''
             import sqlite3
-            from zerocloud.common import json
+            import json
             db_path = mnfst.channels['/dev/input']['path']
             con = sqlite3.connect(db_path)
             cursor = con.cursor()

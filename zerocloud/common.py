@@ -4,11 +4,6 @@ from hashlib import md5
 from swift.common.utils import split_path
 from swift.common.utils import readconf
 
-try:
-    import simplejson as json
-except ImportError:
-    import json
-
 ACCESS_READABLE = 0x1
 ACCESS_WRITABLE = 0x1 << 1
 ACCESS_RANDOM = 0x1 << 2
