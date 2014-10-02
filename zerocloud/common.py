@@ -1,11 +1,8 @@
-from copy import deepcopy
 import re
 from hashlib import md5
 
-from swift.common.swob import Response
 from swift.common.utils import split_path
 from swift.common.utils import readconf
-
 
 try:
     import simplejson as json
@@ -282,113 +279,6 @@ def is_cache_path(location):
     return False
 
 
-class ZvmNode(object):
-    def __init__(self, id=None, name=None, exe=None, args=None, env=None,
-                 replicate=1, attach=None, exe_name=None):
-        self.id = id
-        self.name = name
-        self.exe = exe
-        self.args = args
-        self.env = env
-        self.replicate = replicate
-        self.channels = []
-        self.connect = []
-        self.bind = []
-        self.replicas = []
-        self.skip_validation = False
-        self.wildcards = None
-        self.attach = attach
-        self.access = ''
-        self.exe_name = exe_name
-        self.data_in = False
-
-    def copy(self, id, name=None):
-        newnode = deepcopy(self)
-        newnode.id = id
-        if name:
-            newnode.name = name
-        return newnode
-
-    def add_channel(self, path=None,
-                    content_type=None, channel=None):
-        channel = deepcopy(channel)
-        if path:
-            channel.path = path
-        if content_type:
-            channel.content_type = content_type
-        self.channels.append(channel)
-
-    def add_new_channel(self, device=None, access=None, path=None,
-                        content_type='application/octet-stream',
-                        meta_data=None, mode=None, removable='no',
-                        mountpoint='/'):
-        channel = ZvmChannel(device, access, path,
-                             content_type=content_type,
-                             meta_data=meta_data, mode=mode,
-                             removable=removable, mountpoint=mountpoint)
-        self.channels.append(channel)
-
-    def get_channel(self, device=None, path=None):
-        if device:
-            for chan in self.channels:
-                if chan.device == device:
-                    return chan
-        if path:
-            for chan in self.channels:
-                if chan.path == path:
-                    return chan
-        return None
-
-    def copy_cgi_env(self, request=None, cgi_env=None):
-        if not self.env:
-            self.env = {}
-        self.env['REMOTE_USER'] = request.remote_user
-        self.env['QUERY_STRING'] = request.query_string
-        self.env['SERVER_PROTOCOL'] = \
-            request.environ.get('SERVER_PROTOCOL', 'HTTP/1.0')
-        self.env['PATH_INFO'] = request.path_info
-        self.env['REQUEST_METHOD'] = 'GET'
-        self.env['SERVER_SOFTWARE'] = 'zerocloud'
-        self.env['GATEWAY_INTERFACE'] = 'CGI/1.1'
-        self.env['SCRIPT_NAME'] = self.exe_name or self.name
-        self.env['SCRIPT_FILENAME'] = self.exe
-        if cgi_env:
-            self.env.update(cgi_env)
-        # we need to show the real host name, if possible
-        parts = self.env.get('HTTP_HOST',
-                             request.environ.get('SERVER_NAME',
-                                                 'localhost')).split(':', 1)
-        self.env['SERVER_NAME'] = parts[0]
-        if len(parts) > 1:
-            self.env['SERVER_PORT'] = parts[1]
-        else:
-            self.env['SERVER_PORT'] = '80'
-
-    def create_sysmap_resp(self):
-        sysmap = self.dumps()
-        # print self.dumps(indent=2)
-        sysmap_iter = iter([sysmap])
-        return Response(app_iter=sysmap_iter,
-                        headers={'Content-Length': str(len(sysmap))})
-
-    def add_data_source(self, data_sources, resp, dev='sysmap', append=False):
-        if append:
-            data_sources.append(resp)
-        else:
-            data_sources.insert(0, resp)
-        if not getattr(self, 'last_data', None) or append:
-            self.last_data = resp
-        resp.nodes = [{'node': self, 'dev': dev}]
-
-    def store_wildcards(self, path, mask):
-        new_match = mask.match(path.path)
-        self.wildcards = map(lambda idx: new_match.group(idx),
-                             range(1, new_match.lastindex + 1))
-
-    def dumps(self, indent=None):
-        return json.dumps(self, cls=NodeEncoder, indent=indent)
-
-
 class ZvmChannel(object):
     def __init__(self, device, access, path=None,
                  content_type=None, meta_data=None,
@@ -402,18 +292,6 @@ class ZvmChannel(object):
         self.removable = removable
         self.mountpoint = mountpoint
         self.min_size = min_size
-
-
-class NodeEncoder(json.JSONEncoder):
-
-    def default(self, o):
-        if isinstance(o, ZvmNode) or isinstance(o, ZvmChannel):
-            return o.__dict__
-        elif isinstance(o, Response):
-            return str(o.__dict__)
-        if isinstance(o, ObjPath):
-            return o.url
-        return json.JSONEncoder.default(self, o)
 
 
 def load_server_conf(conf, sections):

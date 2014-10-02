@@ -24,8 +24,9 @@ from swift.common.swob import Request
 from swift.common.utils import mkdirs, normalize_timestamp, get_logger
 from swift.obj.server import ObjectController
 from test_proxyquery import ZEROVM_DEFAULT_MOCK
-from zerocloud.common import ZvmNode, ACCESS_READABLE, ACCESS_WRITABLE, \
-    ACCESS_CDR, parse_location, ACCESS_RANDOM, TAR_MIMES
+from zerocloud.common import ACCESS_READABLE, ACCESS_WRITABLE, ACCESS_CDR, \
+    parse_location, ACCESS_RANDOM, TAR_MIMES
+from zerocloud.configparser import ZvmNode
 from zerocloud.thread_pool import WaitPool, Zuid
 
 
