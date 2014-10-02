@@ -1159,9 +1159,6 @@ class ClusterController(ObjectController):
                 'ERROR Error parsing config: %s', cluster_config)
             return HTTPBadRequest(request=req, body=str(e))
 
-        # for n in self.parser.node_list:
-        #     print n.dumps(indent=2)
-
         if not self.cgi_env:
             self.cgi_env = self.create_cgi_env(req)
         data_sources = []
