@@ -1842,7 +1842,8 @@ class ApiController(RestController):
         if memcache_client:
             config = memcache_client.get(memcache_key)
             if config:
-                self.cluster_config, self.config_path = config
+                self.cluster_config, config_path_url = config
+                self.config_path = SwiftPath(config_path_url)
                 return None
         container_info = self.container_info(config_path.account,
                                              config_path.container, req)
@@ -1879,7 +1880,7 @@ class ApiController(RestController):
         if memcache_client and self.cluster_config:
             memcache_client.set(
                 memcache_key,
-                (self.cluster_config, self.config_path),
+                (self.cluster_config, self.config_path.url),
                 time=float(self.middleware.zerovm_cache_config_timeout))
         return None
 
