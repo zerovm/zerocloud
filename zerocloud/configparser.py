@@ -4,6 +4,7 @@ except ImportError:
     import json
 import re
 import traceback
+from collections import OrderedDict
 from copy import deepcopy
 
 from swift.common.swob import Response
@@ -117,15 +118,15 @@ class ClusterConfigParser(object):
                 of object names in a container that match the mask regex
         """
         self.sysimage_devices = sysimage_devices
+        self.default_content_type = default_content_type
+        self.parser_config = parser_config
         self.list_account = list_account_callback
         self.list_container = list_container_callback
-        self.nodes = {}
-        self.node_list = []
-        self.default_content_type = default_content_type
-        self.node_id = 1
-        self.total_count = 0
-        self.parser_config = parser_config
         self.network_type = network_type
+
+        self.nodes = OrderedDict()
+        self._node_id = 1
+        self.total_count = 0
 
     def find_objects(self, path, **kwargs):
         """
@@ -204,9 +205,9 @@ class ClusterConfigParser(object):
             new_name = _create_node_name(zvm_node.name, index)
         new_node = self.nodes.get(new_name)
         if not new_node:
-            new_node = zvm_node.copy(self.node_id, new_name)
+            new_node = zvm_node.copy(self._node_id, new_name)
             self.nodes[new_name] = new_node
-            self.node_id += 1
+            self._node_id += 1
         return new_node
 
     def _add_all_connections(self, node_name, connections, source_devices):
@@ -255,9 +256,8 @@ class ClusterConfigParser(object):
 
         :raises ClusterConfigParsingError: on all errors
         """
-        self.nodes = {}
-        self.node_id = 1
-        self.node_list = []
+        self.nodes = OrderedDict()
+        self._node_id = 1
         try:
             connect_devices = {}
             for node in cluster_config:
@@ -402,15 +402,14 @@ class ClusterConfigParser(object):
                 else:
                     continue
             self._add_all_connections(node_name, connection_list, src_devices)
-        for node_name in sorted(self.nodes.keys()):
-            self.node_list.append(self.nodes[node_name])
+
         if add_user_image:
-            for node in self.node_list:
+            for node in self.nodes.itervalues():
                 node.add_new_channel('image', ACCESS_CDR, removable='yes')
         if account_name:
             self.resolve_path_info(account_name, replica_resolver)
         self.total_count = 0
-        for n in self.node_list:
+        for n in self.nodes.itervalues():
             self.total_count += n.replicate
 
     def _add_to_group(self, node_count, zvm_node, chan):
@@ -483,7 +482,7 @@ class ClusterConfigParser(object):
         """
         if not self.nodes:
             return
-        node_count = len(self.node_list)
+        node_count = len(self.nodes)
         tmp = []
         for (dst, dst_dev) in node.bind:
             dst_id = self.nodes.get(dst).id
@@ -756,7 +755,7 @@ class ClusterConfigParser(object):
 
     def resolve_path_info(self, account_name, replica_resolver):
         default_path_info = '/%s' % account_name
-        for node in self.node_list:
+        for node in self.nodes.itervalues():
             top_channel = None
             if node.channels:
                 if node.attach == 'default':

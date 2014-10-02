@@ -3039,7 +3039,7 @@ class TestProxyQuery(unittest.TestCase):
         except ClusterConfigParsingError:
             self.assertTrue(False, msg='ClusterConfigParsingError is raised')
         self.assertEqual(len(parser.nodes), 5)
-        for n in parser.node_list:
+        for n in parser.nodes.itervalues():
             parser.build_connect_string(n, cluster_id='cluster1')
             self.assertEqual(len(n.bind), 4)
             for line in n.bind:
