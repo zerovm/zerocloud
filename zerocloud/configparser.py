@@ -998,7 +998,6 @@ class ZvmNode(object):
         return channels
 
 
-
 class NodeEncoder(json.JSONEncoder):
 
     def default(self, o):
