@@ -1096,6 +1096,44 @@ class ClusterController(ObjectController):
 
         return cluster_config
 
+    def _process_source_header(self, req, rdata, source_header):
+        source_loc = parse_location(unquote(source_header))
+        if not is_swift_path(source_loc):
+            return HTTPPreconditionFailed(
+                request=req,
+                body='X-Zerovm-Source format is '
+                     'swift://account/container/object')
+
+        data_resp = None
+        if req.content_length:
+            data_resp = Response(
+                app_iter=iter(
+                    lambda: rdata.read(self.middleware.network_chunk_size),
+                    ''
+                ),
+                headers={
+                    'Content-Length': req.content_length,
+                    'Content-Type': req.content_type})
+            data_resp.nodes = []
+        source_loc = expand_account_path(self.account_name, source_loc)
+        source_req = make_subrequest(req.environ, method='GET',
+                                     swift_source='zerocloud')
+        source_req.path_info = source_loc.path
+        source_req.query_string = None
+        sink_req = Request.blank(req.path_info,
+                                 environ=req.environ, headers=req.headers)
+        source_resp = source_req.get_response(self.app)
+        if not is_success(source_resp.status_int):
+            return source_resp
+        del sink_req.headers['X-Zerovm-Source']
+        sink_req.content_length = source_resp.content_length
+        sink_req.content_type = source_resp.headers['Content-Type']
+        sink_req.etag = source_resp.etag
+        req_iter = iter(source_resp.app_iter)
+        req = sink_req
+
+        return req, req_iter, data_resp
+
     def post_job(self, req):
         chunk_size = self.middleware.network_chunk_size
         if 'content-type' not in req.headers:
@@ -1106,35 +1144,9 @@ class ClusterController(ObjectController):
         data_resp = None
         source_header = req.headers.get('X-Zerovm-Source')
         if source_header:
-            source_loc = parse_location(unquote(source_header))
-            if not is_swift_path(source_loc):
-                return HTTPPreconditionFailed(
-                    request=req,
-                    body='X-Zerovm-Source format is '
-                         'swift://account/container/object')
-            if req.content_length:
-                data_resp = Response(
-                    app_iter=iter(lambda: rdata.read(chunk_size), ''),
-                    headers={
-                        'Content-Length': req.content_length,
-                        'Content-Type': req.content_type})
-                data_resp.nodes = []
-            source_loc = expand_account_path(self.account_name, source_loc)
-            source_req = make_subrequest(req.environ, method='GET',
-                                         swift_source='zerocloud')
-            source_req.path_info = source_loc.path
-            source_req.query_string = None
-            sink_req = Request.blank(req.path_info,
-                                     environ=req.environ, headers=req.headers)
-            source_resp = source_req.get_response(self.app)
-            if not is_success(source_resp.status_int):
-                return source_resp
-            del sink_req.headers['X-Zerovm-Source']
-            sink_req.content_length = source_resp.content_length
-            sink_req.content_type = source_resp.headers['Content-Type']
-            sink_req.etag = source_resp.etag
-            req_iter = iter(source_resp.app_iter)
-            req = sink_req
+            req, req_iter, data_resp = self._process_source_header(
+                req, rdata, source_header
+            )
         req.bytes_transferred = 0
         req_content_type = req.content_type
         if req_content_type in TAR_MIMES:
