@@ -1260,7 +1260,7 @@ class ClusterController(ObjectController):
                                        cgi_env=self.cgi_env)
                 resp = repl_node.create_sysmap_resp()
                 repl_node.add_data_source(data_sources, resp, 'sysmap')
-            channels = self.parser.get_list_of_remote_objects(node)
+            channels = node.get_list_of_remote_objects()
             for ch in channels:
                 error = self._create_request_for_remote_object(data_sources,
                                                                ch,
