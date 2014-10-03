@@ -977,7 +977,7 @@ class ClusterController(ObjectController):
         if 'etag' in req.headers and req.headers['etag'].lower() != etag:
             raise HTTPUnprocessableEntity(request=req)
 
-    def _post_job_handle_tarball(self, req, req_iter):
+    def _tarball_cluster_config(self, req, req_iter):
         # Tarball (presumably with system.map) has been POSTed
 
         # we must have Content-Length set for tar-based requests
@@ -1013,7 +1013,7 @@ class ClusterController(ObjectController):
             raise HTTPUnprocessableEntity(body='Could not parse '
                                                'system map')
 
-    def _post_job_handle_system_map(self, req, req_iter):
+    def _system_map_cluster_config(self, req, req_iter):
         # System map was sent as a POST body
         if not self.cluster_config:
             self.read_json_job(req, req_iter)
@@ -1024,7 +1024,7 @@ class ClusterController(ObjectController):
             raise HTTPUnprocessableEntity(
                 body='Could not parse system map')
 
-    def _post_job_handle_script(self, req, req_iter):
+    def _script_cluster_config(self, req, req_iter):
         if 'content-length' not in req.headers:
             raise HTTPBadRequest(request=req,
                                  body='Must specify Content-Length')
@@ -1151,13 +1151,12 @@ class ClusterController(ObjectController):
         req_content_type = req.content_type
         if req_content_type in TAR_MIMES:
             # Tarball (presumably with system.map) has been POSTed
-            cluster_config = self._post_job_handle_tarball(req, req_iter)
+            cluster_config = self._tarball_cluster_config(req, req_iter)
         elif req_content_type in 'application/json':
-            # System map was sent as a POST body
-            cluster_config = self._post_job_handle_system_map(req, req_iter)
+            cluster_config = self._system_map_cluster_config(req, req_iter)
         else:
             # assume the posted data is a script and try to execute
-            cluster_config = self._post_job_handle_script(req, req_iter)
+            cluster_config = self._script_cluster_config(req, req_iter)
 
         req.path_info = '/' + self.account_name
         try:
