@@ -979,7 +979,6 @@ class ClusterController(ObjectController):
 
     def _tarball_cluster_config(self, req, req_iter):
         # Tarball (presumably with system.map) has been POSTed
-
         # we must have Content-Length set for tar-based requests
         # as it will be impossible to stream them otherwise
         if 'content-length' not in req.headers:
@@ -1096,7 +1095,31 @@ class ClusterController(ObjectController):
 
         return cluster_config
 
-    def _process_source_header(self, req, rdata, source_header):
+    def _get_cluster_config_data_resp(self, req):
+        chunk_size = self.middleware.network_chunk_size
+        rdata = req.environ['wsgi.input']
+        req_iter = iter(lambda: rdata.read(chunk_size), '')
+        data_resp = None
+        source_header = req.headers.get('X-Zerovm-Source')
+        if source_header:
+            req, req_iter, data_resp = self._process_source_header(
+                req, source_header
+            )
+        req.bytes_transferred = 0
+        if req.content_type in TAR_MIMES:
+            # Tarball (presumably with system.map) has been POSTed
+            cluster_config = self._tarball_cluster_config(req, req_iter)
+        elif req.content_type in 'application/json':
+            cluster_config = self._system_map_cluster_config(req, req_iter)
+        else:
+            # assume the posted data is a script and try to execute
+            cluster_config = self._script_cluster_config(req, req_iter)
+
+        return cluster_config, data_resp
+
+    def _process_source_header(self, req, source_header):
+        rdata = req.environ['wsgi.input']
+
         source_loc = parse_location(unquote(source_header))
         if not is_swift_path(source_loc):
             return HTTPPreconditionFailed(
@@ -1139,24 +1162,8 @@ class ClusterController(ObjectController):
         if 'content-type' not in req.headers:
             return HTTPBadRequest(request=req,
                                   body='Must specify Content-Type')
-        rdata = req.environ['wsgi.input']
-        req_iter = iter(lambda: rdata.read(chunk_size), '')
-        data_resp = None
-        source_header = req.headers.get('X-Zerovm-Source')
-        if source_header:
-            req, req_iter, data_resp = self._process_source_header(
-                req, rdata, source_header
-            )
-        req.bytes_transferred = 0
-        req_content_type = req.content_type
-        if req_content_type in TAR_MIMES:
-            # Tarball (presumably with system.map) has been POSTed
-            cluster_config = self._tarball_cluster_config(req, req_iter)
-        elif req_content_type in 'application/json':
-            cluster_config = self._system_map_cluster_config(req, req_iter)
-        else:
-            # assume the posted data is a script and try to execute
-            cluster_config = self._script_cluster_config(req, req_iter)
+
+        cluster_config, data_resp = self._get_cluster_config_data_resp(req)
 
         req.path_info = '/' + self.account_name
         try:
