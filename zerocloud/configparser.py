@@ -1,7 +1,15 @@
+try:
+    import simplejson as json
+except ImportError:
+    import json
 import re
 import traceback
+from collections import OrderedDict
+from copy import deepcopy
+
+from swift.common.swob import Response
+
 from zerocloud.common import SwiftPath
-from zerocloud.common import ZvmNode
 from zerocloud.common import ZvmChannel
 from zerocloud.common import is_zvm_path
 from zerocloud.common import ACCESS_READABLE
@@ -14,6 +22,7 @@ from zerocloud.common import DEVICE_MAP
 from zerocloud.common import is_swift_path
 from zerocloud.common import ACCESS_NETWORK
 from zerocloud.common import expand_account_path
+from zerocloud.common import ObjPath
 
 CHANNEL_TYPE_MAP = {
     'stdin': 0,
@@ -109,15 +118,15 @@ class ClusterConfigParser(object):
                 of object names in a container that match the mask regex
         """
         self.sysimage_devices = sysimage_devices
+        self.default_content_type = default_content_type
+        self.parser_config = parser_config
         self.list_account = list_account_callback
         self.list_container = list_container_callback
-        self.nodes = {}
-        self.node_list = []
-        self.default_content_type = default_content_type
-        self.node_id = 1
-        self.total_count = 0
-        self.parser_config = parser_config
         self.network_type = network_type
+
+        self.nodes = OrderedDict()
+        self._node_id = 1
+        self.total_count = 0
 
     def find_objects(self, path, **kwargs):
         """
@@ -196,9 +205,9 @@ class ClusterConfigParser(object):
             new_name = _create_node_name(zvm_node.name, index)
         new_node = self.nodes.get(new_name)
         if not new_node:
-            new_node = zvm_node.copy(self.node_id, new_name)
+            new_node = zvm_node.copy(self._node_id, new_name)
             self.nodes[new_name] = new_node
-            self.node_id += 1
+            self._node_id += 1
         return new_node
 
     def _add_all_connections(self, node_name, connections, source_devices):
@@ -247,13 +256,12 @@ class ClusterConfigParser(object):
 
         :raises ClusterConfigParsingError: on all errors
         """
-        self.nodes = {}
-        self.node_id = 1
-        self.node_list = []
+        self.nodes = OrderedDict()
+        self._node_id = 1
         try:
             connect_devices = {}
             for node in cluster_config:
-                zvm_node = _create_node(node)
+                zvm_node = ZvmNode.fromdict(node)
                 if is_swift_path(zvm_node.exe):
                     zvm_node.exe = expand_account_path(account_name,
                                                        zvm_node.exe)
@@ -394,15 +402,14 @@ class ClusterConfigParser(object):
                 else:
                     continue
             self._add_all_connections(node_name, connection_list, src_devices)
-        for node_name in sorted(self.nodes.keys()):
-            self.node_list.append(self.nodes[node_name])
+
         if add_user_image:
-            for node in self.node_list:
+            for node in self.nodes.itervalues():
                 node.add_new_channel('image', ACCESS_CDR, removable='yes')
         if account_name:
             self.resolve_path_info(account_name, replica_resolver)
         self.total_count = 0
-        for n in self.node_list:
+        for n in self.nodes.itervalues():
             self.total_count += n.replicate
 
     def _add_to_group(self, node_count, zvm_node, chan):
@@ -475,7 +482,7 @@ class ClusterConfigParser(object):
         """
         if not self.nodes:
             return
-        node_count = len(self.node_list)
+        node_count = len(self.nodes)
         tmp = []
         for (dst, dst_dev) in node.bind:
             dst_id = self.nodes.get(dst).id
@@ -748,7 +755,7 @@ class ClusterConfigParser(object):
 
     def resolve_path_info(self, account_name, replica_resolver):
         default_path_info = '/%s' % account_name
-        for node in self.node_list:
+        for node in self.nodes.itervalues():
             top_channel = None
             if node.channels:
                 if node.attach == 'default':
@@ -825,34 +832,6 @@ def _extract_stored_wildcards(path, node):
     return new_url
 
 
-def _create_node(node_config):
-    name = node_config.get('name')
-    if not name:
-        raise ClusterConfigParsingError('Must specify node name')
-    if has_control_chars(name):
-        raise ClusterConfigParsingError('Invalid node name')
-    nexe = node_config.get('exec')
-    if not nexe:
-        raise ClusterConfigParsingError(
-            'Must specify exec stanza for %s' % name)
-    exe = parse_location(nexe.get('path'))
-    if not exe:
-        raise ClusterConfigParsingError(
-            'Must specify executable path for %s' % name)
-    if is_zvm_path(exe):
-        raise ClusterConfigParsingError(
-            'Executable path cannot be a zvm path in %s' % name)
-    args = nexe.get('args')
-    env = nexe.get('env')
-    if has_control_chars('%s %s %s' % (exe.url, args, env)):
-        raise ClusterConfigParsingError(
-            'Invalid nexe property for %s' % name)
-    replicate = node_config.get('replicate', 1)
-    attach = node_config.get('attach', 'default')
-    exe_name = nexe.get('name')
-    return ZvmNode(0, name, exe, args, env, replicate, attach, exe_name)
-
-
 def _create_channel(channel, node, default_content_type=None):
     device = DEVICE.fetch_from(channel)
     if has_control_chars(device):
@@ -878,3 +857,152 @@ def _create_channel(channel, node, default_content_type=None):
     return ZvmChannel(device, access, path=path,
                       content_type=content_type, meta_data=meta,
                       mode=mode, min_size=min_size)
+
+
+class ZvmNode(object):
+    """ZeroVM instance.
+    """
+    def __init__(self, id=None, name=None, exe=None, args=None, env=None,
+                 replicate=1, attach=None, exe_name=None):
+        self.id = id
+        self.name = name
+        self.exe = exe
+        self.args = args
+        self.env = env
+        self.replicate = replicate
+        self.channels = []
+        self.connect = []
+        self.bind = []
+        self.replicas = []
+        self.skip_validation = False
+        self.wildcards = None
+        self.attach = attach
+        self.access = ''
+        self.exe_name = exe_name
+        self.data_in = False
+
+    @classmethod
+    def fromdict(cls, node_config):
+        name = node_config.get('name')
+        if not name:
+            raise ClusterConfigParsingError('Must specify node name')
+        if has_control_chars(name):
+            raise ClusterConfigParsingError('Invalid node name')
+        nexe = node_config.get('exec')
+        if not nexe:
+            raise ClusterConfigParsingError(
+                'Must specify exec stanza for %s' % name)
+        exe = parse_location(nexe.get('path'))
+        if not exe:
+            raise ClusterConfigParsingError(
+                'Must specify executable path for %s' % name)
+        if is_zvm_path(exe):
+            raise ClusterConfigParsingError(
+                'Executable path cannot be a zvm path in %s' % name)
+        args = nexe.get('args')
+        env = nexe.get('env')
+        if has_control_chars('%s %s %s' % (exe.url, args, env)):
+            raise ClusterConfigParsingError(
+                'Invalid nexe property for %s' % name)
+        replicate = node_config.get('replicate', 1)
+        attach = node_config.get('attach', 'default')
+        exe_name = nexe.get('name')
+        return ZvmNode(0, name, exe, args, env, replicate, attach, exe_name)
+
+    def copy(self, id, name=None):
+        newnode = deepcopy(self)
+        newnode.id = id
+        if name:
+            newnode.name = name
+        return newnode
+
+    def add_channel(self, path=None,
+                    content_type=None, channel=None):
+        channel = deepcopy(channel)
+        if path:
+            channel.path = path
+        if content_type:
+            channel.content_type = content_type
+        self.channels.append(channel)
+
+    def add_new_channel(self, device=None, access=None, path=None,
+                        content_type='application/octet-stream',
+                        meta_data=None, mode=None, removable='no',
+                        mountpoint='/'):
+        channel = ZvmChannel(device, access, path,
+                             content_type=content_type,
+                             meta_data=meta_data, mode=mode,
+                             removable=removable, mountpoint=mountpoint)
+        self.channels.append(channel)
+
+    def get_channel(self, device=None, path=None):
+        if device:
+            for chan in self.channels:
+                if chan.device == device:
+                    return chan
+        if path:
+            for chan in self.channels:
+                if chan.path == path:
+                    return chan
+        return None
+
+    def copy_cgi_env(self, request=None, cgi_env=None):
+        if not self.env:
+            self.env = {}
+        self.env['REMOTE_USER'] = request.remote_user
+        self.env['QUERY_STRING'] = request.query_string
+        self.env['SERVER_PROTOCOL'] = \
+            request.environ.get('SERVER_PROTOCOL', 'HTTP/1.0')
+        self.env['PATH_INFO'] = request.path_info
+        self.env['REQUEST_METHOD'] = 'GET'
+        self.env['SERVER_SOFTWARE'] = 'zerocloud'
+        self.env['GATEWAY_INTERFACE'] = 'CGI/1.1'
+        self.env['SCRIPT_NAME'] = self.exe_name or self.name
+        self.env['SCRIPT_FILENAME'] = self.exe
+        if cgi_env:
+            self.env.update(cgi_env)
+        # we need to show the real host name, if possible
+        parts = self.env.get('HTTP_HOST',
+                             request.environ.get('SERVER_NAME',
+                                                 'localhost')).split(':', 1)
+        self.env['SERVER_NAME'] = parts[0]
+        if len(parts) > 1:
+            self.env['SERVER_PORT'] = parts[1]
+        else:
+            self.env['SERVER_PORT'] = '80'
+
+    def create_sysmap_resp(self):
+        sysmap = self.dumps()
+        # print self.dumps(indent=2)
+        sysmap_iter = iter([sysmap])
+        return Response(app_iter=sysmap_iter,
+                        headers={'Content-Length': str(len(sysmap))})
+
+    def add_data_source(self, data_sources, resp, dev='sysmap', append=False):
+        if append:
+            data_sources.append(resp)
+        else:
+            data_sources.insert(0, resp)
+        if not getattr(self, 'last_data', None) or append:
+            self.last_data = resp
+        resp.nodes = [{'node': self, 'dev': dev}]
+
+    def store_wildcards(self, path, mask):
+        new_match = mask.match(path.path)
+        self.wildcards = map(lambda idx: new_match.group(idx),
+                             range(1, new_match.lastindex + 1))
+
+    def dumps(self, indent=None):
+        return json.dumps(self, cls=NodeEncoder, indent=indent)
+
+
+class NodeEncoder(json.JSONEncoder):
+
+    def default(self, o):
+        if isinstance(o, ZvmNode) or isinstance(o, ZvmChannel):
+            return o.__dict__
+        elif isinstance(o, Response):
+            return str(o.__dict__)
+        if isinstance(o, ObjPath):
+            return o.url
+        return json.JSONEncoder.default(self, o)

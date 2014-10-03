@@ -1,5 +1,6 @@
 from __future__ import with_statement
 from StringIO import StringIO
+import json
 import logging
 import re
 import struct
@@ -41,8 +42,7 @@ from swift.common.storage_policy import StoragePolicy, \
 from zerocloud import proxyquery, objectquery, chain
 from test.unit import connect_tcp, readuntil2crlfs, fake_http_connect, trim, \
     debug_logger, FakeMemcache, write_fake_ring, FakeRing
-from zerocloud.common import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME, \
-    json
+from zerocloud.common import CLUSTER_CONFIG_FILENAME, NODE_CONFIG_FILENAME
 from zerocloud.configparser import ClusterConfigParser, \
     ClusterConfigParsingError
 
@@ -3039,7 +3039,7 @@ class TestProxyQuery(unittest.TestCase):
         except ClusterConfigParsingError:
             self.assertTrue(False, msg='ClusterConfigParsingError is raised')
         self.assertEqual(len(parser.nodes), 5)
-        for n in parser.node_list:
+        for n in parser.nodes.itervalues():
             parser.build_connect_string(n, cluster_id='cluster1')
             self.assertEqual(len(n.bind), 4)
             for line in n.bind:
@@ -3177,7 +3177,7 @@ class TestProxyQuery(unittest.TestCase):
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             import sqlite3
             db_path = mnfst.channels['/dev/input']['path']
             con = sqlite3.connect(db_path)
@@ -3541,7 +3541,7 @@ class TestProxyQuery(unittest.TestCase):
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             conf = [
                 {
                     'name': 'http',
@@ -3604,7 +3604,7 @@ class TestProxyQuery(unittest.TestCase):
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             conf = [
                 {
                     'name': 'http',
@@ -3662,7 +3662,7 @@ class TestProxyQuery(unittest.TestCase):
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             import urlparse
             qs = zvm_environ['QUERY_STRING']
             params = dict(urlparse.parse_qsl(qs, True))
@@ -3729,7 +3729,7 @@ class TestProxyQuery(unittest.TestCase):
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             import urlparse
             qs = zvm_environ['QUERY_STRING']
             params = dict(urlparse.parse_qsl(qs, True))
@@ -3972,7 +3972,7 @@ class TestProxyQuery(unittest.TestCase):
         prosrv = _test_servers[0]
         prolis = _test_sockets[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             out = {
                 'data': sorted(id),
                 'env': zvm_environ
@@ -4037,7 +4037,7 @@ class TestProxyQuery(unittest.TestCase):
         prosrv = _test_servers[0]
         prolis = _test_sockets[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             import urlparse
             qs = zvm_environ['QUERY_STRING']
             params = dict(urlparse.parse_qsl(qs, True))
@@ -4097,7 +4097,7 @@ class TestProxyQuery(unittest.TestCase):
         prosrv = _test_servers[0]
         prolis = _test_sockets[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             import urlparse
             qs = zvm_environ['QUERY_STRING']
             params = dict(urlparse.parse_qsl(qs, True))

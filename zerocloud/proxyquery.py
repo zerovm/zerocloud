@@ -1159,9 +1159,6 @@ class ClusterController(ObjectController):
                 'ERROR Error parsing config: %s', cluster_config)
             return HTTPBadRequest(request=req, body=str(e))
 
-        # for n in self.parser.node_list:
-        #     print n.dumps(indent=2)
-
         if not self.cgi_env:
             self.cgi_env = self.create_cgi_env(req)
         data_sources = []
@@ -1185,7 +1182,7 @@ class ClusterController(ObjectController):
                 return HTTPServiceUnavailable(body='Cannot bind name service')
         exec_requests = []
         load_data_resp = True
-        for node in self.parser.node_list:
+        for node in self.parser.nodes.itervalues():
             nexe_headers = HeaderKeyDict({
                 'x-nexe-system': node.name,
                 'x-nexe-status': 'ZeroVM did not run',
@@ -1227,7 +1224,7 @@ class ClusterController(ObjectController):
                     for i in range(0, node.replicate - 1):
                         node.replicas.append(deepcopy(node))
                         node.replicas[i].id = \
-                            node.id + (i + 1) * len(self.parser.node_list)
+                            node.id + (i + 1) * len(self.parser.nodes)
             node.copy_cgi_env(request=exec_request, cgi_env=self.cgi_env)
             resp = node.create_sysmap_resp()
             node.add_data_source(data_sources, resp, 'sysmap')

@@ -1,4 +1,5 @@
 from eventlet import spawn, wsgi, listen
+import json
 import mock
 from eventlet.green import os
 from tempfile import mkdtemp
@@ -22,7 +23,6 @@ from swift.common.storage_policy import StoragePolicy, \
     StoragePolicyCollection, POLICIES
 from test.unit import debug_logger, FakeMemcache, write_fake_ring, FakeRing
 from zerocloud import queue
-from zerocloud.common import json
 
 _test_coros = _test_servers = _test_sockets = _orig_container_listing_limit = \
     _testdir = _orig_SysLogHandler = _orig_POLICIES = _test_POLICIES = None
