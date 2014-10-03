@@ -725,6 +725,15 @@ class ClusterController(ObjectController):
         return addr
 
     def _make_exec_requests(self, pile, exec_requests):
+        """
+        :param pile:
+            :class:`GreenPileEx` instance.
+        :param exec_requests:
+            `list` of `swift.common.swob.Request` objects.
+        :returns:
+            `list` of `swift.common.bufferedhttp.BufferedHTTPConnection`
+            objects.
+        """
         for exec_request in exec_requests:
             node = exec_request.node
             account, container, obj = \
