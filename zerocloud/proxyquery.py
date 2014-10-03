@@ -1190,6 +1190,8 @@ class ClusterController(ObjectController):
 
         if not self.cgi_env:
             self.cgi_env = self.create_cgi_env(req)
+
+        # List of `swift.common.swob.Request` objects
         data_sources = []
         if self.exe_resp:
             self.exe_resp.nodes = []
@@ -1943,6 +1945,12 @@ def _config_from_template(params, template, url):
 
 
 def _attach_connections_to_data_sources(conns, data_sources):
+    """
+    :param conns:
+        `list` of `swift.common.bufferedhttp.BufferedHTTPConnection` objects.
+    :param data_sources:
+        `list` of `swift.common.swob.Request` objects.
+    """
     for data_src in data_sources:
         data_src.conns = []
         for node in data_src.nodes:
