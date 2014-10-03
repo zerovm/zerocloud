@@ -412,6 +412,8 @@ class ClusterConfigParser(object):
         for n in self.nodes.itervalues():
             self.total_count += n.replicate
 
+        return ClusterConfig(self.nodes, self.total_count)
+
     def _add_to_group(self, node_count, zvm_node, chan):
         for i in range(1, node_count + 1):
             new_node = self.nodes.get(_create_node_name(zvm_node.name, i))
@@ -1007,3 +1009,10 @@ class NodeEncoder(json.JSONEncoder):
         if isinstance(o, ObjPath):
             return o.url
         return json.JSONEncoder.default(self, o)
+
+
+class ClusterConfig(object):
+
+    def __init__(self, nodes, total_count):
+        self.nodes = nodes
+        self.total_count = total_count

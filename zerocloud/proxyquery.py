@@ -1096,6 +1096,8 @@ class ClusterController(ObjectController):
         return cluster_config
 
     def _get_cluster_config_data_resp(self, req):
+        req.path_info = '/' + self.account_name
+
         chunk_size = self.middleware.network_chunk_size
         rdata = req.environ['wsgi.input']
         req_iter = iter(lambda: rdata.read(chunk_size), '')
@@ -1108,12 +1110,33 @@ class ClusterController(ObjectController):
         req.bytes_transferred = 0
         if req.content_type in TAR_MIMES:
             # Tarball (presumably with system.map) has been POSTed
-            cluster_config = self._tarball_cluster_config(req, req_iter)
+            cluster_conf_dict = self._tarball_cluster_config(req, req_iter)
         elif req.content_type in 'application/json':
-            cluster_config = self._system_map_cluster_config(req, req_iter)
+            cluster_conf_dict = self._system_map_cluster_config(req, req_iter)
         else:
             # assume the posted data is a script and try to execute
-            cluster_config = self._script_cluster_config(req, req_iter)
+            cluster_conf_dict = self._script_cluster_config(req, req_iter)
+
+        try:
+            def replica_resolver(account, container):
+                if self.middleware.ignore_replication:
+                    return 1
+                container_info = self.container_info(account, container, req)
+                ring = self.app.get_object_ring(
+                    container_info['storage_policy'])
+                return ring.replica_count
+
+            cluster_config = self.parser.parse(
+                cluster_conf_dict,
+                self.image_resp is not None,
+                self.account_name,
+                replica_resolver=replica_resolver,
+                request=req
+            )
+        except ClusterConfigParsingError, e:
+            self.app.logger.warn(
+                'ERROR Error parsing config: %s', cluster_conf_dict)
+            raise HTTPBadRequest(request=req, body=str(e))
 
         return cluster_config, data_resp
 
@@ -1165,27 +1188,6 @@ class ClusterController(ObjectController):
 
         cluster_config, data_resp = self._get_cluster_config_data_resp(req)
 
-        req.path_info = '/' + self.account_name
-        try:
-
-            def replica_resolver(account, container):
-                if self.middleware.ignore_replication:
-                    return 1
-                container_info = self.container_info(account, container, req)
-                ring = self.app.get_object_ring(
-                    container_info['storage_policy'])
-                return ring.replica_count
-
-            self.parser.parse(cluster_config,
-                              self.image_resp is not None,
-                              self.account_name,
-                              replica_resolver=replica_resolver,
-                              request=req)
-        except ClusterConfigParsingError, e:
-            self.app.logger.warn(
-                'ERROR Error parsing config: %s', cluster_config)
-            return HTTPBadRequest(request=req, body=str(e))
-
         if not self.cgi_env:
             self.cgi_env = self.create_cgi_env(req)
         data_sources = []
@@ -1198,8 +1200,8 @@ class ClusterController(ObjectController):
                 body='Cannot find own address, check zerovm_ns_hostname')
         ns_server = None
         network_is_tcp = self.middleware.network_type == 'tcp'
-        if self.parser.total_count > 1 and network_is_tcp:
-            ns_server = NameService(self.parser.total_count)
+        if cluster_config.total_count > 1 and network_is_tcp:
+            ns_server = NameService(cluster_config.total_count)
             if self.middleware.zerovm_ns_thrdpool.free() <= 0:
                 return HTTPServiceUnavailable(
                     body='Cluster slot not available',
@@ -1209,7 +1211,7 @@ class ClusterController(ObjectController):
                 return HTTPServiceUnavailable(body='Cannot bind name service')
         exec_requests = []
         load_data_resp = True
-        for node in self.parser.nodes.itervalues():
+        for node in cluster_config.nodes.itervalues():
             nexe_headers = HeaderKeyDict({
                 'x-nexe-system': node.name,
                 'x-nexe-status': 'ZeroVM did not run',
@@ -1244,14 +1246,14 @@ class ClusterController(ObjectController):
                     return aresp
             if ns_server:
                 node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
-            if self.parser.total_count > 1:
+            if cluster_config.total_count > 1:
                 self.parser.build_connect_string(
                     node, req.headers.get('x-trans-id'))
                 if node.replicate > 1:
                     for i in range(0, node.replicate - 1):
                         node.replicas.append(deepcopy(node))
                         node.replicas[i].id = \
-                            node.id + (i + 1) * len(self.parser.nodes)
+                            node.id + (i + 1) * len(cluster_config.nodes)
             node.copy_cgi_env(request=exec_request, cgi_env=self.cgi_env)
             resp = node.create_sysmap_resp()
             node.add_data_source(data_sources, resp, 'sysmap')
@@ -1313,9 +1315,9 @@ class ClusterController(ObjectController):
                     size=data_src.content_length))
                 n['node'].size += \
                     TarStream.get_archive_size(data_src.content_length)
-        pile = GreenPileEx(self.parser.total_count)
+        pile = GreenPileEx(cluster_config.total_count)
         conns = self._make_exec_requests(pile, exec_requests)
-        if len(conns) < self.parser.total_count:
+        if len(conns) < cluster_config.total_count:
             self.app.logger.exception(
                 'ERROR Cannot find suitable node to execute code on')
             for conn in conns:
@@ -1339,7 +1341,7 @@ class ClusterController(ObjectController):
         # chunked = req.headers.get('transfer-encoding')
         chunked = False
         try:
-            with ContextPool(self.parser.total_count) as pool:
+            with ContextPool(cluster_config.total_count) as pool:
                 self._spawn_file_senders(conns, pool, req)
                 for data_src in data_sources:
                     data_src.bytes_transferred = 0
