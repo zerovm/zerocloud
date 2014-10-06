@@ -18,7 +18,8 @@
     sudo dpkg -i vagrant_1.6.3_i686.deb
     ```
 
-For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagrant/.
+    For a list of all releases of Vagrant, see
+    https://dl.bintray.com/mitchellh/vagrant/.
 
 3. Change into this directory (the one with `Vagrantfile`).
 
