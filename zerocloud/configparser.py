@@ -412,6 +412,8 @@ class ClusterConfigParser(object):
         for n in self.nodes.itervalues():
             self.total_count += n.replicate
 
+        return ClusterConfig(self.nodes, self.total_count)
+
     def _add_to_group(self, node_count, zvm_node, chan):
         for i in range(1, node_count + 1):
             new_node = self.nodes.get(_create_node_name(zvm_node.name, i))
@@ -788,17 +790,6 @@ class ClusterConfigParser(object):
             if node.replicate == 0:
                 node.replicate = 1
 
-    def get_list_of_remote_objects(self, node):
-        channels = []
-        if is_swift_path(node.exe):
-            channels.append(ZvmChannel('boot', None, path=node.exe))
-        for ch in node.channels:
-            if is_swift_path(ch.path) \
-                    and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
-                    and ch.path.path != getattr(node, 'path_info', None):
-                channels.append(ch)
-        return channels
-
 
 def _add_connected_device(devices, channel, zvm_node):
     if not devices.get(zvm_node.name, None):
@@ -995,6 +986,17 @@ class ZvmNode(object):
     def dumps(self, indent=None):
         return json.dumps(self, cls=NodeEncoder, indent=indent)
 
+    def get_list_of_remote_objects(self):
+        channels = []
+        if is_swift_path(self.exe):
+            channels.append(ZvmChannel('boot', None, path=self.exe))
+        for ch in self.channels:
+            if is_swift_path(ch.path) \
+                    and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
+                    and ch.path.path != getattr(self, 'path_info', None):
+                channels.append(ch)
+        return channels
+
 
 class NodeEncoder(json.JSONEncoder):
 
@@ -1006,3 +1008,10 @@ class NodeEncoder(json.JSONEncoder):
         if isinstance(o, ObjPath):
             return o.url
         return json.JSONEncoder.default(self, o)
+
+
+class ClusterConfig(object):
+
+    def __init__(self, nodes, total_count):
+        self.nodes = nodes
+        self.total_count = total_count

@@ -725,6 +725,15 @@ class ClusterController(ObjectController):
         return addr
 
     def _make_exec_requests(self, pile, exec_requests):
+        """
+        :param pile:
+            :class:`GreenPileEx` instance.
+        :param exec_requests:
+            `list` of `swift.common.swob.Request` objects.
+        :returns:
+            `list` of `swift.common.bufferedhttp.BufferedHTTPConnection`
+            objects.
+        """
         for exec_request in exec_requests:
             node = exec_request.node
             account, container, obj = \
@@ -968,9 +977,8 @@ class ClusterController(ObjectController):
         if 'etag' in req.headers and req.headers['etag'].lower() != etag:
             raise HTTPUnprocessableEntity(request=req)
 
-    def _post_job_handle_tarball(self, req, req_iter):
+    def _tarball_cluster_config(self, req, req_iter):
         # Tarball (presumably with system.map) has been POSTed
-
         # we must have Content-Length set for tar-based requests
         # as it will be impossible to stream them otherwise
         if 'content-length' not in req.headers:
@@ -1004,7 +1012,7 @@ class ClusterController(ObjectController):
             raise HTTPUnprocessableEntity(body='Could not parse '
                                                'system map')
 
-    def _post_job_handle_system_map(self, req, req_iter):
+    def _system_map_cluster_config(self, req, req_iter):
         # System map was sent as a POST body
         if not self.cluster_config:
             self.read_json_job(req, req_iter)
@@ -1015,7 +1023,7 @@ class ClusterController(ObjectController):
             raise HTTPUnprocessableEntity(
                 body='Could not parse system map')
 
-    def _post_job_handle_script(self, req, req_iter):
+    def _script_cluster_config(self, req, req_iter):
         if 'content-length' not in req.headers:
             raise HTTPBadRequest(request=req,
                                  body='Must specify Content-Length')
@@ -1087,60 +1095,29 @@ class ClusterController(ObjectController):
 
         return cluster_config
 
-    def post_job(self, req):
+    def _get_cluster_config_data_resp(self, req):
+        req.path_info = '/' + self.account_name
+
         chunk_size = self.middleware.network_chunk_size
-        if 'content-type' not in req.headers:
-            return HTTPBadRequest(request=req,
-                                  body='Must specify Content-Type')
         rdata = req.environ['wsgi.input']
         req_iter = iter(lambda: rdata.read(chunk_size), '')
         data_resp = None
         source_header = req.headers.get('X-Zerovm-Source')
         if source_header:
-            source_loc = parse_location(unquote(source_header))
-            if not is_swift_path(source_loc):
-                return HTTPPreconditionFailed(
-                    request=req,
-                    body='X-Zerovm-Source format is '
-                         'swift://account/container/object')
-            if req.content_length:
-                data_resp = Response(
-                    app_iter=iter(lambda: rdata.read(chunk_size), ''),
-                    headers={
-                        'Content-Length': req.content_length,
-                        'Content-Type': req.content_type})
-                data_resp.nodes = []
-            source_loc = expand_account_path(self.account_name, source_loc)
-            source_req = make_subrequest(req.environ, method='GET',
-                                         swift_source='zerocloud')
-            source_req.path_info = source_loc.path
-            source_req.query_string = None
-            sink_req = Request.blank(req.path_info,
-                                     environ=req.environ, headers=req.headers)
-            source_resp = source_req.get_response(self.app)
-            if not is_success(source_resp.status_int):
-                return source_resp
-            del sink_req.headers['X-Zerovm-Source']
-            sink_req.content_length = source_resp.content_length
-            sink_req.content_type = source_resp.headers['Content-Type']
-            sink_req.etag = source_resp.etag
-            req_iter = iter(source_resp.app_iter)
-            req = sink_req
+            req, req_iter, data_resp = self._process_source_header(
+                req, source_header
+            )
         req.bytes_transferred = 0
-        req_content_type = req.content_type
-        if req_content_type in TAR_MIMES:
+        if req.content_type in TAR_MIMES:
             # Tarball (presumably with system.map) has been POSTed
-            cluster_config = self._post_job_handle_tarball(req, req_iter)
-        elif req_content_type in 'application/json':
-            # System map was sent as a POST body
-            cluster_config = self._post_job_handle_system_map(req, req_iter)
+            cluster_conf_dict = self._tarball_cluster_config(req, req_iter)
+        elif req.content_type in 'application/json':
+            cluster_conf_dict = self._system_map_cluster_config(req, req_iter)
         else:
             # assume the posted data is a script and try to execute
-            cluster_config = self._post_job_handle_script(req, req_iter)
+            cluster_conf_dict = self._script_cluster_config(req, req_iter)
 
-        req.path_info = '/' + self.account_name
         try:
-
             def replica_resolver(account, container):
                 if self.middleware.ignore_replication:
                     return 1
@@ -1149,18 +1126,72 @@ class ClusterController(ObjectController):
                     container_info['storage_policy'])
                 return ring.replica_count
 
-            self.parser.parse(cluster_config,
-                              self.image_resp is not None,
-                              self.account_name,
-                              replica_resolver=replica_resolver,
-                              request=req)
+            cluster_config = self.parser.parse(
+                cluster_conf_dict,
+                self.image_resp is not None,
+                self.account_name,
+                replica_resolver=replica_resolver,
+                request=req
+            )
         except ClusterConfigParsingError, e:
             self.app.logger.warn(
-                'ERROR Error parsing config: %s', cluster_config)
-            return HTTPBadRequest(request=req, body=str(e))
+                'ERROR Error parsing config: %s', cluster_conf_dict)
+            raise HTTPBadRequest(request=req, body=str(e))
+
+        return cluster_config, data_resp
+
+    def _process_source_header(self, req, source_header):
+        rdata = req.environ['wsgi.input']
+
+        source_loc = parse_location(unquote(source_header))
+        if not is_swift_path(source_loc):
+            return HTTPPreconditionFailed(
+                request=req,
+                body='X-Zerovm-Source format is '
+                     'swift://account/container/object')
+
+        data_resp = None
+        if req.content_length:
+            data_resp = Response(
+                app_iter=iter(
+                    lambda: rdata.read(self.middleware.network_chunk_size),
+                    ''
+                ),
+                headers={
+                    'Content-Length': req.content_length,
+                    'Content-Type': req.content_type})
+            data_resp.nodes = []
+        source_loc = expand_account_path(self.account_name, source_loc)
+        source_req = make_subrequest(req.environ, method='GET',
+                                     swift_source='zerocloud')
+        source_req.path_info = source_loc.path
+        source_req.query_string = None
+        sink_req = Request.blank(req.path_info,
+                                 environ=req.environ, headers=req.headers)
+        source_resp = source_req.get_response(self.app)
+        if not is_success(source_resp.status_int):
+            return source_resp
+        del sink_req.headers['X-Zerovm-Source']
+        sink_req.content_length = source_resp.content_length
+        sink_req.content_type = source_resp.headers['Content-Type']
+        sink_req.etag = source_resp.etag
+        req_iter = iter(source_resp.app_iter)
+        req = sink_req
+
+        return req, req_iter, data_resp
+
+    def post_job(self, req):
+        chunk_size = self.middleware.network_chunk_size
+        if 'content-type' not in req.headers:
+            return HTTPBadRequest(request=req,
+                                  body='Must specify Content-Type')
+
+        cluster_config, data_resp = self._get_cluster_config_data_resp(req)
 
         if not self.cgi_env:
             self.cgi_env = self.create_cgi_env(req)
+
+        # List of `swift.common.swob.Request` objects
         data_sources = []
         if self.exe_resp:
             self.exe_resp.nodes = []
@@ -1170,9 +1201,9 @@ class ClusterController(ObjectController):
             return HTTPServiceUnavailable(
                 body='Cannot find own address, check zerovm_ns_hostname')
         ns_server = None
-        network_is_tcp = self.middleware.network_type == 'tcp'
-        if self.parser.total_count > 1 and network_is_tcp:
-            ns_server = NameService(self.parser.total_count)
+        if (self.middleware.network_type == 'tcp'
+                and cluster_config.total_count > 1):
+            ns_server = NameService(cluster_config.total_count)
             if self.middleware.zerovm_ns_thrdpool.free() <= 0:
                 return HTTPServiceUnavailable(
                     body='Cluster slot not available',
@@ -1182,7 +1213,7 @@ class ClusterController(ObjectController):
                 return HTTPServiceUnavailable(body='Cannot bind name service')
         exec_requests = []
         load_data_resp = True
-        for node in self.parser.nodes.itervalues():
+        for node in cluster_config.nodes.itervalues():
             nexe_headers = HeaderKeyDict({
                 'x-nexe-system': node.name,
                 'x-nexe-status': 'ZeroVM did not run',
@@ -1217,14 +1248,14 @@ class ClusterController(ObjectController):
                     return aresp
             if ns_server:
                 node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
-            if self.parser.total_count > 1:
+            if cluster_config.total_count > 1:
                 self.parser.build_connect_string(
                     node, req.headers.get('x-trans-id'))
                 if node.replicate > 1:
                     for i in range(0, node.replicate - 1):
                         node.replicas.append(deepcopy(node))
                         node.replicas[i].id = \
-                            node.id + (i + 1) * len(self.parser.nodes)
+                            node.id + (i + 1) * len(cluster_config.nodes)
             node.copy_cgi_env(request=exec_request, cgi_env=self.cgi_env)
             resp = node.create_sysmap_resp()
             node.add_data_source(data_sources, resp, 'sysmap')
@@ -1233,7 +1264,7 @@ class ClusterController(ObjectController):
                                        cgi_env=self.cgi_env)
                 resp = repl_node.create_sysmap_resp()
                 repl_node.add_data_source(data_sources, resp, 'sysmap')
-            channels = self.parser.get_list_of_remote_objects(node)
+            channels = node.get_list_of_remote_objects()
             for ch in channels:
                 error = self._create_request_for_remote_object(data_sources,
                                                                ch,
@@ -1286,9 +1317,9 @@ class ClusterController(ObjectController):
                     size=data_src.content_length))
                 n['node'].size += \
                     TarStream.get_archive_size(data_src.content_length)
-        pile = GreenPileEx(self.parser.total_count)
+        pile = GreenPileEx(cluster_config.total_count)
         conns = self._make_exec_requests(pile, exec_requests)
-        if len(conns) < self.parser.total_count:
+        if len(conns) < cluster_config.total_count:
             self.app.logger.exception(
                 'ERROR Cannot find suitable node to execute code on')
             for conn in conns:
@@ -1312,7 +1343,7 @@ class ClusterController(ObjectController):
         # chunked = req.headers.get('transfer-encoding')
         chunked = False
         try:
-            with ContextPool(self.parser.total_count) as pool:
+            with ContextPool(cluster_config.total_count) as pool:
                 self._spawn_file_senders(conns, pool, req)
                 for data_src in data_sources:
                     data_src.bytes_transferred = 0
@@ -1914,6 +1945,12 @@ def _config_from_template(params, template, url):
 
 
 def _attach_connections_to_data_sources(conns, data_sources):
+    """
+    :param conns:
+        `list` of `swift.common.bufferedhttp.BufferedHTTPConnection` objects.
+    :param data_sources:
+        `list` of `swift.common.swob.Request` objects.
+    """
     for data_src in data_sources:
         data_src.conns = []
         for node in data_src.nodes:
