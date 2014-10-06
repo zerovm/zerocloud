@@ -52,7 +52,7 @@ the needed environment variables, just do:
 
 First, log in to the vagrant box:
 
-`vagrant ssh`
+    vagrant ssh
 
 Next, we need to terminate all of the DevStack processes. The first time you do
 this, you need to use a little brute force. First, run `rejoin_stack.sh`:
@@ -67,7 +67,7 @@ press 'ctrl+a backslash', then 'y' to confirm. NOTE: The first time you restart
 DevStack after provisioning the machine, not all of the Swift processes will be
 killed. A little brute force is needed:
 
-`ps ax | grep [s]wift | awk '{print $1}' | xargs kill`
+    ps ax | grep [s]wift | awk '{print $1}' | xargs kill
 
 Now restart DevStack:
 
