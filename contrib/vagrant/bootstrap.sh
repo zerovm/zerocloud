@@ -34,6 +34,14 @@ sudo wget -q http://packages.zerovm.org/zerovm-samples/python.tar
 
 ###
 # DevStack
+
+# Use https:// instead of git:// since the latter might be blocked by
+# firewalls whereas HTTPS is pretty much always open.
+cat >> ~/.gitconfig <<EOF
+[url "https://git.openstack"]
+	insteadOf = git://git.openstack
+EOF
+
 git clone https://github.com/openstack-dev/devstack.git $HOME/devstack
 cd $HOME/devstack
 git checkout $DEVSTACK_VERSION
