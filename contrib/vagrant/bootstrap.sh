@@ -37,8 +37,7 @@ sudo wget -q http://packages.zerovm.org/zerovm-samples/python.tar
 git clone https://github.com/openstack-dev/devstack.git $HOME/devstack
 cd $HOME/devstack
 git checkout $DEVSTACK_VERSION
-touch local.conf
-read -d '' LOCAL_CONF << EOF
+cat >> local.conf <<EOF
 [[local|localrc]]
 ADMIN_PASSWORD=admin
 HOST_IP=127.0.0.1
@@ -50,19 +49,17 @@ enable_service mysql s-proxy s-object s-container s-account
 SWIFT_BRANCH=ca915156fb2ce4fe4356f54fb2cee7bd01185af5
 KEYSTONE_BRANCH=2fc25ff9bb2480d04acae60c24079324d4abe3b0
 EOF
-echo "$LOCAL_CONF" >> local.conf
 
 # Post-config hook for configuring zerocloud (and swauth) middleware
 # for swift. This will get run during ./stack.sh, before services are
 # actually started.
 # See http://devstack.org/plugins.html for more info on how this works.
-read -d '' ZEROCLOUD_CONFIG_SCRIPT << EOF
+cat >> $HOME/devstack/extras.d/89-zerocloud.sh <<EOF
 if [[ "\$1" == "stack" && "\$2" == "post-config" ]]; then
     echo_summary "Configuring ZeroCloud middleware for Swift"
     python /vagrant/configure_swift.py
 fi
 EOF
-echo "$ZEROCLOUD_CONFIG_SCRIPT" >> $HOME/devstack/extras.d/89-zerocloud.sh
 
 ./stack.sh
 
