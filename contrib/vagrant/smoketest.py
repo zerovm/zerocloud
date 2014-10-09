@@ -21,8 +21,8 @@ class Smoketests(unittest.TestCase):
     def setUpClass(cls):
         # Set the storage url and auth token:
         cls.conn = swiftclient.Connection(
-            'http://127.0.0.1:5000/v2.0', 'admin', 'admin',
-            tenant_name='admin', auth_version='2.0'
+            'http://127.0.0.1:8080/auth/v1.0', 'adminacct:admin', 'adminpass',
+            auth_version='1.0'
         )
         cls.storage_url, cls.auth_token = cls.conn.get_auth()
         # TODO: if this fails, throw a useful error telling the user to run

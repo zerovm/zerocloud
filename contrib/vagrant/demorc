@@ -1,6 +1,3 @@
-export OS_REGION_NAME=RegionOne
-export OS_IDENTITY_API_VERSION=2.0
-export OS_PASSWORD=demo
-export OS_AUTH_URL=http://127.0.0.1:5000/v2.0
-export OS_USERNAME=demo
-export OS_TENANT_NAME=demo
+export ST_USER=demoacct:demo
+export ST_KEY=demopass
+export ST_AUTH=http://127.0.0.1:8080/auth/v1.0

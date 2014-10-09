@@ -26,10 +26,6 @@ For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagr
 
         vagrant up
 
-5. Once everything is set up, you'll need to restart Devstack in order for the
-   ZeroCloud configurations to take effect. See [Restarting DevStack and
-   ZeroCloud][restart] below.
-
 
 ### OSX
 
@@ -41,10 +37,6 @@ For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagr
 3. Run Vagrant:
 
         vagrant up
-
-4. Once everything is set up, you'll need to restart DevStack in order for the
-   ZeroCloud configurations to take effect. See [Restarting DevStack and
-   ZeroCloud][restart] below.
 
 
 ## Client configuration
