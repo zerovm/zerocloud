@@ -6,13 +6,9 @@
 
         sudo apt-get install virtualbox vagrant
 
-2. Add a 64-bit Ubuntu 12.04 LTS box to Vagrant:
+2. Change into this directory (the one with `Vagrantfile`).
 
-        vagrant box add hashicorp/precise64 http://files.vagrantup.com/precise64.box
-
-3. Change into this directory (the one with `Vagrantfile`).
-
-4. Run Vagrant:
+3. Run Vagrant:
 
         vagrant up
 
