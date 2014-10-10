@@ -11,6 +11,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
 
   # Every Vagrant virtual environment requires a box to build off of.
   config.vm.box = "hashicorp/precise64"
+  config.vm.box_url = "http://files.vagrantup.com/precise64.box"
   config.vm.provision "shell", privileged: false, path: "bootstrap.sh"
 
   # Port forwarding

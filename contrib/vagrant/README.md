@@ -2,27 +2,13 @@
 
 ### Ubuntu Linux 12.04
 
-1. Install VirtualBox:
+1. Install VirtualBox and Vagrant:
 
-        sudo apt-get install virtualbox
+        sudo apt-get install virtualbox vagrant
 
+2. Change into this directory (the one with `Vagrantfile`).
 
-2. Install the latest version of Vagrant:
-
-    ```bash
-    # 64-bit
-    wget https://dl.bintray.com/mitchellh/vagrant/vagrant_1.6.3_x86_64.deb
-    sudo dpkg -i vagrant_1.6.3_x86_64.deb
-    # 32-bit
-    wget https://dl.bintray.com/mitchellh/vagrant/vagrant_1.6.3_i686.deb
-    sudo dpkg -i vagrant_1.6.3_i686.deb
-    ```
-
-For a list of all releases of Vagrant, see https://dl.bintray.com/mitchellh/vagrant/.
-
-3. Change into this directory (the one with `Vagrantfile`).
-
-4. Run Vagrant:
+3. Run Vagrant:
 
         vagrant up
 
@@ -51,7 +37,7 @@ the needed environment variables, just do:
 
 First, log in to the vagrant box:
 
-`vagrant ssh`
+    vagrant ssh
 
 Next, we need to terminate all of the DevStack processes. The first time you do
 this, you need to use a little brute force. First, run `rejoin_stack.sh`:
@@ -66,7 +52,7 @@ press 'ctrl+a backslash', then 'y' to confirm. NOTE: The first time you restart
 DevStack after provisioning the machine, not all of the Swift processes will be
 killed. A little brute force is needed:
 
-`ps ax | grep [s]wift | awk '{print $1}' | xargs kill`
+    ps ax | grep [s]wift | awk '{print $1}' | xargs kill
 
 Now restart DevStack:
 
