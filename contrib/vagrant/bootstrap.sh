@@ -7,6 +7,11 @@ sudo apt-get update
 sudo apt-get install python-software-properties --yes --force-yes
 # Add PPA for ZeroVM packages
 sudo add-apt-repository ppa:zerovm-ci/zerovm-latest -y
+# Add repo for new node packages
+sudo add-apt-repository 'deb https://deb.nodesource.com/node precise main'
+wget -O- https://deb.nodesource.com/gpgkey/nodesource.gpg.key \
+    | sudo apt-key add -
+
 sudo apt-get update
 sudo apt-get install git python-pip zerovm --yes --force-yes
 sudo pip install python-swiftclient==2.2.0
@@ -38,6 +43,8 @@ sudo wget -q http://packages.zerovm.org/zerovm-samples/python.tar
 # Use https:// instead of git:// since the latter might be blocked by
 # firewalls whereas HTTPS is pretty much always open.
 cat >> ~/.gitconfig <<EOF
+[url "https://github"]
+        insteadOf = git://github
 [url "https://git.openstack"]
 	insteadOf = git://git.openstack
 EOF
@@ -78,3 +85,32 @@ swauth-add-user -A http://127.0.0.1:8080/auth/ -K $SWAUTH_SA_KEY \
     --admin adminacct admin adminpass
 swauth-add-user -A http://127.0.0.1:8080/auth/ -K $SWAUTH_SA_KEY \
    demoacct demo demopass
+
+###
+# Install Swift Browser
+
+# The version of nodejs from nodesource also included npm
+sudo apt-get install nodejs --yes
+
+# Avoid Bower asking "May bower anonymously report usage statistics to
+# improve the tool over time?"
+cat > $HOME/.bowerrc <<EOF
+{
+  "analytics": false
+}
+EOF
+
+git clone https://github.com/zerovm/swift-browser.git $HOME/swift-browser
+cd $HOME/swift-browser
+npm install
+
+cd app
+source /vagrant/adminrc
+swift post -r '.r:*' swift-browser
+swift upload swift-browser .
+
+STORAGE_URL=$(swift stat -v | grep StorageURL | cut -d ' ' -f 6)
+echo "Swift Browser installed at:"
+echo "  $STORAGE_URL/swift-browser/index.html"
+echo "User: $ST_USER"
+echo "Key: $ST_KEY"
