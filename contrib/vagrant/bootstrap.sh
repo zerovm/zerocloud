@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 DEVSTACK_VERSION=f95fe33dcb7e4b261e1ff7aab877563709065158
+# swauth super admin key
+SWAUTH_SA_KEY=swauthkey
 
 sudo apt-get update
 sudo apt-get install python-software-properties --yes --force-yes
@@ -12,28 +14,14 @@ sudo pip install python-keystoneclient
 
 
 ###
-# DevStack
-git clone https://github.com/openstack-dev/devstack.git $HOME/devstack
-cd $HOME/devstack
-git checkout $DEVSTACK_VERSION
-touch local.conf
-read -d '' LOCAL_CONF << EOF
-[[local|localrc]]
-ADMIN_PASSWORD=admin
-HOST_IP=127.0.0.1
-disable_all_services
-enable_service key mysql s-proxy s-object s-container s-account
-# Commit 034fae630cfd652093ef53164a7f9f43bde67336 in Swift
-# breaks ZeroCloud, completely and utterly.
-# The previous commit works:
-SWIFT_BRANCH=ca915156fb2ce4fe4356f54fb2cee7bd01185af5
-KEYSTONE_BRANCH=2fc25ff9bb2480d04acae60c24079324d4abe3b0
-EOF
-echo "$LOCAL_CONF" >> local.conf
-./stack.sh
+# Swauth: Auth middleware for Swift
+git clone https://github.com/gholt/swauth.git $HOME/swauth
+cd $HOME/swauth
+git checkout tags/1.0.8
+sudo python setup.py install
 
 ###
-# ZeroCloud
+# ZeroCloud: ZeroVM middleware for Swift
 # Install is from the code on the host, mapped to /zerocloud
 cd /zerocloud-root
 sudo python setup.py develop
@@ -45,12 +33,43 @@ cd /usr/share/zerovm
 sudo wget -q http://packages.zerovm.org/zerovm-samples/python.tar
 
 ###
-# Add ZeroCloud middleware to swift config
-# This includes setting up the cross-compiled python
-# distribution for ZeroVM.
-python /vagrant/configure_swift.py
+# DevStack
+git clone https://github.com/openstack-dev/devstack.git $HOME/devstack
+cd $HOME/devstack
+git checkout $DEVSTACK_VERSION
+touch local.conf
+read -d '' LOCAL_CONF << EOF
+[[local|localrc]]
+ADMIN_PASSWORD=admin
+HOST_IP=127.0.0.1
+disable_all_services
+enable_service mysql s-proxy s-object s-container s-account
+# Commit 034fae630cfd652093ef53164a7f9f43bde67336 in Swift
+# breaks ZeroCloud, completely and utterly.
+# The previous commit works:
+SWIFT_BRANCH=ca915156fb2ce4fe4356f54fb2cee7bd01185af5
+KEYSTONE_BRANCH=2fc25ff9bb2480d04acae60c24079324d4abe3b0
+EOF
+echo "$LOCAL_CONF" >> local.conf
+
+# Post-config hook for configuring zerocloud (and swauth) middleware
+# for swift. This will get run during ./stack.sh, before services are
+# actually started.
+# See http://devstack.org/plugins.html for more info on how this works.
+read -d '' ZEROCLOUD_CONFIG_SCRIPT << EOF
+if [[ "\$1" == "stack" && "\$2" == "post-config" ]]; then
+    echo_summary "Configuring ZeroCloud middleware for Swift"
+    python /vagrant/configure_swift.py
+fi
+EOF
+echo "$ZEROCLOUD_CONFIG_SCRIPT" >> $HOME/devstack/extras.d/89-zerocloud.sh
+
+./stack.sh
 
 ###
-# Set `demo` user password
-source /vagrant/adminrc
-keystone user-password-update --pass demo demo
+# Set up users
+swauth-prep -K $SWAUTH_SA_KEY
+swauth-add-user -A http://127.0.0.1:8080/auth/ -K $SWAUTH_SA_KEY \
+    --admin adminacct admin adminpass
+swauth-add-user -A http://127.0.0.1:8080/auth/ -K $SWAUTH_SA_KEY \
+   demoacct demo demopass

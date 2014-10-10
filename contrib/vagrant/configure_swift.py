@@ -1,3 +1,4 @@
+import shutil
 from ConfigParser import ConfigParser
 
 
@@ -14,7 +15,7 @@ def inject_before(some_list, item, target):
 
 
 def config_add_filter(cp, filter_name, func_name, inject_b4,
-                      extras=None):
+                      egg_name='zerocloud', extras=None):
     """
     :param cp:
         :class:`ConfigParser.ConfigParser` object
@@ -26,24 +27,40 @@ def config_add_filter(cp, filter_name, func_name, inject_b4,
     :param inject_b4:
         When inserting a filter into the pipeline, place the filter (indicated
         by `filter_name`) before `inject_b4`.
+
+        If `None`, don't modify the pipeline.
     """
     filt = 'filter:%s' % filter_name
     cp.add_section(filt)
-    cp.set(filt, 'use', 'egg:zerocloud#%s' % func_name)
+    cp.set(filt, 'use', 'egg:%(egg)s#%(func)s' % dict(egg=egg_name,
+                                                      func=func_name))
 
     if extras is not None:
         for k, v in extras.items():
             cp.set(filt, k, v)
 
-    pipeline = cp.get('pipeline:main', 'pipeline').split()
-    pipeline = inject_before(pipeline, filter_name, inject_b4)
-    cp.set('pipeline:main', 'pipeline', value=' '.join(pipeline))
+    if inject_b4 is not None:
+        pipeline = cp.get('pipeline:main', 'pipeline').split()
+        pipeline = inject_before(pipeline, filter_name, inject_b4)
+        cp.set('pipeline:main', 'pipeline', value=' '.join(pipeline))
+
+
+def back_up(filename):
+    """Make a copy of ``filename`` with the a .bak extension.
+    """
+    shutil.copyfile(filename, '%s.bak' % filename)
 
 
 if __name__ == '__main__':
+    obj_server = '/etc/swift/object-server/1.conf'
+    proxy_server = '/etc/swift/proxy-server.conf'
+    cont_server = '/etc/swift/container-server/1.conf'
+    back_up(obj_server)
+    back_up(proxy_server)
+    back_up(cont_server)
+
     # Object server:
     cp = ConfigParser()
-    obj_server = '/etc/swift/object-server/1.conf'
     cp.read(obj_server)
     # basic ZeroVM object server config
     config_add_filter(
@@ -62,7 +79,6 @@ if __name__ == '__main__':
 
     # Proxy server:
     cp = ConfigParser()
-    proxy_server = '/etc/swift/proxy-server.conf'
     cp.read(proxy_server)
     # basic ZeroVM proxy server config
     config_add_filter(
@@ -71,7 +87,9 @@ if __name__ == '__main__':
         'proxy_query',
         'proxy-server',
         extras={
-            'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar'
+            'zerovm_sysimage_devices': ('python2.7 '
+                                        '/usr/share/zerovm/python.tar'),
+            'set log_name': 'zerocloud-proxy-query',
         }
     )
     # proxy server job chaining middleware
@@ -79,14 +97,33 @@ if __name__ == '__main__':
         cp,
         'job-chain',
         'job_chain',
-        'proxy-query'
+        'proxy-query',
+        extras={'set log_name': 'zerocloud-job-chain'}
     )
+    # install swauth
+    config_add_filter(
+        cp,
+        'swauth',
+        'swauth',
+        None,
+        egg_name='swauth',
+        extras={
+            'set log_name': 'swauth',
+            'super_admin_key': 'swauthkey',
+        }
+    )
+    # replace tempauth with swauth
+    pipeline = cp.get('pipeline:main', 'pipeline')
+    pipeline = pipeline.replace('tempauth', 'swauth')
+    cp.set('pipeline:main', 'pipeline', pipeline)
+    # allow account management (needed for swauth)
+    cp.set('app:proxy-server', 'allow_account_management', 'true')
+
     with open(proxy_server, 'w') as fp:
         cp.write(fp)
 
     # Container server:
     cp = ConfigParser()
-    cont_server = '/etc/swift/container-server/1.conf'
     cp.read(cont_server)
     config_add_filter(
         cp,
@@ -97,5 +134,6 @@ if __name__ == '__main__':
             'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar'
         }
     )
+
     with open(cont_server, 'w') as fp:
         cp.write(fp)
