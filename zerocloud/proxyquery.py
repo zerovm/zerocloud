@@ -803,6 +803,10 @@ class ClusterController(ObjectController):
 
     def _create_request_for_remote_object(self, data_sources, channel,
                                           req, nexe_headers, node):
+        """Create a request which fetches remote objects (that is, objects to
+        which a job is NOT co-located) from the object server. The request is
+        executed later; we only CREATE the request here and pre-authorize it.
+        """
         source_resp = None
         load_from = channel.path.path
         if is_swift_path(channel.path) and not channel.path.obj:
@@ -810,6 +814,9 @@ class ClusterController(ObjectController):
                                   body='Cannot use container %s as a remote '
                                        'object reference' % load_from)
         for resp in data_sources:
+            # We reuse requests, to avoid doing a bunch of redundant fetches
+            # from the object server. That is, there is no need to a fetch one
+            # object multiple times.
             if resp.request and load_from == resp.request.path_info:
                 source_resp = resp
                 break
@@ -824,6 +831,9 @@ class ClusterController(ObjectController):
                 source_req.headers['X-Zerovm-Valid'] = 'true'
             acct, src_container_name, src_obj_name = \
                 split_path(load_from, 1, 3, True)
+            # We do GET only here, so we check read_acl.
+            # We don't do PUTs (writes) until after the job, and this is
+            # authorized in `process_server_response`
             self.authorize_job(source_req, acl='read_acl')
             source_resp = \
                 ObjectController(self.app,
@@ -1091,6 +1101,18 @@ class ClusterController(ObjectController):
             req, req_iter, data_resp = self._process_source_header(
                 req, source_header
             )
+        # Who will be billed for this job? Who is allowed to execute it?
+        # We don't check for read_acl or write_acl; we only check for execution
+        # rights.
+        # By default, only the owner of the account is allowed to execute
+        # things in the account.
+        # Other users (including anonymous) can be given permission to others,
+        # but the owner will be billed. Permission is given via
+        # `X-Container-Meta-Zerovm-Suid`.
+        #
+        # We don't remove the auth here because we need to check for read/write
+        # permissions on various objects/containers later on (in this request
+        # or subsequent chained requests).
         self.authorize_job(req, remove_auth=False)
         req.bytes_transferred = 0
         if req.content_type in TAR_MIMES:
@@ -1126,6 +1148,44 @@ class ClusterController(ObjectController):
         return cluster_config, data_resp
 
     def _process_source_header(self, req, source_header):
+        # The client can execute code on ZeroCloud in 7 different ways:
+        # 1) POSTing a script to /version/account; the script contents
+        # must have a `#!file://...` header.
+        # 2) POSTing a System Map to /version/account.
+        # 3) POSTing a zapp (a tarbal with a System Map inside it)
+        # 4) GET using the "open" method. That is, a object can be fetched
+        #    from Swift/ZeroCloud and processed by a zapp on the fly.
+        # 5) REST API using open/1.0 method: Requests are submitted to
+        #    /version/account/container/zapp_object, and can include a
+        #    query string).
+        # 6) REST API using api/1.0 method: Requests are submitted to a
+        #    /version/account/container/plus/any/arbitrary/path and query
+        #    string. The `container` must exist, but can be empty. Requests
+        #    will be handled by the zapp specified in the
+        #    `X-Container-Meta-Rest-Endpoint` header set on the
+        #    `container`. The value of this header is a swift path:
+        #    `swift://account/container/zapp_object` for example.
+        # 7) If the user uses methods 1, 2, or 3, and sets the
+        #    `X-Zerovm-Source` header, the POST contents will instead be
+        #    treated simply as input data to the request, and the request
+        #    will be serviced by the zapp specified in the
+        #    `X-Zerovm-Source` header.
+        #
+        # No matter what, all requests which reach `post_job` will be 1 of
+        # 3 types:
+        #   - A script
+        #   - A tarball
+        #   - A System Map
+        #
+        # RestController and ApiController (which process open/1.0 and
+        # api/1.0 requests, respectively) will convert REST API requests to
+        # the System Map case.
+        #
+        # The user can explicitly specify `X-Zerovm-Source` in cases 1-3,
+        # which will change the request to case 7. Cases 5 and 6 will
+        # implicitly set the `X-Zerovm-Source`; the user has no control
+        # over this.
+
         rdata = req.environ['wsgi.input']
 
         source_loc = parse_location(unquote(source_header))
@@ -1152,6 +1212,18 @@ class ClusterController(ObjectController):
         source_req.path_info = source_loc.path
         source_req.query_string = None
         source_req.headers['x-zerovm-source'] = req.headers['x-zerovm-source']
+        # If the `X-Zerovm-Source` is set--and it is in this case--we need
+        # to check that submitter of the request EITHER has Read ACL
+        # permissions OR Setuid permissions to the zapp specified in
+        # `X-Zerovm-Source`.
+        #
+        # Again, we are only checking authorization on
+        # the object specified in `X-Zerovm-Source`.
+        #
+        # If Read ACL check succeeds, continue executing this request.
+        # Else, check if Setuid is allowed.
+        # If Setuid is allowed, continue executing this request.
+        # Else, raise an HTTP 403 error.
         self.authorize_job(source_req, acl='read_acl', save_env=req.environ)
         sink_req = Request.blank(req.path_info,
                                  environ=req.environ, headers=req.headers)
@@ -1199,6 +1271,9 @@ class ClusterController(ObjectController):
                 return HTTPServiceUnavailable(body='Cannot bind name service')
         exec_requests = []
         load_data_resp = True
+        # self.parser.node_list defines all of the zerovm instances --
+        # including replicates -- that will be launched for this job (or for
+        # this part of the chain)
         for node in cluster_config.nodes.itervalues():
             nexe_headers = HeaderKeyDict({
                 'x-nexe-system': node.name,
@@ -1217,12 +1292,37 @@ class ClusterController(ObjectController):
             exec_request.headers['x-zerovm-access'] = node.access
             exec_request.etag = None
             exec_request.content_type = TAR_MIMES[0]
+            # We need to check for access to the local object.
+            # The job is co-located to the file it processes.
+            # Object is never fetched; it is just read from disk.
+            # We do the authorization check BEFORE the job is sent to the
+            # target object server.
+            # We can only co-locate with one object; if a node has access to
+            # more objects, the "remote" objects must be fetched.
+            #
+            # Job description can specify the "attach" attribute to explicitly
+            # attaches to a specific object/node as the local object.
+            # Otherwise, we apply some heuristics to decide where to put the
+            # job. `ConfigParser` has this logic. Here the gist of the
+            # heuristics:
+            # - Read trumps write. If you have read and write, you will be
+            #   attached to read.
+            # - If you have a "script" channel; although it is "read", you will
+            #   never be attached to that because more than likely, the data
+            #   you process with the script willl be much bigger than the
+            #   script itself.
+            # - If you have multiple read channels and no script, behavior is
+            #   undefined.
             acl = None
             if node.access == 'GET':
                 acl = 'read_acl'
             elif node.access == 'PUT':
                 acl = 'write_acl'
             if acl:
+                # NOTE(larsbutler): We could probably remove the auth here,
+                # since this request is a new one, and won't be used later.
+                # The `exec_request` is only used to send a job to the object
+                # server.
                 self.authorize_job(exec_request, acl=acl, remove_auth=False)
             # chunked encoding handling looks broken in Swift
             # but let's leave it here, maybe somebody will fix it
@@ -1468,6 +1568,8 @@ class ClusterController(ObjectController):
         return self.create_final_response(conns, req)
 
     def process_server_response(self, conn, request, resp):
+        # Process object server response (responses from requests which are
+        # co-located with an object).
         conn.resp = resp
         if not is_success(resp.status_int):
             conn.error = resp.body
@@ -1519,6 +1621,12 @@ class ClusterController(ObjectController):
                 dest_req.content_type = headers['Content-Type']
                 check_headers_metadata(dest_req, headers, 'object', request)
                 try:
+                    # Check if the user is authorized to write to the specified
+                    # channel/object.
+                    # If user has write permissions, continue.
+                    # Else, check is user has Setuid.
+                    # If user has Setuid, continue.
+                    # Else, raise a 403.
                     self.authorize_job(dest_req, acl='write_acl')
                     dest_resp = \
                         ObjectController(self.app,
@@ -1927,24 +2035,38 @@ class ApiController(RestController):
                 return None
         container_info = self.container_info(config_path.account,
                                              config_path.container)
+        # This is the zapp which services the endpoint.
         source = container_info['meta'].get('rest-endpoint')
         if not source:
             raise HTTPNotFound(request=req,
                                body='No API endpoint configured for '
                                     'container %s' % self.container_name)
+        # REST endpoint source must be a full URL, with no wildcards.
+        # Otherwise, the account would be ambiguous since the executing user is
+        # not necessarily the owner of the container.
         self.config_path = parse_location(unquote(source))
         config_req = req.copy_get()
         config_req.path_info = self.config_path.path
         config_req.query_string = None
         buffer_length = self.middleware.zerovm_maxconfig * 2
         config_req.range = 'bytes=0-%d' % (buffer_length - 1)
+        # Set x-zerovm-source to the zapp configured for the
+        # x-container-meta-rest-endpoint.
         config_req.headers['X-Zerovm-Source'] = self.config_path.url
+        # We check for read permissions to the zapp which services this
+        # endpoint.
+        # If user has read permissions, continue.
+        # Else, check if user has Setuid permissions.
+        # If if user has Setuid permissions, continue.
+        # Else, raise and HTTP 403.
         self.authorize_job(config_req, acl='read_acl',
                            save_env=req.environ)
         config_resp = ObjectController(
             self.app,
             self.config_path.account,
             self.config_path.container,
+            # `read_acl` is checked above, since we are doing a GET/read (not a
+            # PUT/write) to the object server
             self.config_path.obj).GET(config_req)
         if config_resp.status_int == HTTP_REQUESTED_RANGE_NOT_SATISFIABLE:
             return None
