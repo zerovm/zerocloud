@@ -2201,7 +2201,7 @@ class TestProxyQuery(unittest.TestCase, Utils):
 
         results = [json.loads(r) for r in re.findall(
             r'(?s)(\[.*?\](?=\[|$))', res.body)]
-        pattern = '/dev/out/([^\s]+)\', \'tcp://127.0.0.1:\d+'
+        pattern = '/dev/out/([\S]+)\', u?\'tcp://127.0.0.1:\d+'
         for r in results:
             if 'sort-1' in r[0]:
                 self.assertEqual(
@@ -3082,6 +3082,7 @@ class TestProxyQuery(unittest.TestCase, Utils):
         req = Request.blank('/a', environ={'REQUEST_METHOD': 'POST'},
                             headers={'Content-Type': 'application/json'})
         parser = None
+        cluster_config = None
         try:
             parser = ClusterConfigParser(pqm.zerovm_sysimage_devices,
                                          pqm.zerovm_content_type,
@@ -3089,11 +3090,11 @@ class TestProxyQuery(unittest.TestCase, Utils):
                                          pqm.list_account,
                                          pqm.list_container,
                                          network_type='opaque')
-            parser.parse(conf, False, request=req)
+            cluster_config = parser.parse(conf, False, request=req)
         except ClusterConfigParsingError:
             self.assertTrue(False, msg='ClusterConfigParsingError is raised')
         self.assertEqual(len(parser.nodes), 5)
-        for n in parser.node_list:
+        for n in cluster_config.nodes.itervalues():
             parser.build_connect_string(n, cluster_id='cluster1')
             self.assertEqual(len(n.bind), 4)
             for line in n.bind:
