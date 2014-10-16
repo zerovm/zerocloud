@@ -1090,8 +1090,6 @@ class ClusterController(ObjectController):
         return cluster_config
 
     def _get_cluster_config_data_resp(self, req):
-        req.path_info = '/' + self.account_name
-
         chunk_size = self.middleware.network_chunk_size
         rdata = req.environ['wsgi.input']
         req_iter = iter(lambda: rdata.read(chunk_size), '')
@@ -1114,6 +1112,8 @@ class ClusterController(ObjectController):
         # permissions on various objects/containers later on (in this request
         # or subsequent chained requests).
         self.authorize_job(req, remove_auth=False)
+
+        req.path_info = '/' + self.account_name
         req.bytes_transferred = 0
         if req.content_type in TAR_MIMES:
             # Tarball (presumably with system.map) has been POSTed
