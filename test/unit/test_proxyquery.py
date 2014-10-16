@@ -2161,7 +2161,7 @@ class TestProxyQuery(unittest.TestCase, Utils):
     def test_QUERY_network_resolve_multiple(self):
         self.setup_QUERY()
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             con_list.insert(
                 0,
                 re.sub(r'(?s).*args = ([^\n]+).*', r'\1',
@@ -3231,7 +3231,7 @@ class TestProxyQuery(unittest.TestCase, Utils):
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             import sqlite3
             db_path = mnfst.channels['/dev/input']['path']
             con = sqlite3.connect(db_path)
@@ -3596,7 +3596,7 @@ class TestProxyQuery(unittest.TestCase, Utils):
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             conf = [
                 {
                     'name': 'http',
@@ -3665,7 +3665,7 @@ class TestProxyQuery(unittest.TestCase, Utils):
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             conf = [
                 {
                     'name': 'http',
@@ -3723,7 +3723,7 @@ class TestProxyQuery(unittest.TestCase, Utils):
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             import urlparse
             qs = zvm_environ['QUERY_STRING']
             params = dict(urlparse.parse_qsl(qs, True))
@@ -3790,7 +3790,7 @@ class TestProxyQuery(unittest.TestCase, Utils):
         prolis = _test_sockets[0]
         prosrv = _test_servers[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             import urlparse
             qs = zvm_environ['QUERY_STRING']
             params = dict(urlparse.parse_qsl(qs, True))
@@ -4033,7 +4033,7 @@ class TestProxyQuery(unittest.TestCase, Utils):
         prosrv = _test_servers[0]
         prolis = _test_sockets[0]
         nexe = trim(r'''
-            from zerocloud.common import json
+            import json
             out = {
                 'data': sorted(id),
                 'env': zvm_environ
