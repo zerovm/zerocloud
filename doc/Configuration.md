@@ -190,3 +190,22 @@ The following configuration parameters need to be copied from
 - `replication_lock_timeout`
 - `threads_per_disk`
 - `disable_fallocate`
+
+### job chaining middleware
+
+Configuration file: `proxy-server.conf`
+
+    [filter:zerocloud-job-chain]
+    use = egg:zerocloud#job_chain
+
+The `zerocloud-proxy-query` filter should be added to the `pipeline` in the
+`[pipeline:main]` section. It should be inserted before the
+`zerocloud-proxy-query` filter.
+
+Other configuration strings (default value after equals sign):
+
+`zerovm_maxconfig = 65536`
+    - maximum length of the JSON job description in bytes, ex. max. size of
+      `boot/system.map` file
+`chain_timeout = 20`
+    - maximum time (seconds) to wait for a chained job to execute
