@@ -4,8 +4,12 @@
 
 Configuration file: `proxy-server.conf`
 
-    [filter:proxy-query]
+    [filter:zerocloud-proxy-query]
     use = egg:zerocloud#proxy_query
+
+The `zerocloud-proxy-query` filter should be added to the `pipeline` in the
+`[pipeline:main]` section. It should be inserted before the `proxy-server`
+filter.
 
 Other configuration strings (default value after equals sign):
 
@@ -93,10 +97,17 @@ See below.
 
 ### objectquery middleware
 
-Configuration file: `object-server.conf`
+Configuration file: `object-server.conf`, `container-server.conf`
 
-    [filter:object-query]
+    [filter:zerocloud-object-query]
     use = egg:zerocloud#object_query
+
+In `object-server.conf`, the `zerocloud-object-query` filter should be added to
+the `pipeline` in the `[pipeline:main]` section before the `object-server`
+filter.
+
+In `container-server.conf`, add `zerocloud-object-query` before
+`container-server` in the `pipeline`.
 
 Other configuration strings (default value after equals sign):
 
