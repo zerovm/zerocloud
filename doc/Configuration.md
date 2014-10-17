@@ -160,7 +160,7 @@ use global images for all users of the common software packages.
 
 `zerovm_threadpools = default = WaitPool(10,3); cluster = PriorityPool(10,100);`
     - thread pool configuration, you can check out the various thread pool
-      classes in [thread_pool.py](https://github.com/zerovm/zerocloud/blob/icehouse/zerocloud/thread_pool.py).
+      classes in [thread_pool.py](../zerocloud/thread_pool.py).
       The format is `name = PoolClass(.....); ....` you can add as many names
       and pool classes as you want. Right now only `default` and `cluster`
       pools are usable, `cluster` pool is used for clustered jobs and `default`
