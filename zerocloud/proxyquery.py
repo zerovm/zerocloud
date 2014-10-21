@@ -1289,6 +1289,10 @@ class ClusterController(ObjectController):
                                          environ=req.environ,
                                          headers=req.headers)
             exec_request.path_info = node.path_info
+            if 'zerovm.source' in req.environ:
+                exec_request.environ['zerovm.source'] = (
+                    req.environ['zerovm.source']
+                )
             exec_request.headers['x-zerovm-access'] = node.access
             exec_request.etag = None
             exec_request.content_type = TAR_MIMES[0]
@@ -1811,19 +1815,22 @@ class ClusterController(ObjectController):
         :raises: various HTTPException instances
         """
         container_info = {'meta': {}}
+        source_header = req.headers.get('X-Zerovm-Source')
         try:
             if 'swift.authorize' in req.environ:
                 version, account, container, obj = \
                     split_path(req.path, 2, 4, True)
+                if 'zerovm.source' in req.environ:
+                    container_info = req.environ['zerovm.source']
+                    source_header = container_info['meta'].get('rest-endpoint')
+
                 if container:
                     container_info = self.container_info(account, container)
-                elif 'zerovm.source' in req.environ:
-                    container_info = req.environ['zerovm.source']
+
                 if acl:
                     req.acl = container_info.get(acl)
                 aresp = req.environ['swift.authorize'](req)
                 if aresp and container_info:
-                    source_header = req.headers.get('X-Zerovm-Source')
                     setuid_acl = container_info['meta'].get('zerovm-suid')
                     endpoint = container_info['meta'].get('rest-endpoint')
                     if all((source_header, setuid_acl, endpoint)) \
