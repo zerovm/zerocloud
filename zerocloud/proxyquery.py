@@ -377,6 +377,19 @@ class ProxyQueryMiddleware(object):
         new_req.query_string = 'format=json'
         if marker:
             new_req.query_string += '&marker=' + marker
+
+        # We need to remove the authorize function here on this request in
+        # order to allow an "other" or "anonymous" user to be to allowed to
+        # run this container listing in some job. It is only removed from
+        # `new_req`.
+        # This should not allow the "other/anonymous" user to list the
+        # container directly; this will only be allowed within the context of
+        # execution under setuid permission. Any direct container listing from
+        # this user will result in a "401 Unauthorized" (from Swift) before we
+        # ever get here.
+        if 'swift.authorize' in new_req.environ:
+            del new_req.environ['swift.authorize']
+
         resp = ContainerController(self.app, account, container).GET(new_req)
         if resp.status_int == 204:
             data = resp.body
