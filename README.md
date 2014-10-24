@@ -3,7 +3,7 @@ ZeroVM middleware for Swift
 
 ZeroCloud is tested with Python 2.7.
 
-[![Build Status](http://ci.oslab.cc/job/zerocloud/badge/icon)](http://ci.oslab.cc/job/zerocloud/)
+[![Build Status](http://ci.zerovm.org/job/zerocloud-nightly/badge/icon)](http://ci.zerovm.org/job/zerocloud-nightly)
 
 * [Hacking on ZeroCloud](/doc/Hacking.md/)
 * [Configuring ZeroClound](/doc/Configuration.md/)
