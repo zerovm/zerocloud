@@ -361,7 +361,7 @@ class ClusterConfigParser(object):
                                 raise ClusterConfigParsingError(
                                     'Immediate response is not available '
                                     'for device %s' % chan.device)
-                            if node_count > 1:
+                            if node_count > 1 or read_group:
                                 for i in range(1, node_count + 1):
                                     new_node = self._get_or_create_node(
                                         zvm_node, index=i)
@@ -785,7 +785,7 @@ class ClusterConfigParser(object):
                     node.access = 'PUT'
                 else:
                     node.path_info = default_path_info
-            if not top_channel:
+            else:
                 node.path_info = default_path_info
             if node.replicate == 0:
                 node.replicate = 1
