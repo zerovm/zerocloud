@@ -4219,6 +4219,9 @@ class TestProxyQuery(unittest.TestCase, Utils):
 
 
 class TestAuthBase(unittest.TestCase, Utils):
+    """Base class for tests for authorization, involving the
+    ``X-Container-Meta-Zerovm-Suid`` container header.
+    """
 
     def setUp(self):
         self.setup_QUERY()
@@ -4756,6 +4759,8 @@ class TestAuthXSource(TestAuthBase):
 
 
 class TestAuthOpen(TestAuthBase):
+    """Authorization tests using the open/1.0 execution method.
+    """
 
     def test_open_owner(self):
         # test an open call to app by owner
@@ -4802,6 +4807,8 @@ class TestAuthOpen(TestAuthBase):
 
 
 class TestAuthApi(TestAuthBase):
+    """Authorization tests using the api/1.0 execution method.
+    """
 
     def test_api_anonymous(self):
         # test an api POST call to auth container by anonymous user with
