@@ -4789,7 +4789,6 @@ class TestAuthApi(TestAuthBase):
         # test an api POST call to auth container by anonymous user with
         # set-uid permission set allowing anonymous access
         self.remove_suid('/v1/a/auth')
-        self.remove_suid('/v1/a/auth1')
         self.set_suid('/v1/a/auth', 'swift://a/auth/myapp', '.r:*')
         conf = [
             {
