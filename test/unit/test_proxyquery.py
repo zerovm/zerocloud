@@ -4234,6 +4234,9 @@ class TestAuthBase(unittest.TestCase, Utils):
         self.zerovm_mock = None
         self.users = {'a': 'user', 'a1': 'user1'}
 
+        self.proxy_server = _test_servers[0]
+        self.remove_acls('/v1/a/auth')
+
     def tearDown(self):
         if self.zerovm_mock:
             os.unlink(self.zerovm_mock)
@@ -4289,7 +4292,6 @@ class TestAuthPostJson(TestAuthBase):
 
     def test_post_owner(self):
         # test owner posts json
-        prosrv = _test_servers[0]
         conf = [
             {
                 "name": "hello",
@@ -4302,10 +4304,10 @@ class TestAuthPostJson(TestAuthBase):
         conf = json.dumps(conf)
         req = self.zerovm_request(user=self.users['a'])
         req.body = conf
-        res = req.get_response(prosrv)
+        res = req.get_response(self.proxy_server)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, 'hello, world')
-        self.check_container_integrity(prosrv, '/v1/a/auth', {})
+        self.check_container_integrity(self.proxy_server, '/v1/a/auth', {})
         self.assertEqual(
             ['Allowed Owner to POST swift://a with 1.0',
              'Allowed Owner to GET swift://a/auth/hello.nexe with 1.0'],
@@ -4313,7 +4315,6 @@ class TestAuthPostJson(TestAuthBase):
 
     def test_post_other(self):
         # test other user posts json
-        prosrv = _test_servers[0]
         conf = [
             {
                 "name": "hello",
@@ -4326,7 +4327,7 @@ class TestAuthPostJson(TestAuthBase):
         conf = json.dumps(conf)
         req = self.zerovm_request(user=self.users['a1'])
         req.body = conf
-        res = req.get_response(prosrv)
+        res = req.get_response(self.proxy_server)
         self.assertEqual(res.status_int, 403)
         self.assertTrue(res.body is not None)
         self.assertEqual(len(self.actions), 1)
@@ -4336,7 +4337,6 @@ class TestAuthPostJson(TestAuthBase):
     def test_post_owner_read_other_with_perm(self):
         # test owner post json that reads object in another account,
         # and read permission is set
-        prosrv = _test_servers[0]
         conf = [
             {
                 "name": "hello",
@@ -4347,12 +4347,11 @@ class TestAuthPostJson(TestAuthBase):
             }
         ]
         conf = json.dumps(conf)
-        self.remove_acls('/v1/a/auth')
         self.set_acls('/v1/a/auth', read='user1')
         req = self.zerovm_request(user=self.users['a1'])
         req.path_info = '/v1/a1'
         req.body = conf
-        res = req.get_response(prosrv)
+        res = req.get_response(self.proxy_server)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, 'hello, world')
         self.assertEqual(
@@ -4363,7 +4362,6 @@ class TestAuthPostJson(TestAuthBase):
     def test_post_owner_read_other_no_perm(self):
         # test owner post json that reads object in another account,
         # and read permission is NOT set
-        prosrv = _test_servers[0]
         conf = [
             {
                 "name": "hello",
@@ -4374,11 +4372,10 @@ class TestAuthPostJson(TestAuthBase):
             }
         ]
         conf = json.dumps(conf)
-        self.remove_acls('/v1/a/auth')
         req = self.zerovm_request(user=self.users['a1'])
         req.path_info = '/v1/a1'
         req.body = conf
-        res = req.get_response(prosrv)
+        res = req.get_response(self.proxy_server)
         self.assertEqual(res.status_int, 403)
         self.assertTrue(res.body is not None)
         self.assertEqual(
@@ -4390,8 +4387,6 @@ class TestAuthPostJson(TestAuthBase):
         # test owner post json that reads object in another account,
         # and read permission is set, it also writes to another object, and
         # write permission is set
-        prosrv = _test_servers[0]
-        self.remove_acls('/v1/a/auth')
         self.set_acls('/v1/a/auth', read='user1', write='user1')
         conf = [
             {
@@ -4408,7 +4403,7 @@ class TestAuthPostJson(TestAuthBase):
         req = self.zerovm_request(user=self.users['a1'])
         req.path_info = '/v1/a1'
         req.body = conf
-        res = req.get_response(prosrv)
+        res = req.get_response(self.proxy_server)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, 'hello, world')
         self.assertEqual(
@@ -4421,8 +4416,6 @@ class TestAuthPostJson(TestAuthBase):
         # test owner post json that reads object in another account,
         # and read permission is set, it also writes to another object, and
         # write permission is NOT set
-        prosrv = _test_servers[0]
-        self.remove_acls('/v1/a/auth')
         self.set_acls('/v1/a/auth', read='user1')
         conf = [
             {
@@ -4439,7 +4432,7 @@ class TestAuthPostJson(TestAuthBase):
         req = self.zerovm_request(user=self.users['a1'])
         req.path_info = '/v1/a1'
         req.body = conf
-        res = req.get_response(prosrv)
+        res = req.get_response(self.proxy_server)
         self.assertEqual(res.status_int, 403)
         self.assertTrue(res.body is not None)
         self.assertEqual(
@@ -4451,8 +4444,6 @@ class TestAuthPostJson(TestAuthBase):
     def test_post_owner_read_local_read_write_remote(self):
         # test owner post json that reads object locally, another object
         # remotely and writes yet another object
-        prosrv = _test_servers[0]
-        self.remove_acls('/v1/a/auth')
         conf = [
             {
                 "name": "hello",
@@ -4468,7 +4459,7 @@ class TestAuthPostJson(TestAuthBase):
         conf = json.dumps(conf)
         req = self.zerovm_request(user=self.users['a'])
         req.body = conf
-        res = req.get_response(prosrv)
+        res = req.get_response(self.proxy_server)
         self.assertEqual(res.status_int, 200)
         self.assertEqual(res.body, 'hello, world')
         self.assertEqual(
@@ -4482,7 +4473,6 @@ class TestAuthPostJson(TestAuthBase):
         # test owner post json that reads object from other account locally,
         # reads another object from other account remotely and writes yet
         # another object from other account, and NO permissions are set
-        prosrv = _test_servers[0]
         conf = [
             {
                 "name": "hello",
@@ -4496,12 +4486,11 @@ class TestAuthPostJson(TestAuthBase):
             }
         ]
         conf = json.dumps(conf)
-        self.remove_acls('/v1/a/auth')
         self.set_acls('/v1/a/auth', read='user1', write='user1')
         req = self.zerovm_request(user=self.users['a1'])
         req.path_info = '/v1/a1'
         req.body = conf
-        res = req.get_response(prosrv)
+        res = req.get_response(self.proxy_server)
         self.assertEqual(res.status_int, 403)
         self.assertTrue(res.body is not None)
         self.assertEqual(
@@ -4514,8 +4503,6 @@ class TestAuthPostJson(TestAuthBase):
         # reads another object from other account remotely and writes yet
         # another object from other account, and permissions are set for
         # both read and write
-        prosrv = _test_servers[0]
-        self.remove_acls('/v1/a/auth')
         self.set_acls('/v1/a/auth', read='user1', write='user1')
         conf = [
             {
@@ -4534,7 +4521,7 @@ class TestAuthPostJson(TestAuthBase):
         req = self.zerovm_request(user=self.users['a1'])
         req.path_info = '/v1/a1'
         req.body = conf
-        res = req.get_response(prosrv)
+        res = req.get_response(self.proxy_server)
         self.assertEqual(res.status_int, 500)
         self.assertTrue(res.body is not None)
         self.assertEqual(
@@ -4550,8 +4537,6 @@ class TestAuthPostJson(TestAuthBase):
         # same object from other account remotely on other channel, although
         # the permissions are good the call will fail because it's not
         # a valid call (same object referenced twice in remote context)
-        prosrv = _test_servers[0]
-        self.remove_acls('/v1/a/auth')
         self.set_acls('/v1/a/auth', read='user1', write='user1')
         conf = [
             {
@@ -4571,7 +4556,7 @@ class TestAuthPostJson(TestAuthBase):
         req = self.zerovm_request(user=self.users['a1'])
         req.path_info = '/v1/a1'
         req.body = conf
-        res = req.get_response(prosrv)
+        res = req.get_response(self.proxy_server)
         self.assertEqual(res.status_int, 400)
         self.assertTrue(res.body is not None)
         self.assertEqual(
@@ -4586,8 +4571,6 @@ class TestAuthXSource(TestAuthBase):
     def test_x_source_with_setuid(self):
         # test an app called by other user from x-zerovm-source with set-uid
         # permission set
-        prosrv = _test_servers[0]
-        self.remove_acls('/v1/a/auth')
         self.set_suid('/v1/a/auth', 'swift://a/auth/myapp', 'user1')
         conf = [
             {
@@ -4614,7 +4597,7 @@ class TestAuthXSource(TestAuthBase):
             data = StringIO(random_data)
             req.body_file = data
             req.content_length = len(random_data)
-            res = req.get_response(prosrv)
+            res = req.get_response(self.proxy_server)
             self.assertEqual(res.status_int, 200)
             self.assertEqual(res.body, 'hello, world')
         self.assertEqual(
@@ -4631,7 +4614,6 @@ class TestAuthXSource(TestAuthBase):
     def test_x_source_with_read_setuid_and_no_write_setuid(self):
         # test an app called by other user from x-zerovm-source with set-uid
         # permission set and NO set-uid permission set on writeable channel
-        self.remove_acls('/v1/a/auth')
         self.set_suid('/v1/a/auth', 'swift://a/auth/myapp', 'user1')
         conf = [
             {
@@ -4645,7 +4627,6 @@ class TestAuthXSource(TestAuthBase):
             }
         ]
         conf = json.dumps(conf)
-        prosrv = _test_servers[0]
         prolis = _test_sockets[0]
         sysmap = StringIO(conf)
         with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
@@ -4659,7 +4640,7 @@ class TestAuthXSource(TestAuthBase):
             data = StringIO(random_data)
             req.body_file = data
             req.content_length = len(random_data)
-            res = req.get_response(prosrv)
+            res = req.get_response(self.proxy_server)
             self.assertEqual(res.status_int, 403)
             self.assertTrue(res.body is not None)
         self.assertEqual(
@@ -4675,7 +4656,6 @@ class TestAuthXSource(TestAuthBase):
     def test_x_source_with_read_setuid_and_write_setuid(self):
         # test an app called by other user from x-zerovm-source with set-uid
         # permission set and set-uid permission set on writeable channel
-        self.remove_acls('/v1/a/auth')
         self.set_suid('/v1/a/auth', 'swift://a/auth/myapp', 'user1')
         self.set_suid('/v1/a/auth1', 'swift://a/auth/myapp', 'user1')
         conf = [
@@ -4690,7 +4670,6 @@ class TestAuthXSource(TestAuthBase):
             }
         ]
         conf = json.dumps(conf)
-        prosrv = _test_servers[0]
         prolis = _test_sockets[0]
         sysmap = StringIO(conf)
         with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
@@ -4704,7 +4683,7 @@ class TestAuthXSource(TestAuthBase):
             data = StringIO(random_data)
             req.body_file = data
             req.content_length = len(random_data)
-            res = req.get_response(prosrv)
+            res = req.get_response(self.proxy_server)
             self.assertEqual(res.status_int, 200)
             self.assertEqual(res.body, 'hello, world')
         self.assertEqual(
@@ -4721,7 +4700,6 @@ class TestAuthXSource(TestAuthBase):
     def test_x_source_with_setuid_for_other_object(self):
         # test an app called by other user from x-zerovm-source with set-uid
         # permission set for different x-zerovm-source header
-        self.remove_acls('/v1/a/auth')
         self.remove_suid('/v1/a/auth1')
         self.set_suid('/v1/a/auth', 'swift://a/auth/myapp1', 'user1')
         conf = [
@@ -4736,7 +4714,6 @@ class TestAuthXSource(TestAuthBase):
             }
         ]
         conf = json.dumps(conf)
-        prosrv = _test_servers[0]
         prolis = _test_sockets[0]
         sysmap = StringIO(conf)
         with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
@@ -4750,7 +4727,7 @@ class TestAuthXSource(TestAuthBase):
             data = StringIO(random_data)
             req.body_file = data
             req.content_length = len(random_data)
-            res = req.get_response(prosrv)
+            res = req.get_response(self.proxy_server)
             self.assertEqual(res.status_int, 403)
             self.assertTrue(res.body is not None)
         self.assertEqual(
@@ -4764,7 +4741,6 @@ class TestAuthOpen(TestAuthBase):
 
     def test_open_owner(self):
         # test an open call to app by owner
-        self.remove_acls('/v1/a/auth')
         self.remove_suid('/v1/a/auth')
         self.remove_suid('/v1/a/auth1')
         conf = [
@@ -4778,7 +4754,6 @@ class TestAuthOpen(TestAuthBase):
             }
         ]
         conf = json.dumps(conf)
-        prosrv = _test_servers[0]
         prolis = _test_sockets[0]
         sysmap = StringIO(conf)
         with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
@@ -4794,7 +4769,7 @@ class TestAuthOpen(TestAuthBase):
             data = StringIO(random_data)
             req.body_file = data
             req.content_length = len(random_data)
-            res = req.get_response(prosrv)
+            res = req.get_response(self.proxy_server)
             self.assertEqual(res.status_int, 200)
             self.assertEqual(res.body, 'hello, world')
             self.assertEqual(
@@ -4813,7 +4788,6 @@ class TestAuthApi(TestAuthBase):
     def test_api_anonymous(self):
         # test an api POST call to auth container by anonymous user with
         # set-uid permission set allowing anonymous access
-        self.remove_acls('/v1/a/auth')
         self.remove_suid('/v1/a/auth')
         self.remove_suid('/v1/a/auth1')
         self.set_suid('/v1/a/auth', 'swift://a/auth/myapp', '.r:*')
@@ -4828,7 +4802,6 @@ class TestAuthApi(TestAuthBase):
             }
         ]
         conf = json.dumps(conf)
-        prosrv = _test_servers[0]
         prolis = _test_sockets[0]
         sysmap = StringIO(conf)
         with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
@@ -4844,7 +4817,7 @@ class TestAuthApi(TestAuthBase):
             data = StringIO(random_data)
             req.body_file = data
             req.content_length = len(random_data)
-            res = req.get_response(prosrv)
+            res = req.get_response(self.proxy_server)
             self.assertEqual(res.status_int, 200)
             self.assertEqual(res.body, 'hello, world')
             self.assertEqual(
