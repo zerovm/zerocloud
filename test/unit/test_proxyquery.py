@@ -4218,7 +4218,7 @@ class TestProxyQuery(unittest.TestCase, Utils):
             self.check_container_integrity(prosrv, '/v1/a/c', {})
 
 
-class TestAuth(unittest.TestCase, Utils):
+class TestAuthBase(unittest.TestCase, Utils):
 
     def setUp(self):
         self.setup_QUERY()
@@ -4280,6 +4280,9 @@ class TestAuth(unittest.TestCase, Utils):
         req.environ['swift_owner'] = True
         res = req.get_response(_test_servers[0])
         self.assertEqual(res.status_int, 204)
+
+
+class TestAuthPostJson(TestAuthBase):
 
     def test_post_owner(self):
         # test owner posts json
@@ -4380,37 +4383,6 @@ class TestAuth(unittest.TestCase, Utils):
              'Denied user1 to GET swift://a/auth/hello.nexe with 1.0'],
             self.actions)
 
-    def test_post_owner_read_write_other_no_perm(self):
-        # test owner post json that reads object in another account,
-        # and read permission is set, it also writes to another object, and
-        # write permission is NOT set
-        prosrv = _test_servers[0]
-        self.remove_acls('/v1/a/auth')
-        self.set_acls('/v1/a/auth', read='user1')
-        conf = [
-            {
-                "name": "hello",
-                "exec": {"path": "swift://a/auth/hello.nexe"},
-                "file_list": [
-                    {"device": "stdout"},
-                    {"device": "stderr",
-                     "path": "swift://a/auth/hello.log"}
-                ]
-            }
-        ]
-        conf = json.dumps(conf)
-        req = self.zerovm_request(user=self.users['a1'])
-        req.path_info = '/v1/a1'
-        req.body = conf
-        res = req.get_response(prosrv)
-        self.assertEqual(res.status_int, 403)
-        self.assertTrue(res.body is not None)
-        self.assertEqual(
-            ['Allowed Owner to POST swift://a1 with 1.0',
-             'Allowed user1 to GET swift://a/auth/hello.nexe with 1.0',
-             'Denied user1 to PUT swift://a/auth/hello.log with 1.0'],
-            self.actions)
-
     def test_post_owner_read_write_other_with_perm(self):
         # test owner post json that reads object in another account,
         # and read permission is set, it also writes to another object, and
@@ -4440,6 +4412,37 @@ class TestAuth(unittest.TestCase, Utils):
             ['Allowed Owner to POST swift://a1 with 1.0',
              'Allowed user1 to GET swift://a/auth/hello.nexe with 1.0',
              'Allowed user1 to PUT swift://a/auth/hello.log with 1.0'],
+            self.actions)
+
+    def test_post_owner_read_write_other_no_perm(self):
+        # test owner post json that reads object in another account,
+        # and read permission is set, it also writes to another object, and
+        # write permission is NOT set
+        prosrv = _test_servers[0]
+        self.remove_acls('/v1/a/auth')
+        self.set_acls('/v1/a/auth', read='user1')
+        conf = [
+            {
+                "name": "hello",
+                "exec": {"path": "swift://a/auth/hello.nexe"},
+                "file_list": [
+                    {"device": "stdout"},
+                    {"device": "stderr",
+                     "path": "swift://a/auth/hello.log"}
+                ]
+            }
+        ]
+        conf = json.dumps(conf)
+        req = self.zerovm_request(user=self.users['a1'])
+        req.path_info = '/v1/a1'
+        req.body = conf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 403)
+        self.assertTrue(res.body is not None)
+        self.assertEqual(
+            ['Allowed Owner to POST swift://a1 with 1.0',
+             'Allowed user1 to GET swift://a/auth/hello.nexe with 1.0',
+             'Denied user1 to PUT swift://a/auth/hello.log with 1.0'],
             self.actions)
 
     def test_post_owner_read_local_read_write_remote(self):
@@ -4573,6 +4576,9 @@ class TestAuth(unittest.TestCase, Utils):
              'Allowed user1 to POST swift://a/auth/hello.log with 1.0',
              'Allowed user1 to GET swift://a/auth/hello.nexe with 1.0'],
             self.actions)
+
+
+class TestAuthXSource(TestAuthBase):
 
     def test_x_source_with_setuid(self):
         # test an app called by other user from x-zerovm-source with set-uid
@@ -4748,6 +4754,9 @@ class TestAuth(unittest.TestCase, Utils):
             ['Denied user1 to GET swift://a/auth/myapp with v1'],
             self.actions)
 
+
+class TestAuthOpen(TestAuthBase):
+
     def test_open_owner(self):
         # test an open call to app by owner
         self.remove_acls('/v1/a/auth')
@@ -4790,6 +4799,9 @@ class TestAuth(unittest.TestCase, Utils):
                  'Allowed Owner to GET swift://a/auth/hello.nexe with '
                  'open/1.0'],
                 self.actions)
+
+
+class TestAuthApi(TestAuthBase):
 
     def test_api_anonymous(self):
         # test an api POST call to auth container by anonymous user with
