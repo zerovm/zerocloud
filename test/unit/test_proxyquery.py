@@ -4225,11 +4225,11 @@ class TestAuthBase(unittest.TestCase, Utils):
 
     def setUp(self):
         self.setup_QUERY()
-        prolis = _test_sockets[0]
+        self.prolis = _test_sockets[0]
         nexe = trim(r'''
             return 'hello, world'
             ''')
-        self.create_object(prolis, '/v1/a/auth/hello.nexe', nexe)
+        self.create_object(self.prolis, '/v1/a/auth/hello.nexe', nexe)
         self.actions = []
         self.zerovm_mock = None
         self.users = {'a': 'user', 'a1': 'user1'}
@@ -4260,19 +4260,34 @@ class TestAuthBase(unittest.TestCase, Utils):
                             environ={'REQUEST_METHOD': 'POST'},
                             headers=headers)
         req.environ['swift_owner'] = True
-        res = req.get_response(_test_servers[0])
+        res = req.get_response(self.proxy_server)
         self.assertEqual(res.status_int, 204)
 
-    def set_suid(self, url, endpoint, acl):
+    def set_suid(self, container, suid):
         headers = {
-            'X-Container-Meta-Rest-Endpoint': endpoint,
-            'X-Container-Meta-Zerovm-Suid': acl
+            'X-Container-Meta-Zerovm-Suid': suid
         }
-        req = Request.blank(url,
+        req = Request.blank(container,
                             environ={'REQUEST_METHOD': 'POST'},
                             headers=headers)
         req.environ['swift_owner'] = True
-        res = req.get_response(_test_servers[0])
+        res = req.get_response(self.proxy_server)
+        self.assertEqual(res.status_int, 204)
+
+    def set_endpoint(self, container, endpoint, suid=None):
+        # Typically, `Zerovm-Suid` must be set in conjunction with
+        # `Rest-Endpoint`. So we can set both at the same time.
+        headers = {
+            'X-Container-Meta-Rest-Endpoint': endpoint,
+        }
+        if suid is not None:
+            headers['X-Container-Meta-Zerovm-Suid'] = suid
+
+        req = Request.blank(container,
+                            environ={'REQUEST_METHOD': 'POST'},
+                            headers=headers)
+        req.environ['swift_owner'] = True
+        res = req.get_response(self.proxy_server)
         self.assertEqual(res.status_int, 204)
 
     def remove_suid(self, url):
@@ -4284,7 +4299,7 @@ class TestAuthBase(unittest.TestCase, Utils):
                             environ={'REQUEST_METHOD': 'POST'},
                             headers=headers)
         req.environ['swift_owner'] = True
-        res = req.get_response(_test_servers[0])
+        res = req.get_response(self.proxy_server)
         self.assertEqual(res.status_int, 204)
 
 
@@ -4571,7 +4586,7 @@ class TestAuthXSource(TestAuthBase):
     def test_x_source_with_setuid(self):
         # test an app called by other user from x-zerovm-source with set-uid
         # permission set
-        self.set_suid('/v1/a/auth', 'swift://a/auth/myapp', 'user1')
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid='user1')
         conf = [
             {
                 'name': 'sort',
@@ -4584,10 +4599,9 @@ class TestAuthXSource(TestAuthBase):
             }
         ]
         conf = json.dumps(conf)
-        prolis = _test_sockets[0]
         sysmap = StringIO(conf)
         with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
-            self.create_object(prolis, '/v1/a/auth/myapp',
+            self.create_object(self.prolis, '/v1/a/auth/myapp',
                                open(tar, 'rb').read(),
                                content_type='application/x-tar')
             req = self.zerovm_request(user=self.users['a1'])
@@ -4614,7 +4628,7 @@ class TestAuthXSource(TestAuthBase):
     def test_x_source_with_read_setuid_and_no_write_setuid(self):
         # test an app called by other user from x-zerovm-source with set-uid
         # permission set and NO set-uid permission set on writeable channel
-        self.set_suid('/v1/a/auth', 'swift://a/auth/myapp', 'user1')
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid='user1')
         conf = [
             {
                 'name': 'sort',
@@ -4627,10 +4641,9 @@ class TestAuthXSource(TestAuthBase):
             }
         ]
         conf = json.dumps(conf)
-        prolis = _test_sockets[0]
         sysmap = StringIO(conf)
         with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
-            self.create_object(prolis, '/v1/a/auth/myapp',
+            self.create_object(self.prolis, '/v1/a/auth/myapp',
                                open(tar, 'rb').read(),
                                content_type='application/x-tar')
             req = self.zerovm_request(user=self.users['a1'])
@@ -4656,8 +4669,8 @@ class TestAuthXSource(TestAuthBase):
     def test_x_source_with_read_setuid_and_write_setuid(self):
         # test an app called by other user from x-zerovm-source with set-uid
         # permission set and set-uid permission set on writeable channel
-        self.set_suid('/v1/a/auth', 'swift://a/auth/myapp', 'user1')
-        self.set_suid('/v1/a/auth1', 'swift://a/auth/myapp', 'user1')
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid='user1')
+        self.set_endpoint('/v1/a/auth1', 'swift://a/auth/myapp', suid='user1')
         conf = [
             {
                 'name': 'sort',
@@ -4670,10 +4683,9 @@ class TestAuthXSource(TestAuthBase):
             }
         ]
         conf = json.dumps(conf)
-        prolis = _test_sockets[0]
         sysmap = StringIO(conf)
         with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
-            self.create_object(prolis, '/v1/a/auth/myapp',
+            self.create_object(self.prolis, '/v1/a/auth/myapp',
                                open(tar, 'rb').read(),
                                content_type='application/x-tar')
             req = self.zerovm_request(user=self.users['a1'])
@@ -4701,7 +4713,7 @@ class TestAuthXSource(TestAuthBase):
         # test an app called by other user from x-zerovm-source with set-uid
         # permission set for different x-zerovm-source header
         self.remove_suid('/v1/a/auth1')
-        self.set_suid('/v1/a/auth', 'swift://a/auth/myapp1', 'user1')
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp1', suid='user1')
         conf = [
             {
                 'name': 'sort',
@@ -4714,10 +4726,9 @@ class TestAuthXSource(TestAuthBase):
             }
         ]
         conf = json.dumps(conf)
-        prolis = _test_sockets[0]
         sysmap = StringIO(conf)
         with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
-            self.create_object(prolis, '/v1/a/auth/myapp',
+            self.create_object(self.prolis, '/v1/a/auth/myapp',
                                open(tar, 'rb').read(),
                                content_type='application/x-tar')
             req = self.zerovm_request(user=self.users['a1'])
@@ -4754,10 +4765,9 @@ class TestAuthOpen(TestAuthBase):
             }
         ]
         conf = json.dumps(conf)
-        prolis = _test_sockets[0]
         sysmap = StringIO(conf)
         with self.create_tar({CLUSTER_CONFIG_FILENAME: sysmap}) as tar:
-            self.create_object(prolis, '/v1/a/c/myapp',
+            self.create_object(self.prolis, '/v1/a/c/myapp',
                                open(tar, 'rb').read(),
                                content_type='application/x-tar')
             req = Request.blank('/open/a/c/myapp',
