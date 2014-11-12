@@ -4829,7 +4829,7 @@ class TestAuthApi(TestAuthBase):
         self.req.content_length = len(random_data)
 
         self.create_container(self.prolis, '/v1/a/test')
-
+        self.create_container(self.prolis, '/v1/a/test2')
         self.request_user = None
 
     def _get_response(self):
@@ -4843,8 +4843,10 @@ class TestAuthApi(TestAuthBase):
         super(TestAuthApi, self).tearDown()
         self.remove_acls('/v1/a/auth')
         self.remove_acls('/v1/a/test')
+        self.remove_acls('/v1/a/test2')
         self.remove_suid('/v1/a/auth')
         self.remove_suid('/v1/a/test')
+        self.remove_suid('/v1/a/test2')
 
     def assertActionsEqual(self, expected, actual):
         expected = [x % dict(ru=self.request_user) for x in expected]
@@ -5069,9 +5071,10 @@ class TestAuthApiCallByOwner(TestAuthApi):
         self.request_user = 'user'
 
     def test_api_call_by_owner(self):
-        # Test an api call to `auth` container by
-        # the user who owns it.
+        # Test an api call to `auth` container by the user who owns it.
         # No setuid permission is required for this to be allowed.
+        # An authenticated user can do anything with their own containers,
+        # applications, and objects.
         self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid='')
 
         res = self._get_response()
@@ -5089,6 +5092,381 @@ class TestAuthApiCallByOwner(TestAuthApi):
             'with api/1.0'
         ]
         self.assertEqual(expected_actions, self.actions)
+
+
+class ApiAuthChainTestsMixin:
+    """Template mixin containing api/1.0 auth test procedures, which include
+    job chaining.
+
+    Subclasses should inherit from TestAuthApi and this, then set
+    `self.request_user` and `self.suid` in `setUp()`.
+    """
+
+    def _setup_chain_test(self, extra_devices=None):
+        self.create_container(self.prolis, '/v1/a/auth')
+        self.create_container(self.prolis, '/v1/a/test')
+        self.create_container(self.prolis, '/v1/a/test2')
+
+        if extra_devices is None:
+            extra_devices = []
+
+        nexe2_conf = [
+            {
+                'name': 'http',
+                'exec': {'path': 'swift://a/test/nexe2'},
+                'file_list': [
+                    {
+                        'device': 'stdout',
+                        'content_type': 'message/http',
+                    },
+                ]
+            }
+        ]
+        for ed in extra_devices:
+            nexe2_conf[0]['file_list'].append(ed)
+
+        chainer_nexe = trim(r'''
+            import json
+            conf = %(nexe2_conf)s
+            out = json.dumps(conf)
+            resp = '\n'.join([
+                'HTTP/1.1 200 OK',
+                'Content-Type: application/json',
+                'X-Zerovm-Execute: 1.0',
+                '', ''
+                ])
+            return resp + out
+            ''' % dict(nexe2_conf=json.dumps(nexe2_conf)))
+        self.create_object(self.prolis, '/v1/a/auth/chainer', chainer_nexe)
+        nexe2 = trim(r'''
+            resp = '\n'.join([
+                'HTTP/1.1 200 OK',
+                'Content-Type: text/html',
+                'X-Object-Meta-Key1: value1',
+                'X-Object-Meta-Key2: value2',
+                '', ''
+                ])
+            out = '<html><body>Test this</body></html>'
+            return resp + out
+            ''')
+        self.create_object(self.prolis, '/v1/a/test/nexe2', nexe2)
+        self.sysmap = StringIO(json.dumps([
+            {
+                'name': 'http',
+                'exec': {'path': 'swift://a/auth/chainer'},
+                'file_list': [
+                    {
+                        'device': 'stdout',
+                        'content_type': 'message/http'
+                    }
+                ]
+            }
+        ]))
+        with self.create_tar({CLUSTER_CONFIG_FILENAME: self.sysmap}) as tar:
+            self.create_object(self.prolis, '/v1/a/auth/myapp',
+                               open(tar, 'rb').read(),
+                               content_type='application/x-tar')
+
+        # Set up the client request
+        random_data = self.get_random_numbers()
+        data = StringIO(random_data)
+        # NOTE(larsbutler): The method doesn't really matter.
+        method = 'DELETE'
+        self.req = Request.blank(
+            '/api/a/auth',
+            environ={'REQUEST_METHOD': method},
+            headers={'Content-Type': 'application/x-pickle'}
+        )
+        self.req.body_file = data
+        self.req.content_length = len(random_data)
+
+    def test_execute(self):
+        self._setup_chain_test()
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_endpoint('/v1/a/test', 'swift://a/auth/myapp', suid=self.suid)
+
+        res = self._get_response()
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, '<html><body>Test this</body></html>')
+        expected_actions = [
+            'Denied %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/myapp with v1',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with v1',
+            'Denied %(ru)s to POST swift://a/auth with api/1.0',
+            'Allowed %(ru)s to POST swift://a/auth with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Denied %(ru)s to POST swift://a with 1.0',
+            'Allowed %(ru)s to POST swift://a with 1.0',
+            'Denied %(ru)s to GET swift://a/test/nexe2 with 1.0',
+            'Allowed %(ru)s to GET swift://a/test/nexe2 with 1.0',
+        ]
+        self.assertActionsEqual(expected_actions, self.actions)
+
+    def test_execute_no_perm(self):
+        self._setup_chain_test()
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid=self.suid)
+        # don't grant suid on `test` container, where `nexe2` resides
+        self.set_endpoint('/v1/a/test', 'swift://a/auth/myapp')
+
+        res = self._get_response()
+        self.assertEqual(res.status_int, 403)
+        expected_actions = [
+            'Denied %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/myapp with v1',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with v1',
+            'Denied %(ru)s to POST swift://a/auth with api/1.0',
+            'Allowed %(ru)s to POST swift://a/auth with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Denied %(ru)s to POST swift://a with 1.0',
+            'Allowed %(ru)s to POST swift://a with 1.0',
+            'Denied %(ru)s to GET swift://a/test/nexe2 with 1.0',
+        ]
+        self.assertActionsEqual(expected_actions, self.actions)
+
+    def test_execute_read_other_object(self):
+        # the chain-called `nexe2` reads from an object in a third container
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_endpoint('/v1/a/test', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_endpoint('/v1/a/test2', 'swift://a/auth/myapp',
+                          suid=self.suid)
+        self.create_object(self.prolis, '/v1/a/test2/baz.txt', 'baz')
+
+        self._setup_chain_test(extra_devices=[
+            {'name': 'input', 'path': 'swift://a/test2/baz.txt'},
+        ])
+
+        res = self._get_response()
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, '<html><body>Test this</body></html>')
+        expected_actions = [
+            'Denied %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/myapp with v1',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with v1',
+            'Denied %(ru)s to POST swift://a/auth with api/1.0',
+            'Allowed %(ru)s to POST swift://a/auth with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Denied %(ru)s to POST swift://a with 1.0',
+            'Allowed %(ru)s to POST swift://a with 1.0',
+            'Denied %(ru)s to POST swift://a/test2/baz.txt with 1.0',
+            'Allowed %(ru)s to POST swift://a/test2/baz.txt with 1.0',
+            'Denied %(ru)s to GET swift://a/test/nexe2 with 1.0',
+            'Allowed %(ru)s to GET swift://a/test/nexe2 with 1.0'
+        ]
+        self.assertActionsEqual(expected_actions, self.actions)
+
+    def test_execute_read_other_object_no_perm_1(self):
+        # neither endpoint nor suid is set on the test file read by the
+        # chain-called `nexe2`
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_endpoint('/v1/a/test', 'swift://a/auth/myapp', suid=self.suid)
+        self.create_object(self.prolis, '/v1/a/test2/baz.txt', 'baz')
+
+        self._setup_chain_test(extra_devices=[
+            {'name': 'input', 'path': 'swift://a/test2/baz.txt'},
+        ])
+
+        res = self._get_response()
+        self.assertEqual(res.status_int, 403)
+        expected_actions = [
+            'Denied %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/myapp with v1',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with v1',
+            'Denied %(ru)s to POST swift://a/auth with api/1.0',
+            'Allowed %(ru)s to POST swift://a/auth with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Denied %(ru)s to POST swift://a with 1.0',
+            'Allowed %(ru)s to POST swift://a with 1.0',
+            'Denied %(ru)s to POST swift://a/test2/baz.txt with 1.0',
+        ]
+        self.assertActionsEqual(expected_actions, self.actions)
+
+
+    def test_execute_read_other_object_no_perm_2(self):
+        # suid is set on the test file read by the chain-called nexe2,
+        # but no endpoint is set
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_endpoint('/v1/a/test', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_suid('/v1/a/test2', self.suid)
+        self.create_object(self.prolis, '/v1/a/test2/baz.txt', 'baz')
+
+        self._setup_chain_test(extra_devices=[
+            {'name': 'input', 'path': 'swift://a/test2/baz.txt'},
+        ])
+
+        res = self._get_response()
+        self.assertEqual(res.status_int, 403)
+        expected_actions = [
+            'Denied %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/myapp with v1',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with v1',
+            'Denied %(ru)s to POST swift://a/auth with api/1.0',
+            'Allowed %(ru)s to POST swift://a/auth with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Denied %(ru)s to POST swift://a with 1.0',
+            'Allowed %(ru)s to POST swift://a with 1.0',
+            'Denied %(ru)s to POST swift://a/test2/baz.txt with 1.0',
+        ]
+        self.assertActionsEqual(expected_actions, self.actions)
+
+    def test_execute_read_other_object_no_perm_3(self):
+        # endpoint is set on the test file read by the chain-called nexe2,
+        # but no suid is set
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_endpoint('/v1/a/test', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_endpoint('/v1/a/test2', 'swift://a/auth/myapp', suid='')
+        self.create_object(self.prolis, '/v1/a/test2/baz.txt', 'baz')
+
+        self._setup_chain_test(extra_devices=[
+            {'name': 'input', 'path': 'swift://a/test2/baz.txt'},
+        ])
+
+        res = self._get_response()
+        self.assertEqual(res.status_int, 403)
+        expected_actions = [
+            'Denied %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/myapp with v1',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with v1',
+            'Denied %(ru)s to POST swift://a/auth with api/1.0',
+            'Allowed %(ru)s to POST swift://a/auth with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Denied %(ru)s to POST swift://a with 1.0',
+            'Allowed %(ru)s to POST swift://a with 1.0',
+            'Denied %(ru)s to POST swift://a/test2/baz.txt with 1.0',
+        ]
+        self.assertActionsEqual(expected_actions, self.actions)
+
+    def test_execute_write_other_object(self):
+        # the chain-called `nexe2` writes to an object in a third container
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_endpoint('/v1/a/test', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_endpoint('/v1/a/test2', 'swift://a/auth/myapp',
+                          suid=self.suid)
+
+        self._setup_chain_test(extra_devices=[
+            {'name': 'output', 'path': 'swift://a/test2/baz.txt'},
+        ])
+
+        res = self._get_response()
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.body, '<html><body>Test this</body></html>')
+        expected_actions = [
+            'Denied %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/myapp with v1',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with v1',
+            'Denied %(ru)s to POST swift://a/auth with api/1.0',
+            'Allowed %(ru)s to POST swift://a/auth with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Denied %(ru)s to POST swift://a with 1.0',
+            'Allowed %(ru)s to POST swift://a with 1.0',
+            'Denied %(ru)s to GET swift://a/test/nexe2 with 1.0',
+            'Allowed %(ru)s to GET swift://a/test/nexe2 with 1.0',
+            'Denied %(ru)s to PUT swift://a/test2/baz.txt with 1.0',
+            'Allowed %(ru)s to PUT swift://a/test2/baz.txt with 1.0',
+        ]
+        self.assertActionsEqual(expected_actions, self.actions)
+
+    def test_execute_write_other_object_no_perm_1(self):
+        # neither endpoint nor suid is set on the test file read by the
+        # chain-called `nexe2`
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_endpoint('/v1/a/test', 'swift://a/auth/myapp', suid=self.suid)
+
+        self._setup_chain_test(extra_devices=[
+            {'name': 'output', 'path': 'swift://a/test2/baz.txt'},
+        ])
+
+        res = self._get_response()
+        self.assertEqual(res.status_int, 403)
+        expected_actions = [
+            'Denied %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/myapp with v1',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with v1',
+            'Denied %(ru)s to POST swift://a/auth with api/1.0',
+            'Allowed %(ru)s to POST swift://a/auth with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Denied %(ru)s to POST swift://a with 1.0',
+            'Allowed %(ru)s to POST swift://a with 1.0',
+            'Denied %(ru)s to GET swift://a/test/nexe2 with 1.0',
+            'Allowed %(ru)s to GET swift://a/test/nexe2 with 1.0',
+            'Denied %(ru)s to PUT swift://a/test2/baz.txt with 1.0',
+        ]
+        self.assertActionsEqual(expected_actions, self.actions)
+
+    def test_execute_write_other_object_no_perm_2(self):
+        # suid is set on the test file read by the chain-called nexe2,
+        # but no endpoint is set
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_endpoint('/v1/a/test', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_suid('/v1/a/test2', self.suid)
+
+        self._setup_chain_test(extra_devices=[
+            {'name': 'output', 'path': 'swift://a/test2/baz.txt'},
+        ])
+
+        res = self._get_response()
+        self.assertEqual(res.status_int, 403)
+        expected_actions = [
+            'Denied %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/myapp with v1',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with v1',
+            'Denied %(ru)s to POST swift://a/auth with api/1.0',
+            'Allowed %(ru)s to POST swift://a/auth with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Denied %(ru)s to POST swift://a with 1.0',
+            'Allowed %(ru)s to POST swift://a with 1.0',
+            'Denied %(ru)s to GET swift://a/test/nexe2 with 1.0',
+            'Allowed %(ru)s to GET swift://a/test/nexe2 with 1.0',
+            'Denied %(ru)s to PUT swift://a/test2/baz.txt with 1.0',
+        ]
+        self.assertActionsEqual(expected_actions, self.actions)
+
+    def test_execute_write_other_object_no_perm_3(self):
+        # endpoint is set on the test file read by the chain-called nexe2,
+        # but no suid is set
+        self.set_endpoint('/v1/a/auth', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_endpoint('/v1/a/test', 'swift://a/auth/myapp', suid=self.suid)
+        self.set_endpoint('/v1/a/test2', 'swift://a/auth/myapp', suid='')
+
+        self._setup_chain_test(extra_devices=[
+            {'name': 'output', 'path': 'swift://a/test2/baz.txt'},
+        ])
+
+        res = self._get_response()
+        self.assertEqual(res.status_int, 403)
+        expected_actions = [
+            'Denied %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/myapp with v1',
+            'Allowed %(ru)s to GET swift://a/auth/myapp with v1',
+            'Denied %(ru)s to POST swift://a/auth with api/1.0',
+            'Allowed %(ru)s to POST swift://a/auth with api/1.0',
+            'Denied %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Allowed %(ru)s to GET swift://a/auth/chainer with api/1.0',
+            'Denied %(ru)s to POST swift://a with 1.0',
+            'Allowed %(ru)s to POST swift://a with 1.0',
+            'Denied %(ru)s to GET swift://a/test/nexe2 with 1.0',
+            'Allowed %(ru)s to GET swift://a/test/nexe2 with 1.0',
+            'Denied %(ru)s to PUT swift://a/test2/baz.txt with 1.0',
+        ]
+        self.assertActionsEqual(expected_actions, self.actions)
 
 
 class TestAuthApiCallByOther(TestAuthApi, ApiAuthTestsMixin):
@@ -5112,5 +5490,20 @@ class TestAuthApiCallByAnonymous(TestAuthApi, ApiAuthTestsMixin):
     def setUp(self):
         super(TestAuthApiCallByAnonymous, self).setUp()
         self.create_container(self.prolis, '/v1/a/test')
+        self.request_user = 'Anonymous'
+        self.suid = '.r:*'
+
+
+class TestAuthApiChainCallByOther(TestAuthApi, ApiAuthChainTestsMixin):
+
+    def setUp(self):
+        super(TestAuthApiChainCallByOther, self).setUp()
+        self.request_user = 'user1'
+        self.suid = 'user1'
+
+class TestAuthApiChainCallByAnonymous(TestAuthApi, ApiAuthChainTestsMixin):
+
+    def setUp(self):
+        super(TestAuthApiChainCallByAnonymous, self).setUp()
         self.request_user = 'Anonymous'
         self.suid = '.r:*'
