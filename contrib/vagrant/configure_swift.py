@@ -65,7 +65,7 @@ if __name__ == '__main__':
     # basic ZeroVM object server config
     config_add_filter(
         cp,
-        'object-query',
+        'zerocloud-object-query',
         'object_query',
         'object-server',
         extras={
@@ -83,7 +83,7 @@ if __name__ == '__main__':
     # basic ZeroVM proxy server config
     config_add_filter(
         cp,
-        'proxy-query',
+        'zerocloud-proxy-query',
         'proxy_query',
         'proxy-server',
         extras={
@@ -95,9 +95,9 @@ if __name__ == '__main__':
     # proxy server job chaining middleware
     config_add_filter(
         cp,
-        'job-chain',
+        'zerocloud-job-chain',
         'job_chain',
-        'proxy-query',
+        'zerocloud-proxy-query',
         extras={'set log_name': 'zerocloud-job-chain'}
     )
     # install swauth
@@ -127,7 +127,7 @@ if __name__ == '__main__':
     cp.read(cont_server)
     config_add_filter(
         cp,
-        'object-query',
+        'zerocloud-object-query',
         'object_query',
         'container-server',
         extras={
