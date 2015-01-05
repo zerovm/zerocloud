@@ -13,7 +13,7 @@ wget -O- https://deb.nodesource.com/gpgkey/nodesource.gpg.key \
     | sudo apt-key add -
 
 sudo apt-get update
-sudo apt-get install git python-pip zerovm --yes --force-yes
+sudo apt-get install git python-pip zerovm python-dev --yes --force-yes
 sudo pip install python-swiftclient==2.2.0
 sudo pip install python-keystoneclient
 
