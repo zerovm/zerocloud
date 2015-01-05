@@ -62,7 +62,6 @@ enable_service mysql s-proxy s-object s-container s-account
 # breaks ZeroCloud, completely and utterly.
 # The previous commit works:
 SWIFT_BRANCH=ca915156fb2ce4fe4356f54fb2cee7bd01185af5
-KEYSTONE_BRANCH=2fc25ff9bb2480d04acae60c24079324d4abe3b0
 EOF
 
 # Post-config hook for configuring zerocloud (and swauth) middleware
