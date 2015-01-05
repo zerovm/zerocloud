@@ -13,7 +13,7 @@ wget -O- https://deb.nodesource.com/gpgkey/nodesource.gpg.key \
     | sudo apt-key add -
 
 sudo apt-get update
-sudo apt-get install git python-pip zerovm --yes --force-yes
+sudo apt-get install git python-pip zerovm python-dev --yes --force-yes
 sudo pip install python-swiftclient==2.2.0
 sudo pip install python-keystoneclient
 
@@ -58,11 +58,8 @@ ADMIN_PASSWORD=admin
 HOST_IP=127.0.0.1
 disable_all_services
 enable_service mysql s-proxy s-object s-container s-account
-# Commit 034fae630cfd652093ef53164a7f9f43bde67336 in Swift
-# breaks ZeroCloud, completely and utterly.
-# The previous commit works:
-SWIFT_BRANCH=ca915156fb2ce4fe4356f54fb2cee7bd01185af5
-KEYSTONE_BRANCH=2fc25ff9bb2480d04acae60c24079324d4abe3b0
+# Pin Swift to version 2.2.0:
+SWIFT_BRANCH=2e8261a4dc0d0af0c4a46478b81e167bcf02220b
 EOF
 
 # Post-config hook for configuring zerocloud (and swauth) middleware
