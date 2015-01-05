@@ -5288,7 +5288,6 @@ class ApiAuthChainTestsMixin:
         ]
         self.assertActionsEqual(expected_actions, self.actions)
 
-
     def test_execute_read_other_object_no_perm_2(self):
         # suid is set on the test file read by the chain-called nexe2,
         # but no endpoint is set
@@ -5500,6 +5499,7 @@ class TestAuthApiChainCallByOther(TestAuthApi, ApiAuthChainTestsMixin):
         super(TestAuthApiChainCallByOther, self).setUp()
         self.request_user = 'user1'
         self.suid = 'user1'
+
 
 class TestAuthApiChainCallByAnonymous(TestAuthApi, ApiAuthChainTestsMixin):
 
