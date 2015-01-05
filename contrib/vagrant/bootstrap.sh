@@ -58,10 +58,8 @@ ADMIN_PASSWORD=admin
 HOST_IP=127.0.0.1
 disable_all_services
 enable_service mysql s-proxy s-object s-container s-account
-# Commit 034fae630cfd652093ef53164a7f9f43bde67336 in Swift
-# breaks ZeroCloud, completely and utterly.
-# The previous commit works:
-SWIFT_BRANCH=ca915156fb2ce4fe4356f54fb2cee7bd01185af5
+# Pin Swift to version 2.2.0:
+SWIFT_BRANCH=2e8261a4dc0d0af0c4a46478b81e167bcf02220b
 EOF
 
 # Post-config hook for configuring zerocloud (and swauth) middleware
