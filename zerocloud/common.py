@@ -1,8 +1,4 @@
 import re
-from hashlib import md5
-
-from swift.common.utils import split_path
-from swift.common.utils import readconf
 
 ACCESS_READABLE = 0x1
 ACCESS_WRITABLE = 0x1 << 1
@@ -23,74 +19,9 @@ DEVICE_MAP = {
     'script': ACCESS_RANDOM | ACCESS_READABLE,
 }
 
-TAR_MIMES = ['application/x-tar', 'application/x-gtar', 'application/x-ustar',
-             'application/x-gzip']
 CLUSTER_CONFIG_FILENAME = 'boot/cluster.map'
 NODE_CONFIG_FILENAME = 'boot/system.map'
-STREAM_CACHE_SIZE = 128 * 1024
-
-DEFAULT_EXE_SYSTEM_MAP = r'''
-    [{
-        "name": "executable",
-        "exec": {
-            "path": "{.object_path}",
-            "args": "{.args}"
-        },
-        "file_list": [
-            {
-                "device": "stdout",
-                "content_type": "{.content_type=text/plain}"
-            }
-        ]
-    }]
-    '''
-
-POST_TEXT_ACCOUNT_SYSTEM_MAP = r'''
-    [{
-        "name": "script",
-        "exec": {
-            "path": "{.exe_path}",
-            "args": "{.args}script"
-        },
-        "file_list": [
-            {
-                "device": "stdout",
-                "content_type": "text/plain"
-            }
-        ]
-    }]
-'''
-
-POST_TEXT_OBJECT_SYSTEM_MAP = r'''
-    [{
-        "name": "script",
-        "exec": {
-            "path": "{.exe_path}",
-            "args": "{.args}script"
-        },
-        "file_list": [
-            {
-                "device": "stdin",
-                "path": {.object_path}
-            },
-            {
-                "device": "stdout",
-                "content_type": "text/plain"
-            }
-        ]
-    }]
-'''
-
 ACCOUNT_HOME_PATH = ['.', '~']
-
-MD5HASH_LENGTH = len(md5('').hexdigest())
-REPORT_LENGTH = 6
-REPORT_VALIDATOR = 0
-REPORT_DAEMON = 1
-REPORT_RETCODE = 2
-REPORT_ETAG = 3
-REPORT_CDR = 4
-REPORT_STATUS = 5
 
 RE_ILLEGAL = u'([\u0000-\u0008\u000b-\u000c\u000e-\u001f\ufffe-\uffff])' + \
              u'|' + \
@@ -99,20 +30,52 @@ RE_ILLEGAL = u'([\u0000-\u0008\u000b-\u000c\u000e-\u001f\ufffe-\uffff])' + \
               unichr(0xd800), unichr(0xdbff), unichr(0xdc00), unichr(0xdfff),
               unichr(0xd800), unichr(0xdbff), unichr(0xdc00), unichr(0xdfff),)
 
-TIMEOUT_GRACE = 0.5
 
+def split_path(path, minsegs=1, maxsegs=None, rest_with_last=False):
+    """
+    Validate and split the given HTTP request path.
 
-def merge_headers(final, mergeable, new):
-    key_list = mergeable.keys()
-    for key in key_list:
-        mergeable[key] = new.get(key, mergeable[key])
-        if not final.get(key):
-            final[key] = str(mergeable[key])
-        else:
-            final[key] += ',' + str(mergeable[key])
-    for key in new.keys():
-        if key not in key_list:
-            final[key] = new[key]
+    **Examples**::
+
+        ['a'] = split_path('/a')
+        ['a', None] = split_path('/a', 1, 2)
+        ['a', 'c'] = split_path('/a/c', 1, 2)
+        ['a', 'c', 'o/r'] = split_path('/a/c/o/r', 1, 3, True)
+
+    :param path: HTTP Request path to be split
+    :param minsegs: Minimum number of segments to be extracted
+    :param maxsegs: Maximum number of segments to be extracted
+    :param rest_with_last: If True, trailing data will be returned as part
+                           of last segment.  If False, and there is
+                           trailing data, raises ValueError.
+    :returns: list of segments with a length of maxsegs (non-existent
+              segments will return as None)
+    :raises: ValueError if given an invalid path
+    """
+    if not maxsegs:
+        maxsegs = minsegs
+    if minsegs > maxsegs:
+        raise ValueError('minsegs > maxsegs: %d > %d' % (minsegs, maxsegs))
+    if rest_with_last:
+        segs = path.split('/', maxsegs)
+        minsegs += 1
+        maxsegs += 1
+        count = len(segs)
+        if (segs[0] or count < minsegs or count > maxsegs or
+                '' in segs[1:minsegs]):
+            raise ValueError('Invalid path: %s' % path)
+    else:
+        minsegs += 1
+        maxsegs += 1
+        segs = path.split('/', maxsegs)
+        count = len(segs)
+        if (segs[0] or count < minsegs or count > maxsegs + 1 or
+                '' in segs[1:minsegs] or
+                (count == maxsegs + 1 and segs[maxsegs])):
+            raise ValueError('Invalid path: %s' % path)
+    segs = segs[1:maxsegs]
+    segs.extend([None] * (maxsegs - 1 - len(segs)))
+    return segs
 
 
 def has_control_chars(line):
@@ -122,22 +85,6 @@ def has_control_chars(line):
         if re.search(r"[\x01-\x1F\x7F]", line):
             return True
     return False
-
-
-def can_run_as_daemon(node_conf, daemon_conf):
-    if node_conf.exe != daemon_conf.exe:
-        return False
-    if not node_conf.channels:
-        return False
-    if len(node_conf.channels) != len(daemon_conf.channels):
-        return False
-    if node_conf.connect or node_conf.bind:
-        return False
-    channels = sorted(node_conf.channels, key=lambda ch: ch.device)
-    for n, d in zip(channels, daemon_conf.channels):
-        if n.device not in d.device:
-            return False
-    return True
 
 
 def expand_account_path(account_name, path):
@@ -250,30 +197,6 @@ def parse_location(url):
     return None
 
 
-def is_swift_path(location):
-    if isinstance(location, SwiftPath):
-        return True
-    return False
-
-
-def is_zvm_path(location):
-    if isinstance(location, ZvmPath):
-        return True
-    return False
-
-
-def is_image_path(location):
-    if isinstance(location, ImagePath):
-        return True
-    return False
-
-
-def is_cache_path(location):
-    if isinstance(location, CachePath):
-        return True
-    return False
-
-
 class ZvmChannel(object):
     def __init__(self, device, access, path=None,
                  content_type=None, meta_data=None,
@@ -287,12 +210,3 @@ class ZvmChannel(object):
         self.removable = removable
         self.mountpoint = mountpoint
         self.min_size = min_size
-
-
-def load_server_conf(conf, sections):
-    server_conf_file = conf.get('__file__', None)
-    if server_conf_file:
-        server_conf = readconf(server_conf_file)
-        for sect in sections:
-            if server_conf.get(sect, None):
-                conf.update(server_conf[sect])

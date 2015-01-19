@@ -56,26 +56,25 @@ from swift.common.exceptions import DiskFileNoSpace
 from swift.common.exceptions import DiskFileDeviceUnavailable
 from swift.common.exceptions import DiskFileQuarantined
 from swift.proxy.controllers.base import update_headers
-from zerocloud.common import TAR_MIMES
+from zerocloud import TAR_MIMES
 from zerocloud.common import ACCESS_READABLE
 from zerocloud.common import ACCESS_CDR
 from zerocloud.common import ACCESS_WRITABLE
-from zerocloud.common import MD5HASH_LENGTH
+from zerocloud import MD5HASH_LENGTH
 from zerocloud.common import parse_location
-from zerocloud.common import is_image_path
 from zerocloud.common import ACCESS_NETWORK
 from zerocloud.common import ACCESS_RANDOM
-from zerocloud.common import REPORT_VALIDATOR
-from zerocloud.common import REPORT_RETCODE
-from zerocloud.common import REPORT_ETAG
-from zerocloud.common import REPORT_CDR
-from zerocloud.common import REPORT_STATUS
+from zerocloud import REPORT_VALIDATOR
+from zerocloud import REPORT_RETCODE
+from zerocloud import REPORT_ETAG
+from zerocloud import REPORT_CDR
+from zerocloud import REPORT_STATUS
 from zerocloud.common import SwiftPath
-from zerocloud.common import REPORT_LENGTH
-from zerocloud.common import REPORT_DAEMON
-from zerocloud.common import load_server_conf
-from zerocloud.common import is_swift_path
-from zerocloud.common import TIMEOUT_GRACE
+from zerocloud.common import ImagePath
+from zerocloud import REPORT_LENGTH
+from zerocloud import REPORT_DAEMON
+from zerocloud import load_server_conf
+from zerocloud import TIMEOUT_GRACE
 from zerocloud.configparser import ClusterConfigParser
 from zerocloud.proxyquery import gunzip_iter
 from zerocloud.tarstream import UntarStream
@@ -877,7 +876,7 @@ class ObjectQueryMiddleware(object):
             # print json.dumps(config, indent=2)
             zerovm_nexe = None
             exe_path = parse_location(config['exe'])
-            if is_image_path(exe_path):
+            if isinstance(exe_path, ImagePath):
                 if exe_path.image in channels:
                     self._extract_boot_file(channels,
                                             exe_path.path,
@@ -952,8 +951,8 @@ class ObjectQueryMiddleware(object):
                     ch['lpath'] = '/dev/null'
                 elif ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
                     if not ch.get('lpath'):
-                        if not chan_path or is_image_path(chan_path) \
-                                or is_swift_path(chan_path):
+                        if not chan_path or isinstance(chan_path, ImagePath) \
+                                or isinstance(chan_path, SwiftPath):
                             raise HTTPBadRequest(
                                 request=req,
                                 body='Could not resolve channel path "%s" for '

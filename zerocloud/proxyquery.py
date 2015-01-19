@@ -69,22 +69,21 @@ from swift.common.swob import wsgify
 from swift.common.swob import HTTPNotImplemented
 from swift.common.swob import HeaderKeyDict
 from swift.common.swob import HTTPException
+from zerocloud import load_server_conf
 from zerocloud.common import CLUSTER_CONFIG_FILENAME
 from zerocloud.common import NODE_CONFIG_FILENAME
-from zerocloud.common import TAR_MIMES
-from zerocloud.common import POST_TEXT_OBJECT_SYSTEM_MAP
-from zerocloud.common import POST_TEXT_ACCOUNT_SYSTEM_MAP
-from zerocloud.common import merge_headers
-from zerocloud.common import DEFAULT_EXE_SYSTEM_MAP
-from zerocloud.common import STREAM_CACHE_SIZE
+from zerocloud import TAR_MIMES
+from zerocloud import POST_TEXT_OBJECT_SYSTEM_MAP
+from zerocloud import POST_TEXT_ACCOUNT_SYSTEM_MAP
+from zerocloud import merge_headers
+from zerocloud import DEFAULT_EXE_SYSTEM_MAP
+from zerocloud import STREAM_CACHE_SIZE
 from zerocloud.common import parse_location
-from zerocloud.common import is_swift_path
-from zerocloud.common import is_image_path
-from zerocloud.common import can_run_as_daemon
+from zerocloud import can_run_as_daemon
 from zerocloud.common import SwiftPath
-from zerocloud.common import load_server_conf
+from zerocloud.common import ImagePath
 from zerocloud.common import expand_account_path
-from zerocloud.common import TIMEOUT_GRACE
+from zerocloud import TIMEOUT_GRACE
 from zerocloud.configparser import ClusterConfigParser
 from zerocloud.configparser import ClusterConfigParsingError
 from zerocloud.tarstream import StringBuffer
@@ -450,7 +449,7 @@ class ProxyQueryMiddleware(object):
                                         'network channels are present'
                                         % conf_file)
                     continue
-                if not is_image_path(node.exe):
+                if not isinstance(node.exe, ImagePath):
                     self.logger.warning('Bad daemon config %s: '
                                         'exe path must be in image file'
                                         % conf_file)
@@ -822,7 +821,7 @@ class ClusterController(ObjectController):
         """
         source_resp = None
         load_from = channel.path.path
-        if is_swift_path(channel.path) and not channel.path.obj:
+        if isinstance(channel.path, SwiftPath) and not channel.path.obj:
             return HTTPBadRequest(request=req,
                                   body='Cannot use container %s as a remote '
                                        'object reference' % load_from)
@@ -1060,7 +1059,7 @@ class ClusterController(ObjectController):
         if not location:
             raise HTTPBadRequest(request=req,
                                  body='Bad interpreter %s' % exe_path)
-        if is_image_path(location):
+        if isinstance(location, ImagePath):
             if 'image' == location.image:
                 raise HTTPBadRequest(request=req,
                                      body='Must supply image name '
@@ -1202,7 +1201,7 @@ class ClusterController(ObjectController):
         rdata = req.environ['wsgi.input']
 
         source_loc = parse_location(unquote(source_header))
-        if not is_swift_path(source_loc):
+        if not isinstance(source_loc, SwiftPath):
             return HTTPPreconditionFailed(
                 request=req,
                 body='X-Zerovm-Source format is '
@@ -1250,6 +1249,12 @@ class ClusterController(ObjectController):
         req = sink_req
 
         return req, req_iter, data_resp
+
+    def _create_sysmap_resp(self, node):
+        sysmap = node.dumps()
+        # print self.dumps(indent=2)
+        return Response(app_iter=iter([sysmap]),
+                        headers={'Content-Length': str(len(sysmap))})
 
     def post_job(self, req):
         chunk_size = self.middleware.network_chunk_size
@@ -1364,12 +1369,12 @@ class ClusterController(ObjectController):
                         node.replicas[i].id = \
                             node.id + (i + 1) * len(cluster_config.nodes)
             node.copy_cgi_env(request=exec_request, cgi_env=self.cgi_env)
-            resp = node.create_sysmap_resp()
+            resp = self._create_sysmap_resp(node)
             node.add_data_source(data_sources, resp, 'sysmap')
             for repl_node in node.replicas:
                 repl_node.copy_cgi_env(request=exec_request,
                                        cgi_env=self.cgi_env)
-                resp = repl_node.create_sysmap_resp()
+                resp = self._create_sysmap_resp(repl_node)
                 repl_node.add_data_source(data_sources, resp, 'sysmap')
             channels = node.get_list_of_remote_objects()
             for ch in channels:
