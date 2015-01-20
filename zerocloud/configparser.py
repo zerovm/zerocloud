@@ -7,22 +7,21 @@ import traceback
 from collections import OrderedDict
 from copy import deepcopy
 
-from swift.common.swob import Response
-
+from zerocloud.common import parse_location, ZvmPath
 from zerocloud.common import SwiftPath
+from zerocloud.common import ObjPath
+
 from zerocloud.common import ZvmChannel
-from zerocloud.common import is_zvm_path
+
 from zerocloud.common import ACCESS_READABLE
 from zerocloud.common import ACCESS_CDR
 from zerocloud.common import ACCESS_WRITABLE
-from zerocloud.common import parse_location
 from zerocloud.common import ACCESS_RANDOM
-from zerocloud.common import has_control_chars
-from zerocloud.common import DEVICE_MAP
-from zerocloud.common import is_swift_path
 from zerocloud.common import ACCESS_NETWORK
+from zerocloud.common import DEVICE_MAP
+
+from zerocloud.common import has_control_chars
 from zerocloud.common import expand_account_path
-from zerocloud.common import ObjPath
 
 CHANNEL_TYPE_MAP = {
     'stdin': 0,
@@ -262,7 +261,7 @@ class ClusterConfigParser(object):
             connect_devices = {}
             for node in cluster_config:
                 zvm_node = ZvmNode.fromdict(node)
-                if is_swift_path(zvm_node.exe):
+                if isinstance(zvm_node.exe, SwiftPath):
                     zvm_node.exe = expand_account_path(account_name,
                                                        zvm_node.exe)
                 node_count = node.get('count', 1)
@@ -281,12 +280,12 @@ class ClusterConfigParser(object):
                         channel = _create_channel(
                             f, zvm_node,
                             default_content_type=self.default_content_type)
-                        if is_zvm_path(channel.path):
+                        if isinstance(channel.path, ZvmPath):
                             _add_connected_device(connect_devices,
                                                   channel,
                                                   zvm_node)
                             continue
-                        if is_swift_path(channel.path):
+                        if isinstance(channel.path, SwiftPath):
                             channel.path = expand_account_path(account_name,
                                                                channel.path)
                             if not channel.path.obj \
@@ -306,7 +305,7 @@ class ClusterConfigParser(object):
                     for chan in read_list:
                         needs_data_in = (not chan.path
                                          and chan.device == 'stdin')
-                        if is_swift_path(chan.path) \
+                        if isinstance(chan.path, SwiftPath) \
                                 and '*' in chan.path.path:
                             read_group = True
                             object_list = self.find_objects(chan.path,
@@ -337,7 +336,7 @@ class ClusterConfigParser(object):
                                 if needs_data_in:
                                         new_node.data_in = True
                     for chan in write_list:
-                        if chan.path and is_swift_path(chan.path):
+                        if chan.path and isinstance(chan.path, SwiftPath):
                             if '*' in chan.path.url:
                                 if read_group:
                                     self._add_to_group(node_count, zvm_node,
@@ -768,10 +767,10 @@ class ClusterConfigParser(object):
                 else:
                     for chan in node.channels:
                         if node.attach == chan.device\
-                                and is_swift_path(chan.path):
+                                and isinstance(chan.path, SwiftPath):
                             top_channel = chan
                             break
-            if top_channel and is_swift_path(top_channel.path):
+            if top_channel and isinstance(top_channel.path, SwiftPath):
                 if top_channel.access & (ACCESS_READABLE | ACCESS_CDR):
                     node.path_info = top_channel.path.path
                     node.access = 'GET'
@@ -839,7 +838,7 @@ def _create_channel(channel, node, default_content_type=None):
     content_type = channel.get('content_type',
                                default_content_type if path else 'text/html')
     if access & ACCESS_READABLE and path:
-        if not is_swift_path(path):
+        if not isinstance(path, SwiftPath):
             raise ClusterConfigParsingError(
                 'Readable device must be a swift object')
         if not path.account or not path.container:
@@ -887,7 +886,7 @@ class ZvmNode(object):
         if not exe:
             raise ClusterConfigParsingError(
                 'Must specify executable path for %s' % name)
-        if is_zvm_path(exe):
+        if isinstance(exe, ZvmPath):
             raise ClusterConfigParsingError(
                 'Executable path cannot be a zvm path in %s' % name)
         args = nexe.get('args')
@@ -962,13 +961,6 @@ class ZvmNode(object):
         else:
             self.env['SERVER_PORT'] = '80'
 
-    def create_sysmap_resp(self):
-        sysmap = self.dumps()
-        # print self.dumps(indent=2)
-        sysmap_iter = iter([sysmap])
-        return Response(app_iter=sysmap_iter,
-                        headers={'Content-Length': str(len(sysmap))})
-
     def add_data_source(self, data_sources, resp, dev='sysmap', append=False):
         if append:
             data_sources.append(resp)
@@ -988,10 +980,10 @@ class ZvmNode(object):
 
     def get_list_of_remote_objects(self):
         channels = []
-        if is_swift_path(self.exe):
+        if isinstance(self.exe, SwiftPath):
             channels.append(ZvmChannel('boot', None, path=self.exe))
         for ch in self.channels:
-            if is_swift_path(ch.path) \
+            if isinstance(ch.path, SwiftPath) \
                     and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
                     and ch.path.path != getattr(self, 'path_info', None):
                 channels.append(ch)
@@ -1003,8 +995,6 @@ class NodeEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, ZvmNode) or isinstance(o, ZvmChannel):
             return o.__dict__
-        elif isinstance(o, Response):
-            return str(o.__dict__)
         if isinstance(o, ObjPath):
             return o.url
         return json.JSONEncoder.default(self, o)
