@@ -82,7 +82,6 @@ from zerocloud.common import parse_location
 from zerocloud import can_run_as_daemon
 from zerocloud.common import SwiftPath
 from zerocloud.common import ImagePath
-from zerocloud.common import expand_account_path
 from zerocloud import TIMEOUT_GRACE
 from zerocloud.configparser import ClusterConfigParser
 from zerocloud.configparser import ClusterConfigParsingError
@@ -1218,7 +1217,8 @@ class ClusterController(ObjectController):
                     'Content-Length': req.content_length,
                     'Content-Type': req.content_type})
             data_resp.nodes = []
-        source_loc = expand_account_path(self.account_name, source_loc)
+
+        source_loc.expand_account(self.account_name)
         source_req = make_subrequest(req.environ, method='GET',
                                      swift_source='zerocloud')
         source_req.path_info = source_loc.path
