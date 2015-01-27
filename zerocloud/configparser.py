@@ -21,7 +21,6 @@ from zerocloud.common import ACCESS_NETWORK
 from zerocloud.common import DEVICE_MAP
 
 from zerocloud.common import has_control_chars
-from zerocloud.common import expand_account_path
 
 CHANNEL_TYPE_MAP = {
     'stdin': 0,
@@ -262,8 +261,7 @@ class ClusterConfigParser(object):
             for node in cluster_config:
                 zvm_node = ZvmNode.fromdict(node)
                 if isinstance(zvm_node.exe, SwiftPath):
-                    zvm_node.exe = expand_account_path(account_name,
-                                                       zvm_node.exe)
+                    zvm_node.exe.expand_account(account_name)
                 node_count = node.get('count', 1)
                 if isinstance(node_count, int) and node_count > 0:
                     pass
@@ -286,8 +284,7 @@ class ClusterConfigParser(object):
                                                   zvm_node)
                             continue
                         if isinstance(channel.path, SwiftPath):
-                            channel.path = expand_account_path(account_name,
-                                                               channel.path)
+                            channel.path.expand_account(account_name)
                             if not channel.path.obj \
                                     and not channel.access & ACCESS_READABLE:
                                 raise ClusterConfigParsingError(

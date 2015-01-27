@@ -179,7 +179,7 @@ class Utils(object):
             who = req.remote_user
             if req.acl == req.remote_user:
                 perm = 'Allowed'
-        what = SwiftPath.init(account, container, obj).url
+        what = SwiftPath.create_url(account, container, obj)
         ver = req.headers.get('x-zerovm-execute', 'v1')
         self.actions.append('%s %s to %s %s with %s' % (perm, who, req.method,
                                                         what, ver))

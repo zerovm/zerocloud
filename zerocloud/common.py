@@ -87,14 +87,6 @@ def has_control_chars(line):
     return False
 
 
-def expand_account_path(account_name, path):
-    if path.account in ACCOUNT_HOME_PATH:
-        return SwiftPath.init(account_name,
-                              path.container,
-                              path.obj)
-    return path
-
-
 class ObjPath:
 
     def __init__(self, url, path):
@@ -127,12 +119,25 @@ class SwiftPath(ObjPath):
         self.obj = obj
 
     @classmethod
+    def create_url(cls, account, container, obj):
+        if not account:
+            return None
+        return 'swift://' + \
+               '/'.join(filter(None,
+                               (account, container, obj)))
+
+    @classmethod
     def init(cls, account, container, obj):
         if not account:
             return None
-        return cls('swift://' +
-                   '/'.join(filter(None,
-                                   (account, container, obj))))
+        return cls(SwiftPath.create_url(account, container, obj))
+
+    def expand_account(self, account_name):
+        if self.account in ACCOUNT_HOME_PATH:
+            self.account = account_name
+            self.url = SwiftPath.create_url(account_name, self.container,
+                                            self.obj)
+            self.path = self.url.split('swift:/')[1]
 
 
 class ImagePath(ObjPath):
