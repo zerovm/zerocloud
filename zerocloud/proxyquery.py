@@ -764,45 +764,38 @@ class ClusterController(ObjectController):
                         partition))
                 exec_request.headers['X-Backend-Storage-Policy-Index'] = \
                     str(policy_index)
-            if node.replicate > 1:
-                container_info = self.container_info(account, container,
-                                                     exec_request)
-                container_partition = container_info['partition']
-                containers = container_info['nodes']
-                exec_headers = self._backend_requests(exec_request,
-                                                      node.replicate,
-                                                      container_partition,
-                                                      containers)
-                if node.skip_validation:
-                    for hdr in exec_headers:
-                        hdr['x-zerovm-valid'] = 'true'
-                i = 0
+            container_info = self.container_info(account, container,
+                                                 exec_request)
+            container_partition = container_info['partition']
+            containers = container_info['nodes']
+            if not containers:
+                raise HTTPNotFound(request=exec_request,
+                                   body='Error while fetching %s'
+                                        % node.path_info)
+            exec_headers = self._backend_requests(exec_request,
+                                                  node.replicate,
+                                                  container_partition,
+                                                  containers)
+            if node.skip_validation:
+                for hdr in exec_headers:
+                    hdr['x-zerovm-valid'] = 'true'
+            i = 0
+            pile.spawn(self._connect_exec_node,
+                       node_iter,
+                       partition,
+                       exec_request,
+                       self.app.logger.thread_locals,
+                       node,
+                       exec_headers[i])
+            for repl_node in node.replicas:
+                i += 1
                 pile.spawn(self._connect_exec_node,
                            node_iter,
                            partition,
                            exec_request,
                            self.app.logger.thread_locals,
-                           node,
+                           repl_node,
                            exec_headers[i])
-                for repl_node in node.replicas:
-                    i += 1
-                    pile.spawn(self._connect_exec_node,
-                               node_iter,
-                               partition,
-                               exec_request,
-                               self.app.logger.thread_locals,
-                               repl_node,
-                               exec_headers[i])
-            else:
-                if node.skip_validation:
-                    exec_request.headers['x-zerovm-valid'] = 'true'
-                pile.spawn(self._connect_exec_node,
-                           node_iter,
-                           partition,
-                           exec_request,
-                           self.app.logger.thread_locals,
-                           node,
-                           exec_request.headers)
         return [conn for conn in pile if conn]
 
     def _spawn_file_senders(self, conns, pool, req):
@@ -1707,7 +1700,6 @@ class ClusterController(ObjectController):
         for node in obj_nodes:
             try:
                 with ConnectionTimeout(self.middleware.conn_timeout):
-                    request.headers['Connection'] = 'close'
                     request_headers['Expect'] = '100-continue'
                     request_headers['Content-Length'] = str(cnode.size)
                     conn = http_connect(node['ip'], node['port'],

@@ -2640,12 +2640,16 @@ class TestProxyQuery(unittest.TestCase, Utils):
             req.body = conf
             res = req.get_response(prosrv)
             self.assertEqual(res.status_int, 404)
-            self.assertEqual(res.body, 'Error %s while fetching '
-                                       '/a/%s' % (res.status, path))
-            self.assertEqual(res.headers['x-nexe-system'], 'sort')
-            self.assertEqual(res.headers['x-nexe-status'],
-                             'ZeroVM did not run')
-            self.assertEqual(res.headers['x-nexe-retcode'], '0')
+            if path == 'error':
+                self.assertEqual(res.body, 'Error while fetching '
+                                           '/a/%s' % path)
+            else:
+                self.assertEqual(res.body, 'Error %s while fetching '
+                                           '/a/%s' % (res.status, path))
+                self.assertEqual(res.headers['x-nexe-system'], 'sort')
+                self.assertEqual(res.headers['x-nexe-status'],
+                                 'ZeroVM did not run')
+                self.assertEqual(res.headers['x-nexe-retcode'], '0')
 
     def test_remote_device_path_404(self):
         self.setup_QUERY()
