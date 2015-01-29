@@ -1286,15 +1286,11 @@ class TestObjectQuery(unittest.TestCase):
                 members = tar.getmembers()
                 self.assertIn('stdout', names)
                 self.assertEqual(names[-1], 'stdout')
-                file = tar.extractfile(members[-1])
-                out = (
-                    '%s\n'
-                    '[fstab]\n'
-                    'channel=/dev/%s, mountpoint=/, access=ro, removable=no\n'
-                    '[args]\n'
-                    'args = sysimage-test\n' % (path, dev)
-                )
-                self.assertEqual(file.read(), out)
+                data = tar.extractfile(members[-1]).read()
+                self.assertTrue('%s\n' % path in data)
+                self.assertTrue('channel=/dev/%s, mountpoint=/, access=ro, '
+                                'removable=no\n' % dev in data)
+                self.assertTrue('channel=/dev/%s, mode=file\n' % dev in data)
                 self.assertEqual(resp.headers['x-nexe-retcode'], '0')
                 self.assertEqual(resp.headers['x-nexe-status'], 'ok.')
                 self.assertEqual(resp.headers['x-nexe-validation'], '0')

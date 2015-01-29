@@ -654,6 +654,9 @@ class ClusterConfigParser(object):
             mode = ch.get('mode', None)
             if mode:
                 mode_mapping[device] = mode
+            else:
+                # map everything to file by default
+                mode_mapping[device] = 'file'
             channels.append(device)
         network_devices = []
         for conn in config['connect'] + config['bind']:
@@ -661,6 +664,8 @@ class ClusterConfigParser(object):
             dev = conn.split(',', 2)[1][5:]  # len('/dev/') = 5
             if dev in STD_DEVICES:
                 network_devices.append(dev)
+            # map everything to file by default
+            mode_mapping[dev] = 'file'
         for dev in STD_DEVICES:
             if dev not in channels and dev not in network_devices:
                 if 'stdin' in dev:
