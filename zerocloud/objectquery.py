@@ -5,7 +5,8 @@ import time
 import traceback
 import tarfile
 from contextlib import contextmanager
-from hashlib import md5
+from hashlib import md5, sha1
+import hmac
 from tempfile import mkstemp
 from tempfile import mkdtemp
 
@@ -720,6 +721,7 @@ class ObjectQueryMiddleware(object):
                                  content_type='text/plain',
                                  headers=nexe_headers)
         access_type = req.headers.get('x-zerovm-access', '')
+        colocated = req.headers.get('x-nexe-colocated')
         if obj:
             try:
                 local_object.disk_file = \
@@ -730,6 +732,10 @@ class ObjectQueryMiddleware(object):
                                        obj,
                                        policy_idx)
             except DiskFileDeviceUnavailable:
+                if colocated:
+                    # we were sent an impossible co-location request
+                    # answer 404 and proxy will continue to another server
+                    raise HTTPNotFound(request=req)
                 # NOTE(larsbutler): If a disk file device is unavailable, one
                 # might logically think to return a "404 Not Found". However,
                 # Swift itself returns a "507 Insufficient Storage" in this
@@ -971,6 +977,7 @@ class ObjectQueryMiddleware(object):
                             response_channels.insert(0, ch)
                 elif ch['access'] & ACCESS_NETWORK:
                     ch['lpath'] = chan_path.path
+            config['colocated'] = colocated
             timeout = int(req.headers.get(
                 'x-zerovm-timeout',
                 self.parser.parser_config['manifest']['Timeout']))
@@ -1145,6 +1152,14 @@ class ObjectQueryMiddleware(object):
                 response.headers['x-nexe-system'] = \
                     nexe_headers['x-nexe-system']
                 response.content_type = 'application/x-gtar'
+                # we return co-location information to user
+                # but we need to avoid revealing any internal network
+                # information, therefore we hmac.sha1(ip:port),
+                # using random salt supplied by proxy
+                if colocated:
+                    salt, addr = colocated.split(':', 1)
+                    response.headers['x-nexe-colocated'] = \
+                        hmac.new(salt, addr, sha1).hexdigest()
                 tar_stream = TarStream(format=PAX_FORMAT, encoding='utf-8',
                                        chunk_size=self.network_chunk_size)
                 resp_size = 0

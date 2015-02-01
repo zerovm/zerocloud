@@ -855,7 +855,7 @@ class ZvmNode(object):
     """ZeroVM instance.
     """
     def __init__(self, id=None, name=None, exe=None, args=None, env=None,
-                 replicate=1, attach=None, exe_name=None):
+                 replicate=1, attach=None, exe_name=None, location=None):
         self.id = id
         self.name = name
         self.exe = exe
@@ -872,6 +872,7 @@ class ZvmNode(object):
         self.access = ''
         self.exe_name = exe_name
         self.data_in = False
+        self.location = location or None
 
     @classmethod
     def fromdict(cls, node_config):
@@ -899,7 +900,9 @@ class ZvmNode(object):
         replicate = node_config.get('replicate', 1)
         attach = node_config.get('attach', 'default')
         exe_name = nexe.get('name')
-        return ZvmNode(0, name, exe, args, env, replicate, attach, exe_name)
+        location = node_config.get('location')
+        return ZvmNode(0, name, exe, args, env, replicate, attach, exe_name,
+                       location)
 
     def copy(self, id, name=None):
         newnode = deepcopy(self)

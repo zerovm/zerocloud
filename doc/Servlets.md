@@ -36,7 +36,8 @@ JSON format describing a servlet configuration
             "nodename2"
         ],
         "replicate":1, <i>how many replicas of this node should run, optional</i>
-        "attach": "default" <i>where zerovm session will be attached, optional, see below</i>
+        "attach": "default", <i>where zerovm session will be attached, optional, see below</i>
+        "location": "", <i>location hint, optional, see below<i>
         }
     ,
     ....
@@ -240,11 +241,23 @@ with some key difference: it is never co-located with the executable
 (unless this is the only `READABLE` device). Its primarily purpose is to be used as a script source input 
 for apps written in a scripting language (python, for example).
 
-20. Each `WRITABLE` device can have `min_size` property set. 
-It defines what will be the minimal data size produced by the device. 
-If device produced less than the amount it won't be processed, saved or otherwise used.
-Default is `min_size: 0` which means that even totally empty data files will be written to disk or serialized to user.
+20. Each `WRITABLE` device can have `min_size` property set.  
+It defines what will be the minimal data size produced by the device.  
+If device produced less than the amount it won't be processed, 
+saved or otherwise used.  
+Default is `min_size: 0` which means that even totally empty data files will
+ be written to disk or serialized to user.  
 
+21. Users can further fine tune the location of specific sessions, 
+ by providing `location` hint. This hint is an arbitrary string.  
+ The sessions with the same `location` string will be co-located on the same
+ physical computation node _if possible_. 
+ The co-location is just a "best effort", if for some reason the sessions 
+ can not be started on the same node they will still be started 
+ albeit on different nodes.  
+ The information about successful co-location will be returned in specific 
+ headers in response. See `Response.md` docs.
+ 
 ## Examples
 
 
