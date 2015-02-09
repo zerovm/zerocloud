@@ -113,6 +113,20 @@ Example:
 
     X-Nexe-Cached: true
 
+### `X-Nexe-Colocated`
+
+This header contains a list of co-location codes, one from each session.
+If there was a request to co-locate some jobs on same host this header will 
+contain the information about it. The default value is `0` that means no 
+co-location happened and session was run as usual. If co-location did happen 
+all sessions co-located on the same physical node will have the same hex hash
+in this header. 
+
+Example:
+
+    X-Nexe-Colocated: 0,0,0,0
+    X-Nexe-Colocated: 63284bbbcca347a3a1ef3830911409e2,63284bbbcca347a3a1ef3830911409e2,0,0
+    
 ### `Etag`
 
 Each job will have `Etag` header set to md5 hash of the current

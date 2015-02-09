@@ -2236,6 +2236,193 @@ class TestProxyQuery(unittest.TestCase, Utils):
                 self.assertTrue(False)
         self.check_container_integrity(prosrv, '/v1/a/c_out1', {})
 
+    def test_colocated_nodes(self):
+        self.setup_QUERY()
+        # no co-location requested
+        conf = [
+            {
+                'name': 'colo1',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ],
+                'connect': ['colo2']
+            },
+            {
+                'name': 'colo2',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ],
+                'connect': ['colo3']
+            },
+            {
+                'name': 'colo3',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ]
+            }
+        ]
+        jconf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        req = self.zerovm_request()
+        req.body = jconf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        self.assertEqual(res.headers['x-nexe-colocated'], '0,0,0')
+        # requested to co-locate first group between themselves
+        # and second group with the first
+        conf = [
+            {
+                'name': 'colo1',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ],
+                'connect': ['colo1', 'colo2'],
+                'location': 'node1',
+                'count': 2
+            },
+            {
+                'name': 'colo2',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ],
+                'connect': ['colo3'],
+                'location': 'node1'
+            },
+            {
+                'name': 'colo3',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ]
+            }
+        ]
+        jconf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        req = self.zerovm_request()
+        req.body = jconf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        colo = res.headers['x-nexe-colocated'].split(',')
+        self.assertEqual(colo[0], colo[1])
+        self.assertEqual(colo[0], colo[2])
+        self.assertEqual(colo[3], '0')
+        # requested to co-locate first group between themselves
+        conf = [
+            {
+                'name': 'colo1',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ],
+                'connect': ['colo1', 'colo2'],
+                'location': 'node1',
+                'count': 2
+            },
+            {
+                'name': 'colo2',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ],
+                'connect': ['colo3'],
+            },
+            {
+                'name': 'colo3',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ]
+            }
+        ]
+        jconf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        req = self.zerovm_request()
+        req.body = jconf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        colo = res.headers['x-nexe-colocated'].split(',')
+        self.assertEqual(colo[0], colo[1])
+        self.assertEqual(colo[2], '0')
+        self.assertEqual(colo[3], '0')
+        # requested to co-locate first group and second group
+        conf = [
+            {
+                'name': 'colo1',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ],
+                'connect': ['colo2'],
+                'location': 'node1'
+            },
+            {
+                'name': 'colo2',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ],
+                'connect': ['colo3'],
+                'location': 'node1'
+            },
+            {
+                'name': 'colo3',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ]
+            }
+        ]
+        jconf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        req = self.zerovm_request()
+        req.body = jconf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        colo = res.headers['x-nexe-colocated'].split(',')
+        self.assertEqual(colo[0], colo[1])
+        self.assertEqual(colo[2], '0')
+        conf = [
+            {
+                'name': 'colo1',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdin', 'path': 'swift://a/c_in1/in*'}
+                ],
+                'connect': ['colo2'],
+                'location': 'node1'
+            },
+            {
+                'name': 'colo2',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ],
+                'connect': ['colo3']
+            },
+            {
+                'name': 'colo3',
+                'exec': {'path': 'swift://a/c/exe'},
+                'file_list': [
+                    {'device': 'stdout'}
+                ]
+            }
+        ]
+        jconf = json.dumps(conf)
+        prosrv = _test_servers[0]
+        req = self.zerovm_request()
+        req.body = jconf
+        res = req.get_response(prosrv)
+        self.assertEqual(res.status_int, 200)
+        colo = res.headers['x-nexe-colocated'].split(',')
+        self.assertEqual(colo[0], colo[1])
+        self.assertEqual(colo[2], '0')
+        self.assertEqual(colo[3], '0')
+
     def test_QUERY_read_obj_wildcard(self):
         self.setup_QUERY()
         conf = [

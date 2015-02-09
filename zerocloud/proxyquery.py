@@ -1,5 +1,6 @@
 from copy import deepcopy
 import ctypes
+from itertools import chain
 import re
 import struct
 import traceback
@@ -733,13 +734,24 @@ class ClusterController(ObjectController):
             `list` of `swift.common.bufferedhttp.BufferedHTTPConnection`
             objects.
         """
+        exec_list = []
+        known_locations = {}
+        known_salts = {}
+        result = []
+        logger = self.app.logger.thread_locals
         for exec_request in exec_requests:
             node = exec_request.node
             account, container, obj = \
                 split_path(node.path_info, 1, 3, True)
+            container_info = self.container_info(account, container,
+                                                 exec_request)
+            container_partition = container_info['partition']
+            containers = container_info['nodes']
+            if not containers:
+                raise HTTPNotFound(request=exec_request,
+                                   body='Error while fetching %s'
+                                        % node.path_info)
             if obj:
-                container_info = self.container_info(
-                    account, container, exec_request)
                 policy_index = exec_request.headers.get(
                     'X-Backend-Storage-Policy-Index',
                     container_info['storage_policy'])
@@ -764,14 +776,6 @@ class ClusterController(ObjectController):
                         partition))
                 exec_request.headers['X-Backend-Storage-Policy-Index'] = \
                     str(policy_index)
-            container_info = self.container_info(account, container,
-                                                 exec_request)
-            container_partition = container_info['partition']
-            containers = container_info['nodes']
-            if not containers:
-                raise HTTPNotFound(request=exec_request,
-                                   body='Error while fetching %s'
-                                        % node.path_info)
             exec_headers = self._backend_requests(exec_request,
                                                   node.replicate,
                                                   container_partition,
@@ -779,24 +783,37 @@ class ClusterController(ObjectController):
             if node.skip_validation:
                 for hdr in exec_headers:
                     hdr['x-zerovm-valid'] = 'true'
-            i = 0
-            pile.spawn(self._connect_exec_node,
-                       node_iter,
-                       partition,
-                       exec_request,
-                       self.app.logger.thread_locals,
-                       node,
-                       exec_headers[i])
-            for repl_node in node.replicas:
-                i += 1
-                pile.spawn(self._connect_exec_node,
-                           node_iter,
-                           partition,
-                           exec_request,
-                           self.app.logger.thread_locals,
-                           repl_node,
-                           exec_headers[i])
-        return [conn for conn in pile if conn]
+            node_list = [node]
+            node_list.extend(node.replicas)
+            for i, repl_node in enumerate(node_list):
+                location = '%s-%d' % (node.location, i) if node.location \
+                    else None
+                if location and location not in known_locations:
+                    salt = uuid.uuid4().hex
+                    conn = self._connect_exec_node(node_iter,
+                                                   partition,
+                                                   exec_request,
+                                                   logger,
+                                                   repl_node,
+                                                   exec_headers[i],
+                                                   [], salt)
+                    known_locations[location] = [conn.node]
+                    known_salts[location] = salt
+                    result.append(conn)
+                else:
+                    known_nodes = known_locations.get(location, [])
+                    exec_list.append((node_iter,
+                                      partition,
+                                      exec_request,
+                                      logger,
+                                      repl_node,
+                                      exec_headers[i],
+                                      known_nodes,
+                                      known_salts.get(location, '0')))
+        for args in exec_list:
+            pile.spawn(self._connect_exec_node, *args)
+            result.extend([conn for conn in pile if conn])
+        return result
 
     def _spawn_file_senders(self, conns, pool, req):
         for conn in conns:
@@ -1293,7 +1310,8 @@ class ClusterController(ObjectController):
                 'x-nexe-etag': '',
                 'x-nexe-validation': 0,
                 'x-nexe-cdr-line': '0.0 0.0 0 0 0 0 0 0 0 0',
-                'x-nexe-policy': ''
+                'x-nexe-policy': '',
+                'x-nexe-colocated': '0'
             })
             path_info = req.path_info
             exec_request = Request.blank(path_info,
@@ -1694,10 +1712,15 @@ class ClusterController(ObjectController):
         return self.process_server_response(conn, request, resp)
 
     def _connect_exec_node(self, obj_nodes, part, request,
-                           logger_thread_locals, cnode, request_headers):
+                           logger_thread_locals, cnode, request_headers,
+                           known_nodes, salt):
         self.app.logger.thread_locals = logger_thread_locals
         conn = None
-        for node in obj_nodes:
+        for node in chain(known_nodes, obj_nodes):
+            if (known_nodes and node in known_nodes) \
+                    or (not known_nodes and cnode.location):
+                request_headers['x-nexe-colocated'] = \
+                    '%s:%s:%s' % (salt, node['ip'], node['port'])
             try:
                 with ConnectionTimeout(self.middleware.conn_timeout):
                     request_headers['Expect'] = '100-continue'
