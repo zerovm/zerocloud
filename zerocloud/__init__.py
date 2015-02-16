@@ -92,6 +92,28 @@ def merge_headers(final, mergeable, new):
 
 
 def can_run_as_daemon(node_conf, daemon_conf):
+    """Determine if a ZeroVM node can run using an existing daemon.
+
+    In order to determine if the ZeroVM node can using an existing daemon, we
+    need to check a couple of things:
+
+    * the executable must be the same; this should be obvious
+    * the number of channels must match
+    * the device/channel interface must be the same; that is, if the daemon has
+      `stdin`, `stdout`, `image`, and `input` devices mapped, the ``node_conf``
+      must have the same devices exactly (although it doesn't matter where they
+      map to)
+    * the ``node_conf`` must not use any networking (files only)
+
+    :param node_conf:
+        :class:`zerocloud.configparser.ZvmNode` object describing the execution
+        node.
+    :param daemon_conf:
+        :class:`zerocloud.configparser.ZvmNode` object describing the daemon.
+    :returns:
+        `True` if the ``node_conf`` is compatible with the ``daemon_conf``,
+        else `False`.
+    """
     if node_conf.exe != daemon_conf.exe:
         return False
     if not node_conf.channels:
