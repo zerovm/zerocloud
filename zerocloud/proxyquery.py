@@ -198,9 +198,42 @@ class GreenPileEx(GreenPile):
 
 
 class CachedBody(object):
+    """Implements caching and iterative consumption of large bodies.
+
+    Typical (and currently, the only) uses are for managing large tarball or
+    script submissions from the user. The reason why we do this is because user
+    submitted content is allowed to be any size--so we don't want to hold, for
+    example, an entire 5GiB tarball in memory.
+
+    CachedBody is iterable. The ``cache`` parameter contains at all times the
+    "head", while the ``read_iter`` contains the "tail".
+    """
 
     def __init__(self, read_iter, cache=None, cache_size=STREAM_CACHE_SIZE,
                  total_size=None):
+        """
+        :param read_iter:
+            A stream iterable.
+        :param list cache:
+            Defaults to None. If ``cache`` is None, constructing a `CachedBody`
+            object will initialize the ``cache`` and read _at least_
+            ``cache_size`` bytes from ``read_iter`` and store them in
+            ``cache``. In other words, the beginning of a stream.
+
+            If a ``cache`` is specified, this can represent the intermediate
+            state of a cached body, where something is already in the cache. In
+            other words, "mid-stream".
+        :param int cache_size:
+            Minimum amount of bytes to cache from ``read_iter``. Note: If the
+            size of each chunk from ``read_iter`` is greater than
+            ``cache_size``, the actual amount of bytes cached in ``cache`` will
+            be the chunk size.
+        :param int total_size:
+            (In bytes.) If ``total_size`` is set, iterate over the
+            ``read_iter`` stream until ``total_size`` counts down to 0.
+            Else, just read chunks until ``read_iter`` raises a
+            `StopIteration`.
+        """
         self.read_iter = read_iter
         self.total_size = total_size
         if cache:
