@@ -937,11 +937,42 @@ class ClusterController(ObjectController):
         executed later; we only CREATE the request here and pre-authorize it.
         """
         source_resp = None
+        # channel.path = zerocloud.common.ObjPath instance
+        # channel.path.path = actual string/url of the object
         load_from = channel.path.path
+
+        # It's a swift path, but with no object, thus it only is a path to a
+        # container (/account/container).
+        # NOTE(larsbutler): Fetching containers as remote objects right now is
+        # restricted.
+        # TODO(larsbutler): Document why that is the case.
         if isinstance(channel.path, SwiftPath) and not channel.path.obj:
             return HTTPBadRequest(request=req,
                                   body='Cannot use container %s as a remote '
                                        'object reference' % load_from)
+
+        # NOTE(larsbutler): The following is super important for understanding
+        # how ZeroCloud jobs are coordinated and remain somewhat efficient.
+        #
+        # We reuse requests for remote objects so that we don't fetch things a
+        # redundant amount of times.
+        #
+        # Here's about the most concise but detailed way I can state this:
+        #
+        # If multiple object nodes in a given job require the same _remote_
+        # object (that is, an object which does not have a replica on the
+        # object node), the proxy node coordinating the job--where this code is
+        # running right now--will fetch each object _only once_, iteratively
+        # stream the object in chunks so as to not load too much stuff into
+        # memory at once, and _push_ copies of the object to each node that
+        # needs it. I need to emphasize that; when an object node needs a
+        # remote object to run some job, the proxy node PUSHES the object--the
+        # object node never pulls. This is an optimization to avoid redundant
+        # transfer of object data throughout the cluster.
+        #
+        # We implement this logic in the next few lines.
+        #
+        # Linear search for an already-existing response:
         for resp in data_sources:
             # We reuse requests, to avoid doing a bunch of redundant fetches
             # from the object server. That is, there is no need to a fetch one
@@ -949,14 +980,25 @@ class ClusterController(ObjectController):
             if resp.request and load_from == resp.request.path_info:
                 source_resp = resp
                 break
+        # response doesn't already exist
         if not source_resp:
+            # copy as GET request
             source_req = req.copy_get()
             source_req.path_info = load_from
+            # we don't want to pass query string
             source_req.query_string = None
             if self.middleware.zerovm_uses_newest:
+                # object server will try to use the object with the most recent
+                # timestamp
+                # this is good because we get the latest,
+                # this is bad because we have more latency because we ask
+                # multiple object servers
                 source_req.headers['X-Newest'] = 'true'
             if self.middleware.zerovm_prevalidate \
                     and 'boot' in channel.device:
+                # FIXME: request to validate
+                # proxy doesn't know it is valid or not, it can only request to
+                # validate
                 source_req.headers['X-Zerovm-Valid'] = 'true'
             acct, src_container_name, src_obj_name = \
                 split_path(load_from, 1, 3, True)
@@ -964,25 +1006,38 @@ class ClusterController(ObjectController):
             # We don't do PUTs (writes) until after the job, and this is
             # authorized in `process_server_response`
             self.authorize_job(source_req, acl='read_acl')
-            source_resp = \
+            source_resp = (
+                # passes a request to different middleware
                 ObjectController(self.app,
                                  acct,
                                  src_container_name,
-                                 src_obj_name).GET(source_req)
+                                 src_obj_name).GET(source_req))
             if source_resp.status_int >= 300:
                 update_headers(source_resp, nexe_headers)
                 source_resp.body = 'Error %s while fetching %s' \
                                    % (source_resp.status,
                                       source_req.path_info)
                 return source_resp
+            # everything went well
             source_resp.nodes = []
+            # collect the data source into the "master" list
+            # so it can be reused
             data_sources.append(source_resp)
+        # Data sources are all Response objects: some real, some fake
         node.last_data = source_resp
+        # The links between data sources and the nodes which use a given data
+        # source are bi-directional.
+        # - Each data source has a reference to all nodes which use it
+        # - Each node has a reference to all data sources it uses
         source_resp.nodes.append({'node': node, 'dev': channel.device})
-        if source_resp.headers.get('x-zerovm-valid', None) \
-                and 'boot' in channel.device:
+        # check if the validation passed
+        if (source_resp.headers.get('x-zerovm-valid', None)
+                and 'boot' in channel.device):
+            # If the data source is valid and the device is the executable, we
+            # can skip validation
             node.skip_validation = True
         for repl_node in node.replicas:
+            # do the same thing as above for replicated nodes
             repl_node.last_data = source_resp
             source_resp.nodes.append({'node': repl_node,
                                       'dev': channel.device})
