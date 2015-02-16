@@ -618,8 +618,12 @@ class ProxyQueryMiddleware(object):
             self.standalone_policies = [0]
         # use direct tcp connections (tcp) or intermediate broker (opaque)
         self.network_type = conf.get('zerovm_network_type', 'tcp')
-        # opaque network does not support replication right now
+
+        # 'opaque' == 'zbroker'
+        # NOTE(larsbutler): for more info about zbroker, see
+        # https://github.com/zeromq/zbroker
         if self.network_type == 'opaque':
+            # opaque network does not support replication right now
             self.ignore_replication = True
         # list of daemons we need to lazy load
         # (first request will start the daemon)
