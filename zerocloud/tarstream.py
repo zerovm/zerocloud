@@ -1081,9 +1081,11 @@ class ExtractedFile(object):
 
 class UntarStream(object):
 
-    def __init__(self, tar_iter, path_list=[], encoding=ENCODING,
+    def __init__(self, tar_iter, path_list=None, encoding=ENCODING,
                  errors=None):
         self.tar_iter = iter(tar_iter)
+        if path_list is None:
+            path_list = []
         self.path_list = path_list
         self.block = ''
         self.encoding = encoding
