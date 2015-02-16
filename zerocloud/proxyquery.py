@@ -282,7 +282,6 @@ class NameService(object):
     def _run(self):
         while 1:
             try:
-                start = time.time()
                 message, peer_address = self.sock.recvfrom(65535)
                 offset = 0
                 peer_id = struct.unpack_from(NameService.INT_FMT, message,
@@ -308,9 +307,6 @@ class NameService(object):
                 self.peer_map.setdefault(peer_id, {})[1] = peer_address[1]
 
                 if len(self.peer_map) == self.peers:
-                    print "Finished name server receive in %.3f seconds" \
-                          % (time.time() - start)
-                    start = time.time()
                     for peer_id in self.peer_map.iterkeys():
                         (connect_count, offset, reply) = self.conn_map[peer_id]
                         for i in range(connect_count):
@@ -329,8 +325,6 @@ class NameService(object):
                             offset += NameService.OUTPUT_RECORD_SIZE
                         self.sock.sendto(reply, (self.peer_map[peer_id][0],
                                                  self.peer_map[peer_id][1]))
-                    print "Finished name server send in %.3f seconds" \
-                          % (time.time() - start)
             except greenlet.GreenletExit:
                 return
             except Exception:
