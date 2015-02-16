@@ -1055,34 +1055,76 @@ class ClusterController(ObjectController):
             if conn.error:
                 conn.nexe_headers['x-nexe-error'] = \
                     conn.error.replace('\n', '')
+            # Set the response status to the highest one
             if conn.resp.status_int > final_response.status_int:
+                # This collects the most severe error (500 over 400, etc.).
+                # NOTE(larsbutler): This might be a little weird, though. For
+                # example, that means that if we get a 503 and then a 507, we
+                # will return the 507 even though (as far as I can tell) there
+                # is no real difference in severity between responses at the
+                # same level (400, 500, etc.).
                 final_response.status = conn.resp.status
             merge_headers(final_response.headers, conn.nexe_headers,
                           resp.headers)
             self._store_accounting_data(req, conn)
-            if is_success(resp.status_int) and 'x-nexe-status' not in \
-                    resp.headers:
-                # looks like the middleware is not installed
-                # or not functioning otherwise we should get something
+            if (is_success(resp.status_int)
+                    and 'x-nexe-status' not in resp.headers):
+                # If there's no x-nexe-status, we have hit an object server
+                # that doesn't know anything about zerovm (and probably means
+                # it's not running the ZeroCloud object_query middleware).
                 return HTTPServiceUnavailable(
                     request=req,
                     headers=resp.headers,
                     body='objectquery middleware is not installed '
                          'or not functioning')
             if resp and resp.headers.get('x-zerovm-daemon', None):
+                # We don't want to expose the daemon ID to the client, since
+                # this is internal only, but we do want to notify them that
+                # daemon execution succeeded (so that they can understand
+                # significant differences in execution times between some
+                # jobs).
+                # The client doesn't/can't choose to run with a daemon; this is
+                # a internal optimization.
+                # The 'x-nexe-cached' indicates that a daemon was used. If this
+                # is not the case, this header is omitted from the final
+                # response.
                 final_response.headers['x-nexe-cached'] = 'true'
             if resp and resp.content_length > 0:
+                # We have some "body" to send back to the client.
                 if not resp.app_iter:
+                    # we might have received either a string or an iter
+                    # TODO(larsbutler): it might be good wrap the right hand
+                    # side in iter()
                     resp.app_iter = [resp.body]
+
+                # this is an old feature, whereby all channels with a null path
+                # just have their output concatenated and returned
+                # (any writeable channel with null path, such as stderr,
+                # stdout, output, etc.)
+                # Typically, this applies to `stdout`, and is most often how
+                # this is used.
                 if final_body:
+                    # this is not the first iteration of the loop
                     final_body.append(resp.app_iter)
                     final_response.content_length += resp.content_length
                 else:
+                    # this the first iteration of the loop
                     final_body = FinalBody(resp.app_iter)
+                    # FIXME: `resp` needs to be closed at some point;
+                    # it might not get garbage collected, so we need to nuke
+                    # from orbit.
+                    # NOTE: this can cause jobs to send back 0 length, no
+                    # content, and no error
                     final_response.app_iter = final_body
                     final_response.content_length = resp.content_length
+                    # NOTE: each output channel may have a different content
+                    # type, so the content-type set here may surprise you!
+                    # we assign the content type of the first channel of the
+                    # first connection that we encounter
                     final_response.content_type = resp.headers['content-type']
         if self.middleware.zerovm_accounting_enabled:
+            # NOTE(larsbutler): This doesn't work, and should be disabled since
+            # it relies on object append support (which Swift does not have).
             self.middleware.zerovm_ns_thrdpool.spawn_n(
                 self._store_accounting_data,
                 req)
@@ -1090,12 +1132,28 @@ class ClusterController(ObjectController):
             container_info = self.container_info(self.account_name,
                                                  self.container_name, req)
             if container_info.get('cors', None):
+                # NOTE(larsbutler): This is a workaround for a Swift bug that
+                # should be solved now.
+                # Swift defines CORS per container.
+                # Probably it should define CORS per account.
+                # FIXME(larsbutler): We should probably test this to see if
+                # it's still an issue.
                 if container_info['cors'].get('allow_origin', None):
                     final_response.headers['access-control-allow-origin'] = \
                         container_info['cors']['allow_origin']
                 if container_info['cors'].get('expose_headers', None):
                     final_response.headers['access-control-expose-headers'] = \
                         container_info['cors']['expose_headers']
+        # Why is the etag based on the time?
+        # Some browsers are very cache-hungry (like Chrome) and so if you
+        # submit a job multiple times, your browser might give you a cached
+        # result. And that's bad.
+        #
+        # Same thing for an http proxy between the client and the swift proxy.
+        #
+        # We cannot base the etag on the results, because we would have to
+        # potentially cache GBs of data here on the proxy in order to compute
+        # it, and that's crazy.
         etag = md5(str(time.time()))
         final_response.headers['Etag'] = etag.hexdigest()
         return final_response
