@@ -2097,7 +2097,7 @@ class ApiController(RestController):
         # endpoint.
         # If user has read permissions, continue.
         # Else, check if user has Setuid permissions.
-        # If if user has Setuid permissions, continue.
+        # If user has Setuid permissions, continue.
         # Else, raise and HTTP 403.
         self.authorize_job(config_req, acl='read_acl',
                            save_env=req.environ)
