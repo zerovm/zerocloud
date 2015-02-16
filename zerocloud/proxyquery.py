@@ -253,15 +253,29 @@ class FinalBody(object):
 
 
 class NameService(object):
+    """DNS-like server using a binary protocol.
 
+    This is usable only with ZeroMQ-based networking for ZeroVM, and not
+    zbroker.
+
+    DNS resolves names to IPs; this name service resolves IDs to IP+port.
+    """
+
+    # INTEGER (4 bytes)
     INT_FMT = '!I'
+    # INTEGER (4 bytes) + HOST (2 bytes)
     INPUT_RECORD_FMT = '!IH'
+    # 4 bytes of string + HOST (2 bytes)
     OUTPUT_RECORD_FMT = '!4sH'
     INT_SIZE = struct.calcsize(INT_FMT)
     INPUT_RECORD_SIZE = struct.calcsize(INPUT_RECORD_FMT)
     OUTPUT_RECORD_SIZE = struct.calcsize(OUTPUT_RECORD_FMT)
 
     def __init__(self, peers):
+        """
+        :param int peers:
+            Number of ZeroVM instances that will contact this name server.
+        """
         self.port = None
         self.hostaddr = None
         self.peers = peers
@@ -273,8 +287,13 @@ class NameService(object):
         self.int_pool = GreenPool()
 
     def start(self, pool):
+        """
+        :param pool:
+            `GreenPool` instance
+        """
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # bind to any port, any address
         self.sock.bind(('', 0))
         self.thread = pool.spawn(self._run)
         (self.hostaddr, self.port) = self.sock.getsockname()
@@ -303,7 +322,9 @@ class NameService(object):
                                           offset,
                                           ctypes.create_string_buffer(
                                               message[:]))
+                # peer_address[0] == ip
                 self.peer_map.setdefault(peer_id, {})[0] = peer_address[0]
+                # peer_address[1] == port
                 self.peer_map.setdefault(peer_id, {})[1] = peer_address[1]
 
                 if len(self.peer_map) == self.peers:
