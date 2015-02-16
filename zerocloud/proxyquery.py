@@ -791,34 +791,66 @@ class ClusterController(ObjectController):
         logger = self.app.logger.thread_locals
         for exec_request in exec_requests:
             node = exec_request.node
-            account, container, obj = \
-                split_path(node.path_info, 1, 3, True)
+            account, container, obj = (
+                # NOTE(larsbutler): `node.path_info` is a path like one of the
+                # following:
+                # - /account
+                # - /account/container
+                # - /account/container/object
+                split_path(node.path_info, 1, 3, True))
             container_info = self.container_info(account, container,
                                                  exec_request)
             container_partition = container_info['partition']
-            containers = container_info['nodes']
-            if not containers:
+            # nodes in the cluster which contain a replica of this container:
+            container_nodes = container_info['nodes']
+            if not container_nodes:
+                # We couldn't find the container.
+                # Probably the job referenced a container that either doesn't
+                # exist or has no replicas at the moment.
                 raise HTTPNotFound(request=exec_request,
                                    body='Error while fetching %s'
                                         % node.path_info)
             if obj:
+                # The reauest is targetting an object.
+                # (A request can be sent to /account, /account/container, or
+                # /account/container/object.
+                # In this case, we have an object.
+                # Try to co-locate with the object:
                 policy_index = exec_request.headers.get(
                     'X-Backend-Storage-Policy-Index',
                     container_info['storage_policy'])
                 ring = self.app.get_object_ring(policy_index)
                 partition = ring.get_part(account, container, obj)
+                # ``node_iter`` is all of the candiate object servers
+                # for running the job.
                 node_iter = GreenthreadSafeIterator(
                     self.iter_nodes_local_first(ring,
                                                 partition))
+                # If the storage-policy-index was not set, we set it.
+                # Why does swift need this to be set?
+                # Because the object servers don't know about policies.
+                # Object servers use different volumes and names depending on
+                # the policy index.
+                # You need to send this so the object server knows where to
+                # look for files (on a particular drive, for example).
                 exec_request.headers['X-Backend-Storage-Policy-Index'] = \
                     str(policy_index)
             elif container:
+                # This request is targetting an /account/container.
+                # We want to co-locate with the container.
                 ring = self.app.container_ring
                 partition = ring.get_part(account, container)
+                # Same as above: ``node_iter`` is the all of the candidate
+                # container servers for running the job.
                 node_iter = GreenthreadSafeIterator(
                     self.app.iter_nodes(ring, partition))
+                # NOTE: Containers have no storage policies. See the `obj`
+                # block above.
             else:
+                # The request is just targetting an account; run it anywhere.
                 object_ring, policy_index = self.get_standalone_policy()
+                # Similar to the `obj` case above, but just select a random
+                # server to execute the job.
                 partition = select_random_partition(object_ring)
                 node_iter = GreenthreadSafeIterator(
                     self.iter_nodes_local_first(
@@ -826,19 +858,29 @@ class ClusterController(ObjectController):
                         partition))
                 exec_request.headers['X-Backend-Storage-Policy-Index'] = \
                     str(policy_index)
+            # Create N sets of headers
+            # Usually 1, but can be more for replicates
             exec_headers = self._backend_requests(exec_request,
                                                   node.replicate,
                                                   container_partition,
-                                                  containers)
+                                                  container_nodes)
             if node.skip_validation:
                 for hdr in exec_headers:
                     hdr['x-zerovm-valid'] = 'true'
             node_list = [node]
             node_list.extend(node.replicas)
+            # main nodes and replicas must all run on different servers
             for i, repl_node in enumerate(node_list):
-                location = '%s-%d' % (node.location, i) if node.location \
-                    else None
+                # co-location:
+                location = ('%s-%d' % (node.location, i)
+                            if node.location else None)
+                # If we are NOT co-locating, just kick off all of the execution
+                # jobs in parallel (using a GreenPileEx).
+                # If we ARE co-locating, run the first of the execution jobs by
+                # itself to determine a location to run, and then run all of
+                # the remaining executing jobs on THAT location.
                 if location and location not in known_locations:
+                    # we are trying to co-locate
                     salt = uuid.uuid4().hex
                     conn = self._connect_exec_node(node_iter,
                                                    partition,
@@ -847,10 +889,25 @@ class ClusterController(ObjectController):
                                                    repl_node,
                                                    exec_headers[i],
                                                    [], salt)
+                    # If we get here, we have started to execute
+                    # and either recevied a success, or a continue.
+                    # It can also fail.
+
+                    # add the swift node (conn.node) to a list of known
+                    # locations,
                     known_locations[location] = [conn.node]
                     known_salts[location] = salt
                     result.append(conn)
                 else:
+                    # If we reach this, we are either
+                    # a) not co-locating
+                    # OR
+                    # b) we already chose a node for execution, and we try to
+                    #    locate everything else there
+
+                    # If known_nodes is [], we are not co-locating.
+                    # Elif location in known_locations, we have found a
+                    # location and will locate everything there.
                     known_nodes = known_locations.get(location, [])
                     exec_list.append((node_iter,
                                       partition,
@@ -861,6 +918,7 @@ class ClusterController(ObjectController):
                                       known_nodes,
                                       known_salts.get(location, '0')))
         for args in exec_list:
+            # spawn executions in parallel
             pile.spawn(self._connect_exec_node, *args)
             result.extend([conn for conn in pile if conn])
         return result
