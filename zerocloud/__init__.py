@@ -12,6 +12,7 @@ def load_server_conf(conf, sections):
 
 TAR_MIMES = ['application/x-tar', 'application/x-gtar', 'application/x-ustar',
              'application/x-gzip']
+# Bytes
 STREAM_CACHE_SIZE = 128 * 1024
 
 DEFAULT_EXE_SYSTEM_MAP = r'''
