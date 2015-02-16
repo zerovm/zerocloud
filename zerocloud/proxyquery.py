@@ -175,6 +175,8 @@ def is_zerocloud_request(version, account, headers):
 
 
 class GreenPileEx(GreenPile):
+    """Pool with iterator semantics. Good for I/O-related tasks."""
+
     def __init__(self, size_or_pool=1000):
         super(GreenPileEx, self).__init__(size_or_pool)
         self.current = None
