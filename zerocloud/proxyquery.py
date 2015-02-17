@@ -1498,7 +1498,6 @@ class ClusterController(ObjectController):
 
     def _create_sysmap_resp(self, node):
         sysmap = node.dumps()
-        # print self.dumps(indent=2)
         return Response(app_iter=iter([sysmap]),
                         headers={'Content-Length': str(len(sysmap))})
 
