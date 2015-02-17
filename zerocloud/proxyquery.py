@@ -779,7 +779,10 @@ class ClusterController(ObjectController):
         return addr
 
     def _make_exec_requests(self, pile, exec_requests):
-        """
+        """Make execution request connections and start the execution.
+
+        This method calls :meth:`_connect_exec_node` to start the execution.
+
         :param pile:
             :class:`GreenPileEx` instance.
         :param exec_requests:
