@@ -1515,11 +1515,19 @@ class ClusterController(ObjectController):
         if self.exe_resp:
             self.exe_resp.nodes = []
             data_sources.append(self.exe_resp)
+
+        # Address of this machine for remote machines to connect to:
         addr = self._get_own_address()
         if not addr:
             return HTTPServiceUnavailable(
                 body='Cannot find own address, check zerovm_ns_hostname')
         ns_server = None
+
+        # Start the `NameService`, if necessary.
+        # If the network type is 'tcp' (ZeroVM+ZeroMQ networking) and there is
+        # more than one node in the cluster config, we need a name service.
+        # NOTE(larsbutler): If there's only one node, we don't need networking,
+        # and thus, don't need to start the name service.
         if (self.middleware.network_type == 'tcp'
                 and cluster_config.total_count > 1):
             ns_server = NameService(cluster_config.total_count)
@@ -1529,12 +1537,20 @@ class ClusterController(ObjectController):
                     request=req)
             ns_server.start(self.middleware.zerovm_ns_thrdpool)
             if not ns_server.port:
+                # no free ports
                 return HTTPServiceUnavailable(body='Cannot bind name service')
+
+        # exec_requests: Send these to the appropriate object servers
         exec_requests = []
+        # NOTE(larsbutler): if not data_resp and load_data_resp: chain = True
         load_data_resp = True
+
         # self.parser.node_list defines all of the zerovm instances --
         # including replicates -- that will be launched for this job (or for
         # this part of the chain)
+        # NOTE(larsbutler): 'node' == 'object server'
+        # FIXME(larsbutler): This loop is too long; we should abstract out some
+        # pieces of this.
         for node in cluster_config.nodes.itervalues():
             nexe_headers = HeaderKeyDict({
                 'x-nexe-system': node.name,
@@ -1547,16 +1563,43 @@ class ClusterController(ObjectController):
                 'x-nexe-colocated': '0'
             })
             path_info = req.path_info
+            # Copy the request path, environ, and headers from the client
+            # request into the new request.
+            # NOTE(larsbutler): The `path_info` is overwritten below. The
+            # `Request.blank` method just requires a valid path for the first
+            # arg.
             exec_request = Request.blank(path_info,
                                          environ=req.environ,
                                          headers=req.headers)
+            # Each node has its own request `path_info`.
+            # `node.path_info` can be:
+            #   - /account
+            #   - /account/container
+            #   - /account/container/object
+            # If the path is just /account, there no object to co-locate with
+            # so it doesn't matter _where_ we execute this request.
+            # If the path contains container or container/object, we need to
+            # co-locate it with the container or object (whichever the case may
+            # be).
             exec_request.path_info = node.path_info
             if 'zerovm.source' in req.environ:
+                # `zerovm.source` is needed for authorization and job chaining.
+                # It's a "hidden" variable; the client never sees it, neither
+                # in the response nor the untrusted code execution environment.
                 exec_request.environ['zerovm.source'] = (
                     req.environ['zerovm.source']
                 )
+
+            # x-zerovm-access is set to "GET" (read) or "PUT" (write)
             exec_request.headers['x-zerovm-access'] = node.access
+            # NOTE(larsbutler): We don't set the etag here because we're
+            # iteratively streaming our request contents, and thus, we don't
+            # know the entire contents of the stream. (In order to calculate a
+            # proper hash/etag, we would have to buffer the entire contents,
+            # which could be several GiBs.
             exec_request.etag = None
+            # We are sending a tar stream to object server, that's why we set
+            # the content-type here.
             exec_request.content_type = TAR_MIMES[0]
             # We need to check for access to the local object.
             # The job is co-located to the file it processes.
@@ -1590,38 +1633,117 @@ class ClusterController(ObjectController):
                 # The `exec_request` is only used to send a job to the object
                 # server.
                 self.authorize_job(exec_request, acl=acl, remove_auth=False)
+
             # chunked encoding handling looks broken in Swift
-            # but let's leave it here, maybe somebody will fix it
+            # but let's leave it here, maybe somebody will fix it:
             # exec_request.content_length = None
             # exec_request.headers['transfer-encoding'] = 'chunked'
+
+            # FIXME(larsbutler): x-account-name is a deprecated header,
+            # probably we can remove this. Also, account-name could be
+            # different from request url, since we have the
+            # acl/setuid execution feature available to other users.
             exec_request.headers['x-account-name'] = self.account_name
+            # Proxy sends timestamp to each object server in advance
+            # for each object that the objserver will create.
+            # So if this job creates multiple objects, it will use this
+            # timestamp.
+            # FIXME(larsbutler): Just create ONE timestamp per job (outside of
+            # this loop at the beginning of `post_job`).
             exec_request.headers['x-timestamp'] = \
                 normalize_timestamp(time.time())
+
+            # NOTE(larsbutler): We explicitly set `x-zerovm-valid` to 'false';
+            # the client CANNOT be allowed to dictate this. Validity will be
+            # resolved later.
             exec_request.headers['x-zerovm-valid'] = 'false'
+
+            # If there are multiple nodes but they are not connected (no
+            # networking), we can use the default pool/scheduling:
             exec_request.headers['x-zerovm-pool'] = 'default'
+
+            # If we are using networking, use the 'cluster' pool.
+            # FIXME(larsbutler): If we are using zvm:// URLs to communicate
+            # between execution groups (zvm:// means something like "pipes"),
+            # we should probably also use the cluster pool. With the current
+            # implementation, a job with zvm:// URLs would not use the cluster
+            # pool. Probably this needs to be revisited.
             if len(node.connect) > 0 or len(node.bind) > 0:
-                # node operation depends on connection to other nodes
+                # Execution node operation depends on connections to other
+                # nodes.
+                # We use a special pool for cluster jobs because we want to
+                # start all nodes in a cluster job at the same time; we don't
+                # want some nodes in the job to be queued and leave others
+                # waiting.
+                # NOTE(larsbutler): In other words, we run all at once (or not
+                # at all, apparently?).
                 exec_request.headers['x-zerovm-pool'] = 'cluster'
             if ns_server:
                 node.name_service = 'udp:%s:%d' % (addr, ns_server.port)
+
             if cluster_config.total_count > 1:
+                # FIXME(larsbutler): Make `build_connect_string` return a
+                # value, and assign instead of mutating `node` inside the
+                # method.
                 self.parser.build_connect_string(
                     node, req.headers.get('x-trans-id'))
+
+                # Replication directive comes from system.map ("replicate")
+                # which is usually, 0, 1 or 3 (since we have by default 3
+                # replicas in a typical cluster; depends on the swift config,
+                # though).
                 if node.replicate > 1:
+                    # We need an ADDITIONAL N-1 copies to bring the total
+                    # number of copies to N.
                     for i in range(0, node.replicate - 1):
                         node.replicas.append(deepcopy(node))
+                        # Generate an ID for the replica.
+                        # IDs are generated in the following way:
+                        # Say there are 4 nodes in the job, with IDs 1, 2, 3,
+                        # and 4 respectively.
+                        # We calculate replica IDs such that the first set of
+                        # replicas will have sequential IDs start after the
+                        # highest ID in the original node set.
+                        # The second set of replicas does that same thing,
+                        # except the IDs start after the highest ID in the
+                        # first set of replicas. For example:
+                        #
+                        # orig: 1  2  3  4  <-- 4 execution nodes in the job
+                        # rep1: 5  6  7  8  <-- first set of replicas
+                        # rep2: 9  10 11 12 <-- second set of replicas
+                        # rep3: 13 14 15 16 <-- third set
+                        # and so on..
                         node.replicas[i].id = \
                             node.id + (i + 1) * len(cluster_config.nodes)
+            # each exec requests needs a copy of the cgi env stuff (vars)
             node.copy_cgi_env(request=exec_request, cgi_env=self.cgi_env)
+
+            # we create a fake data source
+            # a fake response containing the system.map just now created for
+            # this object server:
             resp = self._create_sysmap_resp(node)
+            # adds the response to two places:
+            # 1) add it to "master" list of data sources ->why? so we don't
+            # redundantly fetch data; we cache and reuse
+            # 2) add it to node-specific list of data sources
             node.add_data_source(data_sources, resp, 'sysmap')
             for repl_node in node.replicas:
+                # repeat the above for each replica:
                 repl_node.copy_cgi_env(request=exec_request,
                                        cgi_env=self.cgi_env)
                 resp = self._create_sysmap_resp(repl_node)
                 repl_node.add_data_source(data_sources, resp, 'sysmap')
+            # for each node, we want to know the remote objects it needs to
+            # reference
             channels = node.get_list_of_remote_objects()
             for ch in channels:
+                # Translate channels into data sources.
+                # A data source is just a response from the object server.
+                # It's a byte stream with headers (and content-type).
+                # Some responses could have no content-type, because we know
+                # their content-type beforehand (system.map is json, for
+                # example).
+                # TODO(larsbutler): raise errors instead of returning them
                 error = self._create_request_for_remote_object(data_sources,
                                                                ch,
                                                                req,
@@ -1629,7 +1751,9 @@ class ClusterController(ObjectController):
                                                                node)
                 if error:
                     return error
+            # the user sent us a zapp or other tar image
             if self.image_resp:
+                # image is user data and must go last
                 node.last_data = self.image_resp
                 self.image_resp.nodes.append({'node': node,
                                               'dev': 'image'})
@@ -1637,8 +1761,18 @@ class ClusterController(ObjectController):
                     repl_node.last_data = self.image_resp
                     self.image_resp.nodes.append({'node': repl_node,
                                                   'dev': 'image'})
+
+            # NOTE(larsbutler): The following block was added for job chaining.
             if node.data_in:
+                # We have "data" in the request body.
+                # That is, we used x-zerovm-source and request request body
+                # contains "data input" instead of an application tarball or
+                # system.map.
+                # `data_resp` is None, there was no x-zerovm-source in the
+                # client request.
                 if not data_resp and load_data_resp:
+                    # This can occur at any point in a chained job (either the
+                    # first part of the chain or a subsequent part).
                     data_resp = self._load_input_from_chain(req, chunk_size)
                     load_data_resp = False
                 if data_resp:
@@ -1649,21 +1783,41 @@ class ClusterController(ObjectController):
                         repl_node.last_data = data_resp
                         data_resp.nodes.append({'node': repl_node,
                                                 'dev': 'stdin'})
+
             exec_request.node = node
             exec_request.resp_headers = nexe_headers
+            # If possible, try to submit the job to a daemon.
+            # This is an internal optimization.
             sock = self.get_daemon_socket(node)
             if sock:
                 exec_request.headers['x-zerovm-daemon'] = str(sock)
             exec_requests.append(exec_request)
+        # End `exec_requests` loop
+
+        # We have sent request for each "data source" (object to be used by the
+        # execution), and we have a response which includes the headers (but we
+        # haven't read the body yet). See `_create_request_for_remote_object`.
+        # This is includes fake data sources that we made up on the fly (like
+        # for system.maps).
 
         if self.image_resp and self.image_resp.nodes:
+            # if the user sent a tar/zapp, then we will have an image_resp (not
+            # None) or image was specified by x-zerovm-source
             data_sources.append(self.image_resp)
         if data_resp and data_resp.nodes:
+            # if and only if image resp is set by by x-zerovm-source
             data_sources.append(data_resp)
         tstream = TarStream()
         for data_src in data_sources:
+            # this loop calculates the sizes of all of the streams for the
+            # nodes
+            # NOTE: 1 stream will have multiple files
+            # we have one stream channel between the proxy and each object node
             for n in data_src.nodes:
+                # Get node size. "Node size" is the size of the stream that
+                # will be passed to that node.
                 if not getattr(n['node'], 'size', None):
+                    # if it's not set, initialize to 0
                     n['node'].size = 0
                 n['node'].size += len(tstream.create_tarinfo(
                     ftype=REGTYPE,
@@ -1671,6 +1825,10 @@ class ClusterController(ObjectController):
                     size=data_src.content_length))
                 n['node'].size += \
                     TarStream.get_archive_size(data_src.content_length)
+        # We have calclated the content_length of the requests
+
+        # Using greenlet pool/pile, start execution of each part of the job on
+        # the object nodes.
         pile = GreenPileEx(cluster_config.total_count)
         conns = self._make_exec_requests(pile, exec_requests)
         if len(conns) < cluster_config.total_count:
@@ -1700,6 +1858,8 @@ class ClusterController(ObjectController):
             with ContextPool(cluster_config.total_count) as pool:
                 self._spawn_file_senders(conns, pool, req)
                 for data_src in data_sources:
+                    # FIXME: don't attach bytes_transferred to this object
+                    # kinda ugly
                     data_src.bytes_transferred = 0
                     _send_tar_headers(chunked, data_src)
                     while True:
@@ -1707,12 +1867,14 @@ class ClusterController(ObjectController):
                             try:
                                 data = next(data_src.app_iter)
                             except StopIteration:
+                                # TODO: return num of bytes transfered
                                 error = _finalize_tar_streams(chunked,
                                                               data_src,
                                                               req)
                                 if error:
                                     return error
                                 break
+                        # TODO: return num of bytes transfered
                         error = _send_data_chunk(chunked, data_src, data, req)
                         if error:
                             return error
@@ -1722,12 +1884,17 @@ class ClusterController(ObjectController):
                             body='data source %s dead' % data_src.__dict__)
                 for conn in conns:
                     if conn.queue.unfinished_tasks:
+                        # wait for everything to finish
                         conn.queue.join()
                     conn.tar_stream = None
         except ChunkReadTimeout, err:
             self.app.logger.warn(
                 'ERROR Client read timeout (%ss)', err.seconds)
             self.app.logger.increment('client_timeouts')
+            # FIXME: probably we need to expand on what caused the error
+            # it could be ANY data source that timed out
+            # this can include the client request; this is ALLLLLL data sources
+            # Only above do we begin to read from all sources
             return HTTPRequestTimeout(request=req)
         except (Exception, Timeout):
             print traceback.format_exc()
@@ -1735,14 +1902,21 @@ class ClusterController(ObjectController):
                 'ERROR Exception causing client disconnect')
             return HTTPClientDisconnect(request=req, body='exception')
 
+        # we have successfully started execution and sent all data sources
         for conn in conns:
+            # process all of the responses in parallel
             pile.spawn(self._process_response, conn, req)
+
+        # x-zerovm-deferred means, run the job async and close the client
+        # connection asap -> results are saved into swift
         do_defer = req.headers.get('x-zerovm-deferred', 'never').lower()
         if do_defer == 'always':
+            # 0 means timeout immediately
             defer_timeout = 0
         elif do_defer == 'auto':
             defer_timeout = self.middleware.immediate_response_timeout
         else:
+            # None means no timeout
             defer_timeout = None
         conns = []
         try:
@@ -1751,8 +1925,18 @@ class ClusterController(ObjectController):
                     if conn:
                         conns.append(conn)
         except Timeout:
+            # if timeout is 0, we immediately get an exception (the case where
+            # x-zerovm-deferred is specified)
+            # if timeout is None, we never get an exception
+            # if timeout is > 0, we might get a timeout exception
 
             def store_deferred_response(deferred_url):
+                """
+                :param str deferred_url:
+                    Path where we will try to store the result object.
+                    A swift:// url.
+                """
+                # GreenPileEx iterator blocks until the next result is ready
                 for conn in pile:
                     if conn:
                         conns.append(conn)
@@ -1762,6 +1946,7 @@ class ClusterController(ObjectController):
                                           path.account, path.container,
                                           ret_not_found=True)
                 if container_info['status'] == HTTP_NOT_FOUND:
+                    # container doesn't exist (yet)
                     # try to create the container
                     cont_req = Request(req.environ.copy())
                     cont_req.path_info = '/%s/%s' % (path.account,
@@ -1776,15 +1961,23 @@ class ClusterController(ObjectController):
                             'Failed to create deferred container: %s'
                             % cont_req.url)
                         return
+                # this would normally get returned to the client, but since
+                # we're deferred, the client has already disconnected
                 resp.input_iter = iter(resp.app_iter)
 
+                # subsequent consumption of this response expects an object
+                # with a read() method
                 def iter_read(chunk_size=None):
+                    # if a chunk size is specified, it shouldn't be a big deal
+                    # because this will only be read by other parts of
+                    # ZeroCloud middleware.
                     if chunk_size is None:
                         return ''.join(resp.input_iter)
                     chunk = next(resp.input_iter)
                     return chunk
                 resp.read = iter_read
 
+                # Create the new object to store the results (from `resp`):
                 deferred_put = Request(req.environ.copy())
                 deferred_put.path_info = path.path
                 deferred_put.method = 'PUT'
@@ -1795,12 +1988,17 @@ class ClusterController(ObjectController):
                                                  path.container,
                                                  path.obj).PUT(deferred_put)
                 if deferred_resp.status_int >= 300:
+                    # TODO(larsbutler): should this be a critical error?
                     self.app.logger.warn(
                         'Failed to create deferred object: %s : %s'
                         % (deferred_put.url, deferred_resp.status))
+                    # we don't return here, at least we should try to store the
+                    # headers (before we think about returning an error)
                 report = self._create_deferred_report(resp.headers)
                 resp.input_iter = iter([report])
                 deferred_put = Request(req.environ.copy())
+                # we not only store the result (in an object),
+                # but we also store the headers (in a separate object)
                 deferred_put.path_info = path.path + '.headers'
                 deferred_put.method = 'PUT'
                 deferred_put.environ['wsgi.input'] = resp
@@ -1814,22 +2012,44 @@ class ClusterController(ObjectController):
                     self.app.logger.warn(
                         'Failed to create deferred object: %s : %s'
                         % (deferred_put.url, deferred_resp.status))
+                # End `store_deferred_response`.
+
+            # request url can be:
+            #   /account
+            #   /account/container
+            #   /account/container/object
+
+            # we will have a container if the request url includes a container
             if self.container_name:
+                # either it's the container where the job was running
                 container = self.container_name
             else:
+                # or it's the configured directory, like `.zvm`
                 container = self.middleware.zerovm_registry_path
+
+            # We will have an object name if the request url includes an
+            # object.
             if self.object_name:
                 obj = self.object_name
             else:
+                # Otherwise we just generate an object ID.
                 obj = 'job-%s' % uuid.uuid4()
+            # TODO(larsbutler): Use `SwiftPath.create_url()` here.
             deferred_path = SwiftPath.init(self.account_name, container, obj)
             resp = Response(request=req,
                             body=deferred_path.url)
+            # spawn it with any thread that can handle it
             spawn_n(store_deferred_response, deferred_path.url)
+            # FIXME(larsbutler): We might want to stop the name server at the
+            # end of store_deferred_response, instead of here.
             if ns_server:
                 ns_server.stop()
+            # return immediately, our job is likely still running
             return resp
+            # end of deferred/timeout case
         if ns_server:
+            # If we are running with networking and have a NameService server,
+            # stop the server.
             ns_server.stop()
         return self.create_final_response(conns, req)
 
