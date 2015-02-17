@@ -1340,6 +1340,11 @@ class ClusterController(ObjectController):
         rdata = req.environ['wsgi.input']
         req_iter = iter(lambda: rdata.read(chunk_size), '')
         data_resp = None
+
+        # If x-zerovm-source header is specified in the client request,
+        # we need to read the system.map from somewhere else other than the
+        # request body. (In the case of sending a zapp in the request body, we
+        # just read the system.map from from the zapp tarball.)
         source_header = req.headers.get('X-Zerovm-Source')
         if source_header:
             req, req_iter, data_resp = self._process_source_header(
@@ -1391,6 +1396,8 @@ class ClusterController(ObjectController):
                 'ERROR Error parsing config: %s', cluster_conf_dict)
             raise HTTPBadRequest(request=req, body=str(e))
 
+        # NOTE(larsbutler): `data_resp` is None if there is no x-zerovm-source
+        # header; see above.
         return cluster_config, data_resp
 
     def _process_source_header(self, req, source_header):
