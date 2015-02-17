@@ -867,6 +867,9 @@ class ClusterController(ObjectController):
                     str(policy_index)
             # Create N sets of headers
             # Usually 1, but can be more for replicates
+            # FIXME(larsbutler): `_backend_requests` is a private method of the
+            # Swift's ObjectController class. This is HIGHLY internal and we
+            # probably shouldn't rely on it.
             exec_headers = self._backend_requests(exec_request,
                                                   node.replicate,
                                                   container_partition,
