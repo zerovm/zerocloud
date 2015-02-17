@@ -1337,8 +1337,9 @@ class ClusterController(ObjectController):
 
     def _get_cluster_config_data_resp(self, req):
         chunk_size = self.middleware.network_chunk_size
-        rdata = req.environ['wsgi.input']
-        req_iter = iter(lambda: rdata.read(chunk_size), '')
+        # request body from user:
+        req_body = req.environ['wsgi.input']
+        req_iter = iter(lambda: req_body.read(chunk_size), '')
         data_resp = None
 
         # If x-zerovm-source header is specified in the client request,
@@ -1439,7 +1440,7 @@ class ClusterController(ObjectController):
         # implicitly set the `X-Zerovm-Source`; the user has no control
         # over this.
 
-        rdata = req.environ['wsgi.input']
+        req_body = req.environ['wsgi.input']
 
         source_loc = parse_location(unquote(source_header))
         if not isinstance(source_loc, SwiftPath):
@@ -1452,7 +1453,7 @@ class ClusterController(ObjectController):
         if req.content_length:
             data_resp = Response(
                 app_iter=iter(
-                    lambda: rdata.read(self.middleware.network_chunk_size),
+                    lambda: req_body.read(self.middleware.network_chunk_size),
                     ''
                 ),
                 headers={
