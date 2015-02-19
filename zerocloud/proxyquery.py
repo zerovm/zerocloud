@@ -930,7 +930,7 @@ class ClusterController(ObjectController):
         for args in exec_list:
             # spawn executions in parallel
             pile.spawn(self._connect_exec_node, *args)
-            result.extend([conn for conn in pile if conn])
+        result.extend([connection for connection in pile if connection])
         return result
 
     def _spawn_file_senders(self, conns, pool, req):
