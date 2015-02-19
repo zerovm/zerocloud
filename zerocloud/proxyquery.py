@@ -2153,6 +2153,7 @@ class ClusterController(ObjectController):
         conn.error = None
         chunk_size = self.middleware.network_chunk_size
         if conn.resp:
+            # success
             server_response = conn.resp
             resp = Response(status='%d %s' %
                                    (server_response.status,
@@ -2161,6 +2162,8 @@ class ClusterController(ObjectController):
                                 chunk_size), ''),
                             headers=dict(server_response.getheaders()))
         else:
+            # got "continue"
+            # no response yet; we need to read it
             try:
                 with Timeout(self.middleware.node_timeout):
                     server_response = conn.getresponse()
