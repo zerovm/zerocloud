@@ -2308,9 +2308,12 @@ class ClusterController(ObjectController):
             return conn
 
     def _store_accounting_data(self, request, connection=None):
+        # FIXME(larsbutler): We're not even sure if this still works.
         txn_id = request.environ['swift.trans_id']
         acc_object = datetime.datetime.utcnow().strftime('%Y/%m/%d.log')
         if connection:
+            # If connection is not None, only cache accounting data on the
+            # input ``request`` object; nothing actually gets saved.
             body = '%s %s %s (%s) [%s]\n' % (
                 datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
                 txn_id,
@@ -2325,6 +2328,7 @@ class ClusterController(ObjectController):
                                     connection.nexe_headers['x-nexe-cdr-line'],
                                     connection.nexe_headers['x-nexe-status']))
         else:
+            # Here, something is actually saved
             body = ''.join(request.cdr_log)
             append_req = Request.blank('/%s/%s/%s/%s'
                                        % (self.middleware.version,
