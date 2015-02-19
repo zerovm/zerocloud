@@ -986,11 +986,15 @@ class ZvmNode(object):
     def get_list_of_remote_objects(self):
         channels = []
         if isinstance(self.exe, SwiftPath):
+            # we never co-locate with executable
+            # we assume exe is small and used by many jobs
             channels.append(ZvmChannel('boot', None, path=self.exe))
         for ch in self.channels:
-            if isinstance(ch.path, SwiftPath) \
-                    and (ch.access & (ACCESS_READABLE | ACCESS_CDR)) \
-                    and ch.path.path != getattr(self, 'path_info', None):
+            if (isinstance(ch.path, SwiftPath)
+                    and (ch.access & (ACCESS_READABLE | ACCESS_CDR))
+                    # node is NOT co-located with this object
+                    # path_info is None
+                    and ch.path.path != getattr(self, 'path_info', None)):
                 channels.append(ch)
         return channels
 
