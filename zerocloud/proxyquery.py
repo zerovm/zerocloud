@@ -2183,23 +2183,67 @@ class ClusterController(ObjectController):
     def _connect_exec_node(self, obj_nodes, part, request,
                            logger_thread_locals, cnode, request_headers,
                            known_nodes, salt):
+        """Do the actual execution.
+
+        :param obj_nodes:
+            Iterator of object node `dict` objects, each with the following
+            keys:
+
+            * id
+            * ip
+            * port
+            * zone
+            * region
+            * device
+            * replication_ip
+            * replication_port
+        :param int part:
+            Partition ID.
+        :param request:
+            `swift.common.swob.Request` instance.
+        :param logger_thread_locals:
+            2-tuple of ("transaction-id", logging.Logger).
+        :param cnode:
+            :class:`zerocloud.configparser.ZvmNode` instance.
+        :param request_headers:
+            Dict of request headers.
+        :param list known_nodes:
+            See `_make_exec_requests` for usage info.
+        :param str salt:
+            Generated unique ID for a given server.
+        """
         self.app.logger.thread_locals = logger_thread_locals
         conn = None
         for node in chain(known_nodes, obj_nodes):
-            if (known_nodes and node in known_nodes) \
-                    or (not known_nodes and cnode.location):
+            # this loop is trying to connect to candidate object servers (for
+            # execution) and send the execution request headers
+
+            # if we get an exception, we can keep trying on other nodes
+            if ((known_nodes and node in known_nodes)
+                    # this is the first node we are trying to use for
+                    # co-location
+                    or (not known_nodes and cnode.location)):
                 request_headers['x-nexe-colocated'] = \
                     '%s:%s:%s' % (salt, node['ip'], node['port'])
             try:
                 with ConnectionTimeout(self.middleware.conn_timeout):
                     request_headers['Expect'] = '100-continue'
                     request_headers['Content-Length'] = str(cnode.size)
+
+                    # NOTE(larsbutler): THIS line right here kicks off the
+                    # actual execution.
                     conn = http_connect(node['ip'], node['port'],
                                         node['device'], part, request.method,
                                         request.path_info, request_headers)
+                # If we get here, it means object started reading our
+                # requests, read all headers until the body, processed the
+                # headers, and has now issued a read on the body
+                # but we haven't sent any data yet
                 with Timeout(self.middleware.node_timeout):
                     resp = conn.getexpect()
+                # node == the swift object server we are connected to
                 conn.node = node
+                # cnode == the zerovm node
                 conn.cnode = cnode
                 conn.nexe_headers = request.resp_headers
                 if resp.status == HTTP_CONTINUE:
@@ -2209,26 +2253,50 @@ class ClusterController(ObjectController):
                     conn.resp = resp
                     return conn
                 elif resp.status == HTTP_INSUFFICIENT_STORAGE:
+                    # increase the error count for this node
+                    # to optimize, the proxy server can use this count to limit
+                    # the number of requests send to this particular object
+                    # node.
                     self.app.error_limit(node,
                                          'ERROR Insufficient Storage')
                     conn.error = 'Insufficient Storage'
+                    # the final response is `resp`, which is error
+                    # could be disk failed, etc.
                     conn.resp = resp
                     resp.nuke_from_orbit()
                 elif is_client_error(resp.status):
                     conn.error = resp.read()
                     conn.resp = resp
                     if resp.status == HTTP_NOT_FOUND:
+                        # it could be "not found" because either a) the object
+                        # doesn't exist or b) just this server doesn't have a
+                        # copy
+
+                        # container or object was either not found, or due to
+                        # eventual consistency, it can't be found here right
+                        # now
+                        # so, we try to continue and look for it elsewhere
+
+                        # the 404 error here doesn't include the url, so we
+                        # include it here (so the client so they know which url
+                        # has a problem)
                         conn.error = 'Error %d %s while fetching %s' \
                                      % (resp.status, resp.reason,
                                         request.path_info)
                     else:
+                        # don't keep trying; this is user error
                         return conn
                 else:
+                    # unknown error
+                    # some 500 error that's not insufficient storage
                     self.app.logger.warn('Obj server failed with: %d %s'
                                          % (resp.status, resp.reason))
                     conn.error = resp.read()
                     conn.resp = resp
                     resp.nuke_from_orbit()
+                    # we still keep trying; maybe we'll have better luck on
+                    # another replicate (could be a problem with threadpool,
+                    # etc.)
             except Exception:
                 self.app.exception_occurred(node, 'Object',
                                             'Expect: 100-continue on %s'
