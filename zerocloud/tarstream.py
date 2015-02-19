@@ -892,6 +892,10 @@ class _ringbuffer(list):
 class Path:
 
     def __init__(self, type, file_name, size, data):
+        """
+        :param data:
+            stringio, buffer, or file
+        """
         self.type = type
         self.file_name = file_name
         self.size = size
@@ -957,6 +961,10 @@ class TarStream(object):
 
     def __init__(self, tar_iter=None, path_list=None, chunk_size=65536,
                  format=DEFAULT_FORMAT, encoding=ENCODING, append=False):
+        """
+        :param path_list:
+            List of `Path` objects.
+        """
         self.tar_iter = tar_iter
         self.path_list = path_list
         self.chunk_size = chunk_size
@@ -968,6 +976,7 @@ class TarStream(object):
         self.append = append
 
     def serve_chunk(self, buf):
+        # always serve chunks of `self.chunk_size`, or nothing
         self.to_write -= len(buf)
         if self.to_write < 0:
             self.data += buf[:self.to_write]
@@ -1002,6 +1011,7 @@ class TarStream(object):
         return (size / BLOCKSIZE) * BLOCKSIZE
 
     def get_total_stream_length(self):
+        # In bytes. Used for content-length calculation.
         size = 0
         for path in self.path_list:
             size += TarStream.get_archive_size(path.size)
@@ -1081,9 +1091,11 @@ class ExtractedFile(object):
 
 class UntarStream(object):
 
-    def __init__(self, tar_iter, path_list=[], encoding=ENCODING,
+    def __init__(self, tar_iter, path_list=None, encoding=ENCODING,
                  errors=None):
         self.tar_iter = iter(tar_iter)
+        if path_list is None:
+            path_list = []
         self.path_list = path_list
         self.block = ''
         self.encoding = encoding
@@ -1172,6 +1184,7 @@ class UntarStream(object):
                 self.fp = None
 
     def get_file_chunk(self):
+        # get a chunk of an entire file
         buf_size = len(self.block)
         eof = self.offset_data + self.to_write
         if eof <= buf_size:
@@ -1184,6 +1197,7 @@ class UntarStream(object):
         return self.block[start:]
 
     def skip_file_chunk(self):
+        # skip an entire file
         buf_size = len(self.block)
         eof = self.offset_data + self.to_write
         if eof < buf_size:
