@@ -2080,12 +2080,17 @@ class ClusterController(ObjectController):
             untar_stream.update_buffer(data)
             info = untar_stream.get_next_tarinfo()
             while info:
+                # We can store arbitrary key-value metadata in the tar; let's
+                # grab those.
                 headers = info.get_headers()
                 chan = node.get_channel(device=info.name)
                 if not chan:
                     conn.error = 'Channel name %s not found' % info.name
                     return conn
+                # If there is a path, something needs to be saved back into the
+                # Swift data store.
                 if not chan.path:
+                    # If there is no path, send the data back to the client.
                     app_iter = iter(CachedBody(
                         untar_stream.tar_iter,
                         cache=[untar_stream.block[info.offset_data:]],
@@ -2102,6 +2107,8 @@ class ClusterController(ObjectController):
                 dest_req = Request.blank(chan.path.path,
                                          environ=request.environ,
                                          headers=request.headers)
+                # NOTE(larsbutler): We have to override the `path_info`, since
+                # the `Request.blank` chops any path down to /<account>/auth.
                 dest_req.path_info = chan.path.path
                 dest_req.query_string = None
                 dest_req.method = 'PUT'
@@ -2135,6 +2142,10 @@ class ClusterController(ObjectController):
                 info = untar_stream.get_next_tarinfo()
             bytes_transferred += len(data)
         untar_stream = None
+        # we should be done reading, but just for sanity, we set the
+        # content-length to 0 so we don't try to read anyway
+        # TODO(larsbutler): If it's not already 0, we should probably raise an
+        # error. We need double check this.
         resp.content_length = 0
         return conn
 
