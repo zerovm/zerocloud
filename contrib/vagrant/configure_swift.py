@@ -69,7 +69,8 @@ if __name__ == '__main__':
         'object_query',
         'object-server',
         extras={
-            'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar'
+            'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar',
+            'zerovm_timeout': '30',
         }
     )
     # Set verbose logging on the object server
@@ -90,6 +91,7 @@ if __name__ == '__main__':
             'zerovm_sysimage_devices': ('python2.7 '
                                         '/usr/share/zerovm/python.tar'),
             'set log_name': 'zerocloud-proxy-query',
+            'zerovm_timeout': '30',
         }
     )
     # proxy server job chaining middleware
@@ -98,7 +100,10 @@ if __name__ == '__main__':
         'zerocloud-job-chain',
         'job_chain',
         'zerocloud-proxy-query',
-        extras={'set log_name': 'zerocloud-job-chain'}
+        extras={
+            'set log_name': 'zerocloud-job-chain',
+            'chain_timeout': '60',
+        }
     )
     # install swauth
     config_add_filter(
@@ -131,7 +136,8 @@ if __name__ == '__main__':
         'object_query',
         'container-server',
         extras={
-            'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar'
+            'zerovm_sysimage_devices': 'python2.7 /usr/share/zerovm/python.tar',
+            'zerovm_timeout': '30',
         }
     )
 
