@@ -35,7 +35,7 @@ sudo python setup.py develop
 # Python system image for ZeroCloud/ZeroVM
 sudo mkdir /usr/share/zerovm
 cd /usr/share/zerovm
-sudo wget -q http://packages.zerovm.org/zerovm-samples/python.tar
+sudo wget -q http://ci.zerovm.org/latest-packages/zpython2.7.3.tar -O python.tar
 
 ###
 # DevStack

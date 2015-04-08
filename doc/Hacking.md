@@ -69,7 +69,7 @@ We now need to add ZeroCloud to the Swift pipeline.
     ```sh
     $ sudo mkdir /usr/share/zerovm
     $ cd /usr/share/zerovm
-    $ sudo wget http://packages.zerovm.org/zerovm-samples/python.tar
+    $ sudo wget http://ci.zerovm.org/latest-packages/zpython2.7.3.tar
     ```
 
 2. Add and enable the `object-query` middleware on the object server.
@@ -78,7 +78,7 @@ We now need to add ZeroCloud to the Swift pipeline.
     ```ini
     [filter:object-query]
     use = egg:zerocloud#object_query
-    zerovm_sysimage_devices = python2.7 /usr/share/zerovm/python.tar
+    zerovm_sysimage_devices = python2.7 /usr/share/zerovm/zpython2.7.3.tar
     #zerovm_debug = True
     ```
 
@@ -98,7 +98,7 @@ We now need to add ZeroCloud to the Swift pipeline.
     ```ini
     [filter:proxy-query]
     use = egg:zerocloud#proxy_query
-    zerovm_sysimage_devices = python2.7 /usr/share/zerovm/python.tar
+    zerovm_sysimage_devices = python2.7 /usr/share/zerovm/zpython2.7.3.tar
     ```
 
     We then insert the filter into the main pipeline. Here we inserted
